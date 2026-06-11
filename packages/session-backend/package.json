@@ -1,0 +1,7 @@
+{
+  "name": "@sh/session-backend",
+  "type": "module",
+  "version": "0.0.0",
+  "scripts": { "test": "vitest run" },
+  "devDependencies": { "vitest": "^2.0.0", "typescript": "^5.5.0" }
+}
