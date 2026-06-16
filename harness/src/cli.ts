@@ -29,6 +29,14 @@ async function main() {
     throw new Error('usage: cli.ts "<prompt>"   (set PI_SESSION_ID to resume)');
   }
 
+  // Gateway bridge (smoke only): pinned Pi reads ANTHROPIC_API_KEY (not
+  // ANTHROPIC_AUTH_TOKEN) and throws if it is unset. When a Bearer-token gateway is
+  // configured via ANTHROPIC_AUTH_TOKEN, mirror it into ANTHROPIC_API_KEY so the
+  // provider's key guard passes; the wire auth is forced to Bearer on the model below.
+  if (process.env.ANTHROPIC_AUTH_TOKEN && !process.env.ANTHROPIC_API_KEY) {
+    process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_AUTH_TOKEN;
+  }
+
   const store = new RedisSessionBackend<FileEntry>(process.env.REDIS_URL);
   const backend = new BufferedRedisBackend(store);
   const cwd = process.cwd();
@@ -51,7 +59,29 @@ async function main() {
   });
   await resourceLoader.reload();
 
-  const model = getModel("anthropic", "claude-opus-4-8");
+  // Pinned Pi has no ANTHROPIC_BASE_URL hook and defaults to x-api-key auth. When a
+  // gateway is configured, point the base URL at it and force Authorization: Bearer
+  // (the `"x-api-key": null` deletes the default header via Pi's mergeHeaders, the same
+  // pattern its cloudflare path uses). Env-gated: with neither var set, model is as-is.
+  const baseModel = getModel("anthropic", "claude-opus-4-8");
+  const gatewayBase = process.env.ANTHROPIC_BASE_URL;
+  const gatewayToken = process.env.ANTHROPIC_AUTH_TOKEN;
+  const model =
+    gatewayBase || gatewayToken
+      ? {
+          ...baseModel,
+          ...(gatewayBase ? { baseUrl: gatewayBase } : {}),
+          ...(gatewayToken
+            ? {
+                headers: {
+                  ...baseModel.headers,
+                  Authorization: `Bearer ${gatewayToken}`,
+                  "x-api-key": null,
+                } as Record<string, string>,
+              }
+            : {}),
+        }
+      : baseModel;
 
   const { session } = await createAgentSession({
     sessionManager,
