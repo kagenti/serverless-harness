@@ -1,40 +1,33 @@
 // packages/session-backend/src/entry.ts
 import { createHash } from "node:crypto";
 
-export const ENTRY_TYPES = [
-  "user_message", "inference_request", "inference_response",
-  "intention", "vote", "commit", "abort",
-  "tool_result", "compaction", "policy", "checkpoint",
-] as const;
-
-export type EntryType = (typeof ENTRY_TYPES)[number];
-
-export interface LogEntry {
-  position: number;
-  timestamp: number;          // wall-clock ms; audit only, not ordering
+/**
+ * A stored log record: a thin envelope around an opaque harness-native entry.
+ * The store never interprets `entry` except via the denormalized `piType`.
+ */
+export interface StoredEntry<E = unknown> {
+  position: number;        // monotonic 1-based offset; powers read(fromPosition)
   session_id: string;
-  type: EntryType;
-  data: unknown;
-  content_sha256: string;
+  piType: string;          // denormalized copy of the entry's discriminant, for cheap filtering
+  entry: E;                // harness-native entry, stored & returned verbatim
+  content_sha256: string;  // integrity hash of `entry` (canonical JSON)
+  timestamp: number;       // wall-clock ms; audit only, not ordering
 }
 
-export interface NewEntry {
+export function makeStoredEntry<E>(args: {
   position: number;
   session_id: string;
-  type: EntryType;
-  data: unknown;
+  piType: string;
+  entry: E;
   timestamp?: number;
-}
-
-export function makeEntry(e: NewEntry): LogEntry {
-  if (!ENTRY_TYPES.includes(e.type)) throw new Error(`unknown entry type: ${e.type}`);
-  const payload = JSON.stringify(e.data ?? null);
+}): StoredEntry<E> {
+  const payload = JSON.stringify(args.entry ?? null);
   return {
-    position: e.position,
-    timestamp: e.timestamp ?? 0, // caller stamps real time; 0 keeps makeEntry pure/testable
-    session_id: e.session_id,
-    type: e.type,
-    data: e.data,
+    position: args.position,
+    session_id: args.session_id,
+    piType: args.piType,
+    entry: args.entry,
     content_sha256: createHash("sha256").update(payload).digest("hex"),
+    timestamp: args.timestamp ?? 0, // caller stamps real time; 0 keeps this pure/testable
   };
 }
