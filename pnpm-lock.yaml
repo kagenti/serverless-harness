@@ -6,6 +6,22 @@ settings:
 
 importers:
 
+  harness:
+    dependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: link:../pi-fork/packages/coding-agent
+        version: link:../pi-fork/packages/coding-agent
+      '@sh/session-backend':
+        specifier: workspace:*
+        version: link:../packages/session-backend
+    devDependencies:
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9
+
   packages/session-backend:
     dependencies:
       redis:
