@@ -22,6 +22,7 @@ import { getModel, type AssistantMessage } from "@earendil-works/pi-ai";
 import { RedisSessionBackend } from "@sh/session-backend";
 import { BufferedRedisBackend } from "./buffered-redis-backend.js";
 import { flushExtension } from "./flush-extension.js";
+import { k8sSandboxExtension } from "@sh/k8s-sandbox";
 
 async function main() {
   const prompt = process.argv[2];
@@ -55,7 +56,9 @@ async function main() {
     cwd,
     agentDir,
     settingsManager,
-    extensionFactories: [flushExtension(backend)],
+    // k8sSandboxExtension() is inert unless KAGENTI_SANDBOX_POD is set, so the
+    // default (Config A, local execution) is unchanged.
+    extensionFactories: [flushExtension(backend), k8sSandboxExtension()],
   });
   await resourceLoader.reload();
 
