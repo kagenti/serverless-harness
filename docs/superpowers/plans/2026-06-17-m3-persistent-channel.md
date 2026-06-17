@@ -939,7 +939,7 @@ git -C /Users/paolo/Projects/aiplatform/serverless-harness commit -s -m "feat(k8
 **Files:**
 - Modify: `packages/k8s-sandbox/SMOKE.md` (append an M3 section)
 
-Goal: on a real kind cluster, prove the three M3 claims — (1) a burst of fast ops reuses **one** kubectl process, (2) an env var set on a bash call is visible in the pod, (3) find honours `.gitignore` + the ignore list. This task is run by a human/operator against a live cluster; record the actual results.
+Goal: on a real kind cluster, prove the three M3 claims — (1) a burst of fast ops reuses **one** kubectl process, (2) an env var set on a bash call is visible in the pod, (3) find excludes the **ignore-list** entries (`node_modules`/`.git` via Pi's default ignore list, applied as negated `-g '!…'` globs). **NOTE (option (a), accepted):** find does NOT honour `.gitignore` for files matching the positive `-g <pattern>` (ripgrep whitelist-override — see design D5 caveat); exclusion is by the ignore list, not gitignore. Also prove the post-fix **write/edit over the persistent channel** works (heredoc-delimiter fix) and the persistent process is disposed on shutdown. This task is run against a live cluster; record the actual results.
 
 - [ ] **Step 1: Ensure a sandbox pod and gateway env**
 
@@ -986,7 +986,7 @@ KAGENTI_SANDBOX_POD="$POD" KAGENTI_SANDBOX_CONTEXT="kind-kagenti" \
 
 Dispatch an Explore subagent:
 
-> Use Grep (with `-C 2`) on `$LOG_DIR/run.log`. Confirm and report: (1) the find result lists `src/keep.ts` and `top.ts` but NOT `node_modules/pkg/skip.ts` or `.git/cfg.ts` (gitignore + ignore-list honoured); (2) a line `MARKER=` shows the injected env value (env injection works); (3) no errors/tracebacks. Return the matching lines only, not the whole file.
+> Use Grep (with `-C 2`) on `$LOG_DIR/run.log`. Confirm and report: (1) the find result lists `src/keep.ts` and `top.ts` but NOT `node_modules/pkg/skip.ts` or `.git/cfg.ts` (excluded via the **ignore list** `**/node_modules/**`,`**/.git/**` — NOT via gitignore; a gitignored-but-not-ignore-listed `*.ts` would still appear, per D5); (2) a line `MARKER=` shows the injected env value (env injection works); (3) no errors/tracebacks. Return the matching lines only, not the whole file.
 
 For claim (1)-process-reuse: confirm a single persistent session served the burst. Quick external check — while a run is active, `kubectl get pod "$POD" -o jsonpath='{range .status..}{end}'` won't show it; instead rely on the temporary spawn log: add a one-line `console.error("spawned persistent session")` in `ensureChild` for the smoke run and assert it appears exactly once in `$LOG_DIR/run.log` for the multi-read burst, then revert the log line. Record the count.
 
