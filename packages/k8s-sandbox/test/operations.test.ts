@@ -134,11 +134,30 @@ describe("ls ops", () => {
 });
 
 describe("find ops", () => {
-  it("globs via find -name under the mapped cwd and strips ./", async () => {
-    const { fn, calls } = fakeExec({ stdout: "./src/a.ts\n./b.ts\n" });
+  it("globs via rg --files, honouring the ignore list and stripping ./", async () => {
+    const { fn, calls } = fakeExec({ stdout: "src/a.ts\nb.ts\n" });
     const ops = createPodFindOps(fn, cfg);
-    const results = await ops.glob("*.ts", "/head", { ignore: [], limit: 100 });
+    const results = await ops.glob("*.ts", "/head", {
+      ignore: ["**/node_modules/**", "**/.git/**"],
+      limit: 100,
+    });
     expect(results).toEqual(["src/a.ts", "b.ts"]);
-    expect(calls[0].command).toBe("cd '/workspace' && find . -type f -name '*.ts' 2>/dev/null | head -n 100");
+    expect(calls[0].command).toBe(
+      "cd '/workspace' && rg --files --hidden -g '*.ts' " +
+        "-g '!**/node_modules/**' -g '!**/.git/**' | head -n 100",
+    );
+  });
+
+  it("emits no ignore globs when the ignore list is empty", async () => {
+    const { fn, calls } = fakeExec({ stdout: "" });
+    const ops = createPodFindOps(fn, cfg);
+    await ops.glob("*.go", "/head", { ignore: [], limit: 50 });
+    expect(calls[0].command).toBe("cd '/workspace' && rg --files --hidden -g '*.go' | head -n 50");
+  });
+
+  it("exists uses test -e on the mapped path", async () => {
+    const { fn, calls } = fakeExec({ exitCode: 0 });
+    expect(await createPodFindOps(fn, cfg).exists("/head/x")).toBe(true);
+    expect(calls[0].command).toBe("test -e '/workspace/x'");
   });
 });

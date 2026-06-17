@@ -106,11 +106,16 @@ export function createPodFindOps(exec: ExecInPod, cfg: K8sSandboxConfig): FindOp
   const q = mapper(cfg);
   return {
     exists: async (p) => (await exec(`test -e ${q(p)}`)).exitCode === 0,
-    // NOTE: matches basenames via `find -name`; does not honour .gitignore or the
-    // `ignore` list (a known M2 simplification vs Pi's local `fd`). Returns paths
-    // relative to the search cwd (leading "./" stripped).
-    glob: async (pattern, cwd, { limit }) => {
-      const r = await exec(`cd ${q(cwd)} && find . -type f -name ${shQuote(pattern)} 2>/dev/null | head -n ${limit}`);
+    // `rg --files` lists files under cwd. NOTE: an explicit `-g <pattern>` glob is
+    // a *whitelist override* in ripgrep and takes precedence over .gitignore, so a
+    // gitignored file matching <pattern> is NOT filtered by .gitignore here (this
+    // differs from Pi's `fd --glob`, which ANDs the pattern with gitignore).
+    // Exclusions come from Pi's `ignore` list, applied as negated globs (-g '!<ig>'),
+    // plus ripgrep's built-in handling. --hidden keeps dotfiles in view.
+    // Paths come back relative to cwd; strip any leading "./" defensively.
+    glob: async (pattern, cwd, { ignore, limit }) => {
+      const globs = [`-g ${shQuote(pattern)}`, ...ignore.map((ig) => `-g ${shQuote(`!${ig}`)}`)];
+      const r = await exec(`cd ${q(cwd)} && rg --files --hidden ${globs.join(" ")} | head -n ${limit}`);
       return r.stdout
         .toString()
         .split("\n")
