@@ -84,6 +84,37 @@ describe("bash ops", () => {
     expect(calls[0].command).toBe("cd '/workspace' && echo hi");
     expect(r).toEqual({ exitCode: 0 });
   });
+
+  it("injects env as a non-leaking, per-invocation prefix when env is provided", async () => {
+    const { fn, calls } = fakeExec({ exitCode: 0 });
+    const ops = createPodBashOps(fn, cfg);
+    await ops.exec("echo $FOO", "/head", { onData: vi.fn(), env: { FOO: "bar baz" } });
+    expect(calls[0].command).toBe("cd '/workspace' && env FOO='bar baz' bash -c 'echo $FOO'");
+  });
+
+  it("skips env keys whose value is undefined", async () => {
+    const { fn, calls } = fakeExec({ exitCode: 0 });
+    const ops = createPodBashOps(fn, cfg);
+    await ops.exec("true", "/head", { onData: vi.fn(), env: { A: "1", B: undefined } });
+    expect(calls[0].command).toBe("cd '/workspace' && env A='1' bash -c 'true'");
+  });
+
+  it("emits the M2 form (no prefix) when env is absent or empty", async () => {
+    const { fn, calls } = fakeExec({ exitCode: 0 });
+    const ops = createPodBashOps(fn, cfg);
+    await ops.exec("echo hi", "/head", { onData: vi.fn(), env: {} });
+    expect(calls[0].command).toBe("cd '/workspace' && echo hi");
+  });
+
+  it("drops env keys that are not valid POSIX names (no injection)", async () => {
+    const { fn, calls } = fakeExec({ exitCode: 0 });
+    const ops = createPodBashOps(fn, cfg);
+    await ops.exec("true", "/head", {
+      onData: vi.fn(),
+      env: { GOOD: "1", "BAD KEY": "x", "PATH=/evil; rm -rf /": "y" },
+    });
+    expect(calls[0].command).toBe("cd '/workspace' && env GOOD='1' bash -c 'true'");
+  });
 });
 
 describe("ls ops", () => {

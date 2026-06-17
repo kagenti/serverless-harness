@@ -64,10 +64,21 @@ export function createPodEditOps(exec: ExecInPod, cfg: K8sSandboxConfig): EditOp
 export function createPodBashOps(exec: ExecInPod, cfg: K8sSandboxConfig): BashOperations {
   const q = mapper(cfg);
   return {
-    // `env` (Pi's optional per-command env) is intentionally dropped: kubectl exec
-    // has no per-invocation env injection. Pod env is fixed at creation. (M3 TODO.)
-    exec: async (command, cwd, { onData, signal, timeout }) => {
-      const r = await exec(`cd ${q(cwd)} && ${command}`, { onData, signal, timeout });
+    // Pi passes `env` only to the bash tool. Inject it here (transport-agnostic)
+    // as an `env VAR=val … bash -c <cmd>` prefix: scoped to this one invocation,
+    // so nothing leaks across calls (M2 dropped env entirely — see git history).
+    // Keys are validated as POSIX names (malformed keys are dropped, never interpolated)
+    // so the prefix can't be injected; values remain safe via shQuote.
+    exec: async (command, cwd, { onData, signal, timeout, env }) => {
+      const pairs = env
+        ? Object.entries(env)
+            .filter(([k, v]) => v !== undefined && /^[A-Za-z_][A-Za-z0-9_]*$/.test(k))
+            .map(([k, v]) => `${k}=${shQuote(String(v))}`)
+        : [];
+      const wrapped = pairs.length
+        ? `cd ${q(cwd)} && env ${pairs.join(" ")} bash -c ${shQuote(command)}`
+        : `cd ${q(cwd)} && ${command}`; // M2's exact form — unchanged when no env
+      const r = await exec(wrapped, { onData, signal, timeout });
       return { exitCode: r.exitCode };
     },
   };
