@@ -31,8 +31,8 @@ importers:
   packages/k8s-sandbox:
     dependencies:
       '@earendil-works/pi-coding-agent':
-        specifier: link:../pi-fork/packages/coding-agent
-        version: link:../pi-fork/packages/coding-agent
+        specifier: link:../../pi-fork/packages/coding-agent
+        version: link:../../pi-fork/packages/coding-agent
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
