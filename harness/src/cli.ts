@@ -18,7 +18,7 @@ import {
   SettingsManager,
   type FileEntry,
 } from "@earendil-works/pi-coding-agent";
-import { getModel } from "@earendil-works/pi-ai";
+import { getModel, type AssistantMessage } from "@earendil-works/pi-ai";
 import { RedisSessionBackend } from "@sh/session-backend";
 import { BufferedRedisBackend } from "./buffered-redis-backend.js";
 import { flushExtension } from "./flush-extension.js";
@@ -92,6 +92,22 @@ async function main() {
 
   // Mirror print-mode.ts: drive one prompt to completion.
   await session.prompt(prompt);
+
+  // Print the assistant's final reply so the smoke is observable (mirrors print-mode.ts).
+  const lastMessage = session.state.messages.at(-1) as AssistantMessage | undefined;
+  if (lastMessage?.role === "assistant") {
+    if (lastMessage.stopReason === "error" || lastMessage.stopReason === "aborted") {
+      // eslint-disable-next-line no-console
+      console.error(lastMessage.errorMessage || `Request ${lastMessage.stopReason}`);
+    } else {
+      for (const content of lastMessage.content) {
+        if (content.type === "text") {
+          // eslint-disable-next-line no-console
+          console.log(content.text);
+        }
+      }
+    }
+  }
 
   await backend.flush(); // belt-and-suspenders before exit
   // eslint-disable-next-line no-console
