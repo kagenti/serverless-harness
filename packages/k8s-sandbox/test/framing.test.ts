@@ -1,3 +1,7 @@
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { FrameParser, wrapCommand } from "../src/framing.js";
 
@@ -15,8 +19,8 @@ describe("wrapCommand", () => {
   it("delivers stdin to the command via a nonce-delimited heredoc", () => {
     const line = wrapCommand("n2", "base64 -d > '/workspace/a.txt'", Buffer.from("aGk="));
     expect(line).toBe(
-      `printf '${SOH}B%s\\n' n2; { base64 -d > '/workspace/a.txt' <<'${SOH}Hn2'\n` +
-        `aGk=\n${SOH}Hn2\n} | base64; ` +
+      `printf '${SOH}B%s\\n' n2; { base64 -d > '/workspace/a.txt' <<'KAGENTI_EOF_n2'\n` +
+        `aGk=\nKAGENTI_EOF_n2\n} | base64; ` +
         `printf '${SOH}E%s %d\\n' n2 "\${PIPESTATUS[0]}"\n`,
     );
   });
@@ -69,5 +73,37 @@ describe("FrameParser", () => {
     const b64 = bin.toString("base64");
     const frames = p.push(Buffer.from(`${SOHb}Bn1\n${b64}\n${SOHb}En1 0\n`));
     expect(frames[0].stdout.equals(bin)).toBe(true);
+  });
+});
+
+describe("wrapCommand executed by a real bash (integration)", () => {
+  const hasBash = spawnSync("bash", ["-c", "true"]).status === 0;
+  const maybe = hasBash ? it : it.skip;
+
+  maybe("writes a file through the heredoc-stdin path and frames exit 0", () => {
+    const dir = mkdtempSync(join(tmpdir(), "framing-bash-"));
+    try {
+      const target = join(dir, "out.txt");
+      const content = Buffer.from('hello\nworld\nspecial "q" $x `b`\n');
+      const line = wrapCommand("n1", `base64 -d > '${target}'`, Buffer.from(content.toString("base64")));
+      const res = spawnSync("bash", { input: line });
+      expect(res.status).toBe(0);
+      const frames = new FrameParser().push(res.stdout);
+      expect(frames).toHaveLength(1);
+      expect(frames[0]).toMatchObject({ nonce: "n1", exitCode: 0 });
+      expect(existsSync(target)).toBe(true);
+      expect(readFileSync(target).equals(content)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  maybe("frames a non-zero exit code from a failing write", () => {
+    const line = wrapCommand("n2", "base64 -d > '/no_such_dir_xyz/out.txt'", Buffer.from("eA=="));
+    const res = spawnSync("bash", { input: line });
+    const frames = new FrameParser().push(res.stdout);
+    expect(frames).toHaveLength(1);
+    expect(frames[0].nonce).toBe("n2");
+    expect(frames[0].exitCode).not.toBe(0);
   });
 });

@@ -24,13 +24,21 @@ export interface Frame {
  * heredoc body is emitted as latin1 so arbitrary bytes survive round-trip;
  * callers typically pass base64 payloads which are ASCII either way. The
  * command must be a single pipeline whose first stage consumes stdin (holds for
- * `base64 -d > <path>`).
+ * `base64 -d > <path>`). The heredoc delimiter uses `KAGENTI_EOF_<nonce>` — a
+ * bash-safe word that contains `_`, which the standard base64 alphabet
+ * (A-Za-z0-9+/=) never emits, so it cannot collide with a body line.
  */
 export function wrapCommand(nonce: string, command: string, stdin?: Buffer): string {
   const begin = `printf '${SOH}B%s\\n' ${nonce}; `;
   const end = `printf '${SOH}E%s %d\\n' ${nonce} "\${PIPESTATUS[0]}"\n`;
   if (stdin) {
-    const h = `${SOH}H${nonce}`;
+    // Heredoc delimiter must be bash-safe AND collision-proof. We CANNOT use the
+    // \x01 stream marker here: bash strips control bytes from a heredoc delimiter
+    // WORD, so <<'\x01H…' would register as 'H…' and the \x01-prefixed closing
+    // line would never match (the heredoc would swallow the end marker). Instead
+    // use a delimiter containing '_', which the standard base64 alphabet
+    // (A-Za-z0-9+/=) never emits, so it can never collide with a body line.
+    const h = `KAGENTI_EOF_${nonce}`;
     return `${begin}{ ${command} <<'${h}'\n${stdin.toString("latin1")}\n${h}\n} | base64; ${end}`;
   }
   return `${begin}{ ${command}; } | base64; ${end}`;
