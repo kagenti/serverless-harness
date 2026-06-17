@@ -24,15 +24,16 @@ M3 closes all three, **harness-side only** (`pi-fork` untouched, as in M2):
    instead of N.
 2. **Env injection** — Pi's per-command `env` (passed only to the bash tool) is applied
    inside the pod.
-3. **find ignore-list** — find honours the `ignore` patterns (negated globs). NOTE: it does
-   **not** fully match Pi's local `fd` re `.gitignore` — see D5 caveat below (an explicit
-   `-g <pattern>` whitelist-overrides `.gitignore` in ripgrep).
+3. **find ignore-list** — find honours the `ignore` patterns (negated globs) AND `.gitignore`
+   for ignored **directories** (verified on the pod's ripgrep 14.1.0). Minor divergence from
+   Pi's `fd`: an individually-gitignored *file* matching the positive `-g <pattern>` is
+   re-included by the glob whitelist — see D5 caveat below.
 
 M3 is **done** when: a burst of fast ops in one agent turn is served by a single reused
 kubectl process (proven on a real kind cluster); an env var set on a bash tool call is
-visible to the command in the pod; and find excludes the `ignore`-list entries
-(`node_modules`/`.git` via Pi's default ignore list) — all backed by cluster-free unit tests
-plus one real kind smoke.
+visible to the command in the pod; and find excludes gitignored directories
+(`dist/` via `.gitignore`) plus Pi's `ignore`-list entries (`node_modules`/`.git`) — all
+backed by cluster-free unit tests plus one real kind smoke.
 
 ### In scope
 
@@ -65,7 +66,7 @@ plus one real kind smoke.
 | D2 | Channel scope | **S-fast — persistent channel for the small request/response ops only** (read, write, edit, ls, stat, mkdir, find, mime). **bash, grep, and `user_bash` keep M2's per-call `kubectl exec`** — they stream via `onData`, honour `signal` abort, run long, and already amortize the exec overhead. Captures the bulk of the latency win while the framing protocol only ever handles the simple case. |
 | D3 | Wire framing | **Sentinel-bracketed, base64-encoded payload + trailing exit code.** base64's alphabet cannot contain the marker bytes ⇒ collision-free framing and binary-safe stdout. One command in flight at a time (a queue), since the ops are synchronous request/response. |
 | D4 | Env injection site | **Bash-ops layer, as an `env VAR=val … bash -c <cmd>` prefix** — transport-agnostic (works for both kubectl and persistent transports) and non-leaking (scoped to the one invocation). **No `ExecInPod` signature change.** |
-| D5 | find implementation | **`rg --files -g <pattern> -g '!<ignore>'`** — reuses the ripgrep already in the image and applies the `ignore` negations. **CAVEAT (verified):** a positive `-g <pattern>` is a ripgrep *whitelist override* that takes precedence over `.gitignore`, so a gitignored file matching `<pattern>` is **NOT** filtered by `.gitignore` (this diverges from Pi's local `fd --glob`, which ANDs the pattern with `.gitignore`). Exclusion therefore comes from the `ignore`-list negated globs (+ ripgrep built-ins), not from `.gitignore`. Accepted for M3; true `fd`-parity tracked as a follow-up. (Rejected: keep `find` + translate globs to `-path -prune` — brittle.) |
+| D5 | find implementation | **`rg --files -g <pattern> -g '!<ignore>'`** — reuses the ripgrep already in the image, honours `.gitignore`, and applies the `ignore` negations. **Verified behavior on rg 14.1.0 (nuanced):** gitignored *directories* (e.g. `node_modules/`, `dist/`) are pruned and stay excluded even when `-g` matches files inside them; but an individually-gitignored *file* matching the positive `-g <pattern>` IS re-included (the glob whitelist-overrides a file-level ignore) — a minor divergence from Pi's `fd --glob`. The `ignore` list (negated `-g '!<ig>'`) always excludes its entries. Accepted for M3; closing the individual-file edge is a low-priority follow-up. (Rejected: keep `find` + translate globs to `-path -prune` — brittle.) |
 | D6 | Resilience | **Transparent fallback.** A failed spawn or a session that dies mid-command degrades that op to a one-shot `kubectl exec` (`kubectlExecInPod`), and the session re-spawns lazily. A dead channel never hard-fails — it reverts to M2 behavior. |
 | D7 | Lifecycle | **Dispose on `session_shutdown`** (fires on quit/reload/new/resume/fork) — end stdin and kill the kubectl process so it is never leaked. Spawn is **lazy** (first fast op), so an inert run spawns nothing. |
 | D8 | Verification gate | **Pure framing unit tests + fake-`spawn` persistent-exec tests + operations tests + one real kind smoke.** Direct mirror of M2's D4 — cluster-free and build-free except the single smoke. |
@@ -238,13 +239,14 @@ glob: async (pattern, cwd, { ignore, limit }) => {
 };
 ```
 
-`rg --files` lists files under cwd; `--hidden` keeps dotfiles in view; each `ignore`
-pattern becomes a negated glob. **Caveat (verified on real ripgrep):** the explicit
-positive `-g <pattern>` is a *whitelist override* that takes precedence over `.gitignore`,
-so a gitignored file matching `<pattern>` is NOT filtered by `.gitignore` (unlike Pi's
-`fd --glob`, which ANDs the two). Real exclusion comes from the `ignore`-list negated globs
-(`-g '!<ig>'`) plus ripgrep's built-ins, not `.gitignore`. Output shape (relative paths,
-`./` stripped, `limit`-capped) matches M2. `exists` is unchanged.
+`rg --files` lists files under cwd honouring `.gitignore`; `--hidden` keeps dotfiles in
+view; each `ignore` pattern becomes a negated glob. **Verified nuance (rg 14.1.0):**
+gitignored *directories* (e.g. `node_modules/`, `dist/`) are pruned and stay excluded even
+when `-g` matches files inside; but an individually-gitignored *file* matching the positive
+`-g <pattern>` is re-included (the glob whitelist-overrides a file-level ignore) — a minor
+divergence from Pi's `fd --glob`. The `ignore`-list negated globs (`-g '!<ig>'`) always
+exclude their entries. Output shape (relative paths, `./` stripped, `limit`-capped) matches
+M2. `exists` is unchanged.
 
 ---
 

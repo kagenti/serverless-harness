@@ -106,13 +106,14 @@ export function createPodFindOps(exec: ExecInPod, cfg: K8sSandboxConfig): FindOp
   const q = mapper(cfg);
   return {
     exists: async (p) => (await exec(`test -e ${q(p)}`)).exitCode === 0,
-    // `rg --files` lists files under cwd. NOTE: an explicit `-g <pattern>` glob is
-    // a *whitelist override* in ripgrep and takes precedence over .gitignore, so a
-    // gitignored file matching <pattern> is NOT filtered by .gitignore here (this
-    // differs from Pi's `fd --glob`, which ANDs the pattern with gitignore).
-    // Exclusions come from Pi's `ignore` list, applied as negated globs (-g '!<ig>'),
-    // plus ripgrep's built-in handling. --hidden keeps dotfiles in view.
-    // Paths come back relative to cwd; strip any leading "./" defensively.
+    // `rg --files --hidden` lists files under cwd, honouring .gitignore (verified
+    // on the pod's ripgrep 14.1.0). Nuance: gitignored DIRECTORIES (e.g. node_modules/,
+    // dist/) are pruned and stay excluded even though an explicit -g matches files
+    // inside them; but an individually-gitignored FILE matching the positive -g
+    // <pattern> IS re-included (the glob whitelist-overrides a file-level ignore) —
+    // a minor divergence from Pi's `fd --glob`. Pi's `ignore` list is applied as
+    // negated globs (-g '!<ig>') and always excludes its entries. --hidden keeps
+    // dotfiles in view. Paths come back relative to cwd; strip any leading "./".
     glob: async (pattern, cwd, { ignore, limit }) => {
       const globs = [`-g ${shQuote(pattern)}`, ...ignore.map((ig) => `-g ${shQuote(`!${ig}`)}`)];
       const r = await exec(`cd ${q(cwd)} && rg --files --hidden ${globs.join(" ")} | head -n ${limit}`);
