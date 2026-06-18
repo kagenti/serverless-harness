@@ -10,6 +10,8 @@ spec:
         autoscaling.knative.dev/min-scale: "0"
         autoscaling.knative.dev/max-scale: "5"
         autoscaling.knative.dev/scale-to-zero-pod-retention-period: "30s"
+        autoscaling.knative.dev/target: "1"
+        autoscaling.knative.dev/target-burst-capacity: "0"
     spec:
       containerConcurrency: 1
       timeoutSeconds: 300

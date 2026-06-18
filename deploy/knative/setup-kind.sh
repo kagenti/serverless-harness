@@ -59,11 +59,11 @@ kubectl patch configmap/config-domain \
   --type merge \
   --patch '{"data":{"example.com":""}}'
 
-# Tune autoscaler for faster scale-to-zero (dev/testing)
+# Tune autoscaler for faster scale-to-zero and single-pod-per-request (dev/testing)
 kubectl patch configmap/config-autoscaler \
   --namespace knative-serving \
   --type merge \
-  --patch '{"data":{"stable-window":"20s","scale-to-zero-grace-period":"10s"}}'
+  --patch '{"data":{"stable-window":"20s","scale-to-zero-grace-period":"10s","container-concurrency-target-percentage":"100"}}'
 
 # Skip tag resolution for local images
 kubectl patch configmap/config-deployment \
