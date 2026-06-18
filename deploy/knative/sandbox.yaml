@@ -9,7 +9,8 @@ spec:
   containers:
     - name: sandbox
       image: alpine:3.20
-      command: ["sleep", "infinity"]
+      command: ["/bin/sh", "-c", "apk add --no-cache bash coreutils findutils grep && mkdir -p /workspace && exec sleep infinity"]
+      workingDir: /workspace
       resources:
         requests:
           memory: "64Mi"
