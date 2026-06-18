@@ -1,0 +1,76 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: serverless-harness
+  namespace: default
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/min-scale: "0"
+        autoscaling.knative.dev/max-scale: "5"
+        autoscaling.knative.dev/scale-to-zero-pod-retention-period: "30s"
+    spec:
+      containerConcurrency: 1
+      timeoutSeconds: 300
+      serviceAccountName: serverless-harness
+      containers:
+        - image: serverless-harness:local
+          ports:
+            - containerPort: 8080
+          env:
+            - name: REDIS_URL
+              value: "redis://redis.default.svc:6379"
+            - name: KAGENTI_SANDBOX_POD
+              value: "sandbox-0"
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: llm-credentials
+                  key: api-key
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: serverless-harness
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: serverless-harness-sandbox
+  namespace: default
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: serverless-harness-sandbox
+  namespace: default
+subjects:
+  - kind: ServiceAccount
+    name: serverless-harness
+    namespace: default
+roleRef:
+  kind: Role
+  name: serverless-harness-sandbox
+  apiGroup: rbac.authorization.k8s.io
