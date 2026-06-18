@@ -2,6 +2,10 @@
   "name": "@sh/harness",
   "type": "module",
   "version": "0.0.0",
+  "exports": {
+    ".": "./src/index.ts",
+    "./run-turn": "./src/run-turn.ts"
+  },
   "scripts": {
     "test": "vitest run"
   },
