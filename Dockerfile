@@ -37,4 +37,5 @@ WORKDIR /app
 COPY --from=builder /app ./
 ENV NODE_ENV=production
 EXPOSE 8080
-CMD ["node", "--import", "tsx", "packages/knative-server/src/server.ts"]
+WORKDIR /app/packages/knative-server
+CMD ["node", "--import", "tsx", "src/server.ts"]

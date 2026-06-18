@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CLUSTER_NAME="${CLUSTER_NAME:-sh-knative}"
 SKIP_BUILD="${SKIP_BUILD:-false}"
-KNATIVE_VERSION="v1.14.1"
+KNATIVE_VERSION="${KNATIVE_VERSION:-v1.14.0}"
 
 # Parse args
 for arg in "$@"; do
@@ -45,13 +45,31 @@ kubectl apply -f "https://github.com/knative/serving/releases/download/knative-$
 
 # 3. Install Kourier (networking layer)
 echo "--- Installing Kourier ---"
-kubectl apply -f "https://github.com/knative/net-kourier/releases/download/knative-${KNATIVE_VERSION}/kourier.yaml"
+kubectl apply -f "https://github.com/knative-extensions/net-kourier/releases/download/knative-${KNATIVE_VERSION}/kourier.yaml"
 
 # Configure Knative to use Kourier
 kubectl patch configmap/config-network \
   --namespace knative-serving \
   --type merge \
   --patch '{"data":{"ingress-class":"kourier.ingress.networking.knative.dev"}}'
+
+# Configure external domain
+kubectl patch configmap/config-domain \
+  --namespace knative-serving \
+  --type merge \
+  --patch '{"data":{"example.com":""}}'
+
+# Tune autoscaler for faster scale-to-zero (dev/testing)
+kubectl patch configmap/config-autoscaler \
+  --namespace knative-serving \
+  --type merge \
+  --patch '{"data":{"stable-window":"20s","scale-to-zero-grace-period":"10s"}}'
+
+# Skip tag resolution for local images
+kubectl patch configmap/config-deployment \
+  --namespace knative-serving \
+  --type merge \
+  --patch '{"data":{"registries-skipping-tag-resolving":"kind.local,ko.local,dev.local"}}'
 
 # Wait for Knative components
 echo "--- Waiting for Knative Serving to be ready ---"
@@ -70,18 +88,20 @@ kubectl wait --for=condition=Ready pod/sandbox-0 -n default --timeout=60s
 # 6. Build and load harness image
 if [ "$SKIP_BUILD" != "true" ]; then
   echo "--- Building serverless-harness image ---"
-  docker build -t serverless-harness:local "$REPO_ROOT"
+  docker build --load -t dev.local/serverless-harness:local "$REPO_ROOT"
   echo "--- Loading image into kind ---"
-  kind load docker-image serverless-harness:local --name "$CLUSTER_NAME"
+  kind load docker-image dev.local/serverless-harness:local --name "$CLUSTER_NAME"
 fi
 
-# 7. Create LLM credentials secret
-if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-  echo "ERROR: ANTHROPIC_API_KEY must be set"
+# 7. Create LLM credentials secret (supports direct API key or gateway bridge)
+if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
+  echo "ERROR: Set ANTHROPIC_API_KEY (direct) or ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL (gateway)"
   exit 1
 fi
-kubectl create secret generic llm-credentials \
-  --from-literal=api-key="$ANTHROPIC_API_KEY" \
+SECRET_ARGS=(--from-literal=api-key="${ANTHROPIC_API_KEY:-${ANTHROPIC_AUTH_TOKEN}}")
+[ -n "${ANTHROPIC_BASE_URL:-}" ] && SECRET_ARGS+=(--from-literal=base-url="$ANTHROPIC_BASE_URL")
+[ -n "${ANTHROPIC_AUTH_TOKEN:-}" ] && SECRET_ARGS+=(--from-literal=auth-token="$ANTHROPIC_AUTH_TOKEN")
+kubectl create secret generic llm-credentials "${SECRET_ARGS[@]}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 # 8. Deploy Knative Service

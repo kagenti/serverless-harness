@@ -15,7 +15,7 @@ spec:
       timeoutSeconds: 300
       serviceAccountName: serverless-harness
       containers:
-        - image: serverless-harness:local
+        - image: dev.local/serverless-harness:local
           ports:
             - containerPort: 8080
           env:
@@ -28,6 +28,18 @@ spec:
                 secretKeyRef:
                   name: llm-credentials
                   key: api-key
+            - name: ANTHROPIC_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: llm-credentials
+                  key: base-url
+                  optional: true
+            - name: ANTHROPIC_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: llm-credentials
+                  key: auth-token
+                  optional: true
           readinessProbe:
             httpGet:
               path: /health
