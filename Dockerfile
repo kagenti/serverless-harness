@@ -1,36 +1,38 @@
 # Stage 1: install + build pi-fork
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
+RUN apk add --no-cache build-base python3 pkgconfig pixman-dev cairo-dev pango-dev jpeg-dev giflib-dev librsvg-dev
 RUN corepack enable && corepack prepare pnpm@9 --activate
 WORKDIR /app
 
-# Copy manifests first for layer caching
-COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
-COPY pi-fork/package.json pi-fork/pnpm-workspace.yaml ./pi-fork/
-COPY pi-fork/packages/ai/package.json ./pi-fork/packages/ai/
-COPY pi-fork/packages/agent/package.json ./pi-fork/packages/agent/
-COPY pi-fork/packages/tui/package.json ./pi-fork/packages/tui/
-COPY pi-fork/packages/coding-agent/package.json ./pi-fork/packages/coding-agent/
+# Copy workspace manifests for layer caching
+COPY pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages/session-backend/package.json ./packages/session-backend/
 COPY packages/k8s-sandbox/package.json ./packages/k8s-sandbox/
 COPY packages/knative-server/package.json ./packages/knative-server/
 COPY harness/package.json ./harness/
 
+# Copy pi-fork (uses npm, not pnpm — has its own package-lock.json)
+COPY pi-fork/ ./pi-fork/
+
+# Install pi-fork deps (provides tsgo, tsx, etc.)
+RUN cd pi-fork && npm ci
+
+# Install pnpm workspace deps (links to pi-fork via relative paths)
 RUN pnpm install --frozen-lockfile
 
-# Copy full source
-COPY pi-fork/ ./pi-fork/
+# Copy workspace source
 COPY packages/ ./packages/
 COPY harness/ ./harness/
 
-# Build pi-fork (required order per M1 gotcha)
-RUN pnpm -C pi-fork/packages/ai build && \
-    pnpm -C pi-fork/packages/agent build && \
-    pnpm -C pi-fork/packages/tui build && \
-    pnpm -C pi-fork/packages/coding-agent build
+# Build pi-fork (required order per M1 gotcha; uses npm since pi-fork is an npm workspace)
+RUN cd pi-fork && npm run build -w packages/ai && \
+    npm run build -w packages/agent && \
+    npm run build -w packages/tui && \
+    npm run build -w packages/coding-agent
 
 # Stage 2: slim runtime
-FROM node:20-alpine
-RUN apk add --no-cache kubectl
+FROM node:22-alpine
+RUN apk add --no-cache kubectl cairo pango libjpeg-turbo giflib librsvg pixman
 WORKDIR /app
 COPY --from=builder /app ./
 ENV NODE_ENV=production
