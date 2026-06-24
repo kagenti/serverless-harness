@@ -196,7 +196,7 @@ Assisted-By: Claude (Anthropic AI) <noreply@anthropic.com>"
 - Produces:
   - `static SessionManager.openFromCheckpoint(sessionId: string, backend: SessionStorageBackend, cwd?: string): Promise<SessionManager>` — reads only the marker's `resumeFromPosition`-forward slice; falls back to `openFromBackend` when there is no usable marker or the slice is empty.
 
-> **Note (design gate, verified):** `buildSessionContext()` derives `model` from the last assistant message (always inside the kept tail) and `thinkingLevel` from `thinking_level_change` entries, defaulting to `"off"`. Tail-load parity therefore holds for the serverless scenario (no mid-session thinking-level changes). This task only proves the slice is read correctly and the never-compacted fallback; the full `buildSessionContext` parity gate is Task 5.
+> **Note (design gate, verified):** `buildSessionContext()` derives `model` from the last assistant message (always inside the kept tail) and `thinkingLevel` from `thinking_level_change` entries, defaulting to `"off"`. Tail-load parity holds for `model` (unaffected — re-set by every assistant message). For `thinkingLevel`: Pi appends a `thinking_level_change` at session start (before any messages), so that entry is pre-`firstKeptEntryId` and excluded from the tail; a tail-load therefore resets `thinkingLevel` to `"off"` on the first post-compaction resume (self-heals next turn). Safe while thinking level is settings-governed and not changed per session. This task only proves the slice is read correctly and the never-compacted fallback; the full `buildSessionContext` parity gate is Task 5.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -677,7 +677,7 @@ Assisted-By: Claude (Anthropic AI) <noreply@anthropic.com>"
 - Consumes: `SessionManager.openFromCheckpoint` (Task 2), `checkpointExtension` (Task 4), `budgetVoterExtension` (Task 3), existing `runTurn` wiring.
 - Produces: no new exported symbols; `runTurn` now resumes via the fast path and registers the two new extensions.
 
-> **Parity gate is the M5 done-criterion #1.** It drives a session that compacts once, runs the real `checkpointExtension` to write the marker, then asserts `buildSessionContext()` from `openFromCheckpoint` deep-equals the result from `openFromBackend`. Per the verified design gate, the test uses only user/assistant messages + a compaction (no `thinking_level_change`), so `model` (from the last assistant message, which is in the kept tail) and `thinkingLevel` (`"off"`) match in both loads.
+> **Parity gate is the M5 done-criterion #1.** It drives a session that compacts once, runs the real `checkpointExtension` to write the marker, then asserts `buildSessionContext()` from `openFromCheckpoint` deep-equals the result from `openFromBackend`. The test uses only user/assistant messages + a compaction (no `thinking_level_change`), so both `model` and `thinkingLevel` are `"off"` / `null` in both loads and the deep-equal holds. Note: if a `thinking_level_change` is appended *before* `firstKeptEntryId` (e.g. at session start), a tail-load will reset `thinkingLevel` to `"off"` while a full load preserves it — this is documented behavior, locked by the separate "thinkingLevel reset" test. `model` is unaffected (re-set by every assistant message, always in the kept tail).
 
 - [ ] **Step 1: Write the failing parity-gate test**
 

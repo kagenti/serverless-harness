@@ -42,7 +42,7 @@ export function sessionSpendTotal(ctx: ExtensionContext): number | null {
 /**
  * Meters per-turn token spend (delta from the per-process baseline captured at
  * session_start) and blocks tool calls once the cap is breached, appending a single
- * `abort` custom entry. Inert when limit <= 0.
+ * `abort` custom entry. Inert when limit is non-finite or <= 0.
  */
 export function budgetVoterExtension(
   sm: SessionManager,

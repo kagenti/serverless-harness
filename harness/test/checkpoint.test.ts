@@ -118,3 +118,30 @@ describe("reconstruction parity (M5 gate)", () => {
     expect(tail.length).toBeLessThan(full.length);
   });
 });
+
+describe("openFromCheckpoint thinkingLevel reset (documented tail-load caveat)", () => {
+  it("drops a pre-tail thinking_level_change: tail-load thinkingLevel is default, full-load is preserved", async () => {
+    const backend = new BufferedRedisBackend(store);
+    const sm = SessionManager.create(process.cwd(), undefined, undefined, backend);
+    const sid = sm.getSessionId();
+    sids.push(sid);
+
+    sm.appendThinkingLevelChange("medium");            // pre-tail (before firstKept)
+    sm.appendMessage({ role: "user", content: "q" } as never);
+    const firstKeptId = sm.appendMessage({ role: "assistant", content: "a" } as never);
+    sm.appendMessage({ role: "user", content: "q2" } as never);
+    sm.appendCompaction("summary", firstKeptId, 1);
+    await backend.flush();
+
+    const handlers: Record<string, Function> = {};
+    const pi = { on: (ev: string, h: Function) => { handlers[ev] = h; } };
+    checkpointExtension(store, sm)(pi as never);
+    await handlers.session_compact({ compactionEntry: { firstKeptEntryId: firstKeptId } });
+    await backend.flush();
+
+    const viaBackend = await SessionManager.openFromBackend(sid, backend, process.cwd());
+    const viaCheckpoint = await SessionManager.openFromCheckpoint(sid, backend, process.cwd());
+    expect(viaBackend.buildSessionContext().thinkingLevel).toBe("medium");   // full load preserves
+    expect(viaCheckpoint.buildSessionContext().thinkingLevel).toBe("off");   // tail load resets (documented)
+  });
+});

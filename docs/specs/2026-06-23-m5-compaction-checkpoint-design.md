@@ -40,7 +40,12 @@ M5 is **done** when:
 
 1. A session that has compacted at least once resumes via `openFromCheckpoint`, reading only
    the kept-tail-forward slice, and its reconstructed `buildSessionContext()` is **identical**
-   to a full `openFromBackend` reconstruction (parity test, real Redis).
+   to a full `openFromBackend` reconstruction (parity test, real Redis) — with one documented
+   caveat: `thinkingLevel` resets to the settings default (`"off"`) on the first post-compaction
+   resume because Pi's session-start `thinking_level_change` entry is pre-`firstKeptEntryId`
+   and thus excluded from the tail; this self-heals on the next turn. `model` is unaffected
+   (re-set by every assistant message, always inside the kept tail). Safe while thinking level
+   is settings-governed and not changed per session.
 2. A session that has never compacted falls back to full reconstruction (no regression).
 3. The budget voter blocks a tool call and appends an `abort` entry once per-turn spend
    exceeds the configured cap, and is inert when unconfigured.
@@ -311,6 +316,7 @@ export function budgetVoterExtension(sm: SessionManager, opts: {
 | `getSessionStats` delta is a "recent spend" proxy, not exact per-turn spend (loaded-tail messages carry prior usage; baseline subtraction mitigates but compaction within a turn can perturb it). | Voter trips slightly early/late. | Acceptable for PoC + E5 (single expensive task). `null`-handling prevents false blocks. Documented. |
 | The loader's benefit is local (I/O + walk), not LLM latency — see §1. | E2 measured the wrong thing → "no effect". | Spec states E2 must measure **local reconstruction cost**; flagged for the experiments milestone. |
 | Tail-load loses access to pre-compaction entries by id (branches/labels). | Non-issue for serverless resume (continues the leaf). | `openFromBackend` remains available for any full-history use; loader is opt-in. |
+| `openFromCheckpoint` tail-load excludes the session-start `thinking_level_change` entry (pre-`firstKeptEntryId`), so `buildSessionContext().thinkingLevel` resets to `"off"` on the first post-compaction resume. | `thinkingLevel` is wrong for one turn. | Self-heals on next turn (Pi re-appends the entry). Safe while thinking level is settings-governed. `model` is unaffected (re-set by every assistant message, always in the kept tail). Locked by a dedicated test. |
 
 ---
 
