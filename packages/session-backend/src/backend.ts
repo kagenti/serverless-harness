@@ -15,6 +15,8 @@ export interface LogStore<E = unknown> {
   latestWhere(session_id: string, predicate: (entry: E) => boolean): Promise<StoredEntry<E> | null>;
   /** Next position index for a session (1-based; equals current count + 1). */
   nextPosition(session_id: string): Promise<number>;
+  /** Position (1-based) of the stored entry whose decoded payload `.id` equals `id`, or null. O(N). */
+  positionOfId(session_id: string, id: string): Promise<number | null>;
   /** All known session ids. */
   list(): Promise<string[]>;
 }
