@@ -11,6 +11,8 @@ import { RedisSessionBackend } from "@sh/session-backend";
 import { BufferedRedisBackend } from "./buffered-redis-backend.js";
 import { flushExtension } from "./flush-extension.js";
 import { k8sSandboxExtension } from "@sh/k8s-sandbox";
+import { checkpointExtension } from "./checkpoint-extension.js";
+import { budgetVoterExtension } from "./budget-voter.js";
 
 export interface TurnConfig {
   redisUrl?: string;
@@ -43,17 +45,33 @@ export async function runTurn(
   const backend = new BufferedRedisBackend(store);
 
   const sessionManager = sessionId
-    ? await SessionManager.openFromBackend(sessionId, backend, cwd)
+    ? await SessionManager.openFromCheckpoint(sessionId, backend, cwd)
     : SessionManager.create(cwd, undefined, undefined, backend);
 
   const agentDir = getAgentDir();
   const settingsManager = SettingsManager.create(cwd, agentDir);
 
+  const budgetLimit = Number(process.env.SH_BUDGET_TOKENS);
+  const budgetMargin = Number(process.env.SH_BUDGET_MARGIN);
+  const extensionFactories = [
+    flushExtension(backend),
+    k8sSandboxExtension(),
+    checkpointExtension(store, sessionManager),
+  ];
+  if (Number.isFinite(budgetLimit) && budgetLimit > 0) {
+    extensionFactories.push(
+      budgetVoterExtension(sessionManager, {
+        limit: budgetLimit,
+        ...(Number.isFinite(budgetMargin) && budgetMargin > 0 ? { margin: budgetMargin } : {}),
+      }),
+    );
+  }
+
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir,
     settingsManager,
-    extensionFactories: [flushExtension(backend), k8sSandboxExtension()],
+    extensionFactories,
   });
   await resourceLoader.reload();
 

@@ -84,3 +84,37 @@ describe("checkpointExtension", () => {
     expect((marker as { data?: { resumeFromPosition?: number } })?.data?.resumeFromPosition).toBe(expectedPos);
   });
 });
+
+describe("reconstruction parity (M5 gate)", () => {
+  it("openFromCheckpoint buildSessionContext deep-equals openFromBackend after a compaction", async () => {
+    const backend = new BufferedRedisBackend(store);
+    const sm = SessionManager.create(process.cwd(), undefined, undefined, backend);
+    const sid = sm.getSessionId();
+    sids.push(sid);
+
+    sm.appendMessage({ role: "user", content: "old turn 1" } as never);
+    sm.appendMessage({ role: "assistant", content: "old answer 1" } as never);
+    const firstKeptId = sm.appendMessage({ role: "user", content: "kept question" } as never);
+    sm.appendMessage({ role: "assistant", content: "kept answer" } as never);
+    sm.appendCompaction("summary of earlier turns", firstKeptId, 4321);
+    await backend.flush();
+
+    // Run the real extension to write the marker.
+    const handlers: Record<string, Function> = {};
+    const pi = { on: (ev: string, h: Function) => { handlers[ev] = h; } };
+    checkpointExtension(store, sm)(pi as never);
+    await handlers.session_compact({ compactionEntry: { firstKeptEntryId: firstKeptId } });
+    await backend.flush();
+
+    const viaCheckpoint = await SessionManager.openFromCheckpoint(sid, backend, process.cwd());
+    const viaBackend = await SessionManager.openFromBackend(sid, backend, process.cwd());
+    expect(viaCheckpoint.buildSessionContext()).toEqual(viaBackend.buildSessionContext());
+
+    // And it really read a smaller slice than the full log.
+    const cpMarker = await backend.latestCheckpoint(sid);
+    const resumeFrom = (cpMarker as { data?: { resumeFromPosition?: number } }).data!.resumeFromPosition!;
+    const tail = await store.read(sid, resumeFrom);
+    const full = await store.read(sid);
+    expect(tail.length).toBeLessThan(full.length);
+  });
+});
