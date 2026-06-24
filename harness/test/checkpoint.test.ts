@@ -2,6 +2,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import { SessionManager, type FileEntry } from "@earendil-works/pi-coding-agent";
 import { RedisSessionBackend } from "@sh/session-backend";
 import { BufferedRedisBackend } from "../src/buffered-redis-backend";
+import { checkpointExtension } from "../src/checkpoint-extension";
 
 const REDIS = process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
 const store = new RedisSessionBackend<FileEntry>(REDIS);
@@ -54,5 +55,32 @@ describe("SessionManager.openFromCheckpoint", () => {
     expect(viaCheckpoint.getEntries().map((e) => JSON.stringify(e))).toEqual(
       viaBackend.getEntries().map((e) => JSON.stringify(e)),
     );
+  });
+});
+
+describe("checkpointExtension", () => {
+  it("writes a checkpoint marker pointing at the compaction's firstKeptEntryId on session_compact", async () => {
+    const backend = new BufferedRedisBackend(store);
+    const sm = SessionManager.create(process.cwd(), undefined, undefined, backend);
+    const sid = sm.getSessionId();
+    sids.push(sid);
+
+    sm.appendMessage({ role: "user", content: "q" } as never);
+    const firstKeptId = sm.appendMessage({ role: "assistant", content: "a" } as never);
+    sm.appendCompaction("summary so far", firstKeptId, 1234);
+    await backend.flush();
+
+    // Capture the session_compact handler the extension registers.
+    const handlers: Record<string, Function> = {};
+    const pi = { on: (ev: string, h: Function) => { handlers[ev] = h; } };
+    checkpointExtension(store, sm)(pi as never);
+
+    await handlers.session_compact({ compactionEntry: { firstKeptEntryId: firstKeptId } });
+    await backend.flush();
+
+    const marker = await backend.latestCheckpoint(sid);
+    const expectedPos = await store.positionOfId(sid, firstKeptId);
+    expect((marker as { customType?: string })?.customType).toBe("checkpoint");
+    expect((marker as { data?: { resumeFromPosition?: number } })?.data?.resumeFromPosition).toBe(expectedPos);
   });
 });
