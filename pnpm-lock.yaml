@@ -6,6 +6,31 @@ settings:
 
 importers:
 
+  experiments:
+    dependencies:
+      '@earendil-works/pi-ai':
+        specifier: link:../pi-fork/packages/ai
+        version: link:../pi-fork/packages/ai
+      '@earendil-works/pi-coding-agent':
+        specifier: link:../pi-fork/packages/coding-agent
+        version: link:../pi-fork/packages/coding-agent
+      '@sh/harness':
+        specifier: workspace:*
+        version: link:../harness
+      '@sh/session-backend':
+        specifier: workspace:*
+        version: link:../packages/session-backend
+    devDependencies:
+      tsx:
+        specifier: ^4.19.0
+        version: 4.22.4
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9(@types/node@22.19.21)
+
   harness:
     dependencies:
       '@earendil-works/pi-ai':
