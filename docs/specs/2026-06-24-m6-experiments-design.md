@@ -205,6 +205,42 @@ so the produced log is structurally identical to a genuinely compacted session.
 
 ### 4.5 E2 measurement (`experiments/test/e2-reconstruction-cost.test.ts`)
 
+**Background — what E2 actually exercises (why `openFromCheckpoint` is O(tail), and why the
+marker exists).** The measured win rests on the M5 resume mechanism; this is the thing E2
+quantifies. A compacted session's log is laid out (by position) as:
+
+```
+pos 1     header
+pos 2..k-1   older messages            ← summarized away
+pos k     firstKeptEntryId             ◄── resume MUST start here (kept tail begins)
+pos k+1.. more kept messages
+pos m     compaction entry             ← appended AFTER the kept msgs (summary + firstKeptEntryId)
+pos m+1.. post-compaction messages
+```
+
+Two facts make a simple "read from the compaction entry forward" insufficient, and motivate the
+separate `checkpoint` marker:
+
+1. **The kept tail sits *before* the compaction entry (F4).** Pi appends the compaction entry
+   *after* the messages it retains, so reading forward from the compaction entry's position would
+   drop the kept tail (positions `k..m-1`) and reconstruct the wrong context. The correct resume
+   point is `firstKeptEntryId` at position `k`, which is *earlier* in the log.
+2. **Redis Streams seek by position, not by content-id.** The compaction entry holds
+   `firstKeptEntryId` as a string id buried in its payload. Translating that id → stream position
+   requires reading entries until it is found — an O(N) scan (`positionOfId`), which is exactly the
+   cost the fast path is meant to avoid.
+
+The `checkpoint` marker resolves this: at compaction time (rare, and already expensive due to the
+LLM summarization), the harness computes `positionOfId(firstKeptEntryId)` once and stores it as an
+integer `resumeFromPosition`. Cold start then (a) finds the newest marker via `latestCheckpoint`
+(a cheap tail-first XREVRANGE lookup) and (b) issues one positional seek
+`XRANGE <resumeFromPosition> +`, returning `[firstKept … kept tail … compaction … post-compaction]`
+in a single O(tail) read — no scan to locate the compaction entry, no id→position scan. The marker
+is, in effect, a precomputed "seek to position P" index entry; without it, resume would still be
+O(total) and the E2 win would not exist. **E2 measures precisely this:** the entries/bytes the
+tail read pulls (constant, bounded by the kept tail) versus the full read (`openFromBackend`, which
+pulls the whole log, ≈ N + header + compaction + marker).
+
 For each N: build the fixture; wrap the backend in `CountingBackend`; reset and run
 `openFromBackend` (record counts); reset and run `openFromCheckpoint` (record counts); assert the
 two reconstructions produce a deep-equal `buildSessionContext()`. After the series, assert the
