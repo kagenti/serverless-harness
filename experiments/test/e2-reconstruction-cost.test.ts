@@ -64,6 +64,10 @@ describe("E2 — reconstruction cost", () => {
       });
     }
 
+    // Completeness guard: a partial run (e.g. a Redis hiccup mid-loop) would leave
+    // `rows` short and let the strict-monotone ratio loop pass vacuously. Fail loudly.
+    expect(rows.length).toBe(Ns.length);
+
     // Checkpoint entries are bounded by the kept tail, independent of N.
     const cpEntries = rows.map((r) => r.checkpointEntries);
     expect(Math.max(...cpEntries)).toBeLessThanOrEqual(10);
