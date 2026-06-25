@@ -5,7 +5,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./run-turn": "./src/run-turn.ts",
-    "./buffered-redis-backend": "./src/buffered-redis-backend.ts"
+    "./buffered-redis-backend": "./src/buffered-redis-backend.ts",
+    "./budget-voter": "./src/budget-voter.ts"
   },
   "scripts": {
     "test": "vitest run"
