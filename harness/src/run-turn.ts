@@ -12,7 +12,7 @@ import { BufferedRedisBackend } from "./buffered-redis-backend.js";
 import { flushExtension } from "./flush-extension.js";
 import { k8sSandboxExtension } from "@sh/k8s-sandbox";
 import { checkpointExtension } from "./checkpoint-extension.js";
-import { budgetVoterExtension } from "./budget-voter.js";
+import { budgetVoterExtension, branchSpend } from "./budget-voter.js";
 
 export interface TurnConfig {
   redisUrl?: string;
@@ -77,9 +77,13 @@ export async function runTurn(
     checkpointExtension(store, sessionManager),
   ];
   if (Number.isFinite(budgetLimit) && budgetLimit > 0) {
+    // session_start is not emitted in the headless path, so compute the pre-turn baseline
+    // (cumulative spend already on the loaded branch) here and inject it into the voter.
+    const budgetBaseline = branchSpend(sessionManager) ?? 0;
     extensionFactories.push(
       budgetVoterExtension(sessionManager, {
         limit: budgetLimit,
+        baseline: budgetBaseline,
         ...(Number.isFinite(budgetMargin) && budgetMargin > 0 ? { margin: budgetMargin } : {}),
       }),
     );

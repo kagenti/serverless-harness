@@ -25,10 +25,12 @@ function spendCtx(total: number) {
   } as never;
 }
 
+// Mirrors production (run-turn): inject a pre-turn baseline; never fire session_start
+// (the headless path does not emit it).
 function register(sm: SessionManager, limit: number) {
   const handlers: Record<string, (e: unknown, ctx: unknown) => unknown> = {};
   const pi = { on: (ev: string, h: (e: unknown, ctx: unknown) => unknown) => { handlers[ev] = h; } };
-  budgetVoterExtension(sm, { limit })(pi as never);
+  budgetVoterExtension(sm, { limit, baseline: 0 })(pi as never);
   return handlers;
 }
 
@@ -48,8 +50,7 @@ describe("E5 — budget voter enforcement (structural, real Redis)", () => {
     sids.push(sid);
 
     const handlers = register(sm, 50);
-    handlers.session_start({}, spendCtx(0)); // baseline = 0
-    const res = handlers.tool_call({}, spendCtx(60)); // 60 > 50
+    const res = handlers.tool_call({}, spendCtx(60)); // 60 > 50, baseline 0, no session_start
 
     expect(res).toEqual({ block: true, reason: "Session token budget exceeded" });
     await backend.flush();
@@ -63,7 +64,6 @@ describe("E5 — budget voter enforcement (structural, real Redis)", () => {
     sids.push(sid);
 
     const handlers = register(sm, 0); // disabled cap
-    handlers.session_start({}, spendCtx(0));
     const res = handlers.tool_call({}, spendCtx(10_000)); // way over, but cap disabled
 
     expect(res).toEqual({});
