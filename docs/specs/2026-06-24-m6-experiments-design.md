@@ -184,6 +184,14 @@ const baseModel = getModel(provider, modelId);
 Defaults preserved ⇒ M4/M5 behavior unchanged when unset. The existing gateway/auth-header
 branch (F6) is unchanged and remains anthropic/gateway-shaped (D8).
 
+**Unknown-model guard (added during M6).** `getModel(provider, modelId)` returns `undefined`
+for an id not in the pi-ai registry — a common trap, since the dotted `claude-sonnet-4.6` is a
+`github-copilot` key while the `anthropic` id is the dash-form `claude-sonnet-4-6`. Left
+unguarded, the gateway branch then throws a cryptic `Cannot read properties of undefined
+(reading 'headers')`. `run-turn` therefore wraps the lookup in `requireModel(provider, modelId)`,
+which throws a clear error — with a dot/dash "did you mean" suggestion, or the known ids — when
+the id is unknown.
+
 ### 4.3 Counting backend (`experiments/src/counting-backend.ts`)
 
 A decorator implementing `SessionStorageBackend` (F3) around the real backend the loaders use.
@@ -307,6 +315,7 @@ so the model has something to call.
 | Synthetic fixture diverges from genuinely-compacted sessions. | E2 measures an unrealistic shape. | Built through the same `RedisSessionBackend`/`appendCompaction` path as `checkpoint.test.ts` (F4); a unit test asserts `latestCheckpoint`/parity hold on it. |
 | `SH_MODEL_PROVIDER` ≠ anthropic is untested (D8). | False expectation of multi-provider support. | Documented as forward-looking; default and tests use anthropic (incl. gateway). |
 | New workspace glob / cross-package deps misconfigured. | `pnpm -C experiments test` won't resolve `harness`/pi-fork. | Mirror the existing `harness` package's workspace deps; build-order gotchas from M2/M4 noted in the plan. |
+| The harness never calls `bindExtensions()`, so `session_start` is **not** emitted in the headless `runTurn` path (only interactive/print/rpc modes emit it). | The voter's original `session_start`-captured baseline stayed `null`, so it never blocked against a real model — found by the live E5 run; the structural/unit tests masked it by firing `session_start` by hand. | **Fixed:** the voter no longer depends on `session_start`; `run-turn` computes the pre-turn baseline (`branchSpend(sessionManager)`) and injects it. **Open for M7:** verify whether `session_compact` (checkpoint marker) and `turn_end` (flush) *also* require `bindExtensions` — if so, the checkpoint marker is never written in production and `openFromCheckpoint` always falls back to full replay, which M7's E3-mobility depends on. |
 
 ---
 

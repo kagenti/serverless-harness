@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveModelSelection } from "../src/run-turn";
+import { resolveModelSelection, requireModel } from "../src/run-turn";
 
 describe("resolveModelSelection", () => {
   it("defaults to anthropic / claude-opus-4-8 when nothing is set", () => {
@@ -29,5 +29,25 @@ describe("resolveModelSelection", () => {
       provider: "p1",
       modelId: "m1",
     });
+  });
+});
+
+describe("requireModel", () => {
+  it("returns the model for a known anthropic id", () => {
+    const m = requireModel("anthropic", "claude-opus-4-8");
+    expect((m as { id: string }).id).toBe("claude-opus-4-8");
+  });
+
+  it("throws a clear error for a known provider but unknown model id (dot-vs-dash trap)", () => {
+    // 'claude-sonnet-4.6' (dot) is a github-copilot key, not anthropic; the anthropic id is the dash form.
+    expect(() => requireModel("anthropic", "claude-sonnet-4.6")).toThrowError(
+      /Unknown model "anthropic\/claude-sonnet-4\.6".*claude-sonnet-4-6/s,
+    );
+  });
+
+  it("throws naming valid providers when the provider is unknown", () => {
+    expect(() => requireModel("litellm", "whatever")).toThrowError(
+      /Unknown model provider "litellm".*anthropic/s,
+    );
   });
 });
