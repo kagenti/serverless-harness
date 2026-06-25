@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "exports": {
     ".": "./src/index.ts",
-    "./run-turn": "./src/run-turn.ts"
+    "./run-turn": "./src/run-turn.ts",
+    "./buffered-redis-backend": "./src/buffered-redis-backend.ts"
   },
   "scripts": {
     "test": "vitest run"
