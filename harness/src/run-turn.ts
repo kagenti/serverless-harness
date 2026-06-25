@@ -6,7 +6,7 @@ import {
   SettingsManager,
   type FileEntry,
 } from "@earendil-works/pi-coding-agent";
-import { getModel, type AssistantMessage } from "@earendil-works/pi-ai";
+import { getModel, getModels, getProviders, type AssistantMessage } from "@earendil-works/pi-ai";
 import { RedisSessionBackend } from "@sh/session-backend";
 import { BufferedRedisBackend } from "./buffered-redis-backend.js";
 import { flushExtension } from "./flush-extension.js";
@@ -37,6 +37,31 @@ export function resolveModelSelection(
     provider: config?.provider ?? env.SH_MODEL_PROVIDER ?? "anthropic",
     modelId: config?.model ?? env.SH_MODEL ?? "claude-opus-4-8",
   };
+}
+
+/**
+ * Resolve a model from the pi-ai registry, throwing a clear error when the id is unknown.
+ * getModel() returns undefined for an unknown provider/model (e.g. the dotted
+ * "claude-sonnet-4.6" is a github-copilot key, not an anthropic one) — without this guard
+ * the caller crashes later on `baseModel.headers`. Returns the model object on success.
+ */
+export function requireModel(provider: string, modelId: string) {
+  const model = getModel(provider as never, modelId as never);
+  if (model) return model;
+  const providers = getProviders() as string[];
+  if (!providers.includes(provider)) {
+    throw new Error(
+      `Unknown model provider "${provider}". Known providers: ${providers.join(", ")}.`,
+    );
+  }
+  const ids = (getModels(provider as never) as Array<{ id: string }>).map((m) => m.id);
+  // Surface the dot-vs-dash (or case) twin if one exists — the common mistake.
+  const norm = (s: string) => s.replace(/[.\-]/g, "").toLowerCase();
+  const suggestions = ids.filter((id) => norm(id) === norm(modelId));
+  const hint = suggestions.length
+    ? `Did you mean: ${suggestions.join(", ")}?`
+    : `Known "${provider}" ids include: ${ids.slice(0, 12).join(", ")}${ids.length > 12 ? ", …" : ""}.`;
+  throw new Error(`Unknown model "${provider}/${modelId}" — not in the pi-ai registry. ${hint}`);
 }
 
 export interface TurnResult {
@@ -98,7 +123,7 @@ export async function runTurn(
   await resourceLoader.reload();
 
   const { provider, modelId } = resolveModelSelection(config);
-  const baseModel = getModel(provider, modelId);
+  const baseModel = requireModel(provider, modelId);
   const gatewayBase = config?.anthropicBaseUrl ?? process.env.ANTHROPIC_BASE_URL;
   const model =
     gatewayBase || authToken
