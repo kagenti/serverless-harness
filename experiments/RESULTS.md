@@ -9,10 +9,10 @@ deterministic entries ratio.
 
 | N (session len) | backend entries | checkpoint entries | ratio (b/c) | backend bytes | checkpoint bytes | backend ms* | checkpoint ms* |
 |---|---|---|---|---|---|---|---|
-| 50 | 53 | 6 | 8.8 | 7482 | 896 | 1.2 | 1.0 |
-| 200 | 203 | 6 | 33.8 | 28508 | 901 | 1.8 | 1.9 |
-| 1000 | 1003 | 6 | 167.2 | 140908 | 901 | 5.8 | 6.4 |
-| 5000 | 5003 | 6 | 833.8 | 706909 | 906 | 22.5 | 20.5 |
+| 50 | 53 | 6 | 8.8 | 7482 | 896 | 0.9 | 1.0 |
+| 200 | 203 | 6 | 33.8 | 28508 | 901 | 1.4 | 1.6 |
+| 1000 | 1003 | 6 | 167.2 | 140908 | 901 | 5.7 | 5.9 |
+| 5000 | 5003 | 6 | 833.8 | 706909 | 906 | 22.7 | 20.9 |
 
 **Pass:** checkpoint entries stay ~constant (bounded by the kept tail) while backend entries
 grow linearly with N, so the backend/checkpoint ratio strictly increases with N. `buildSessionContext()`
