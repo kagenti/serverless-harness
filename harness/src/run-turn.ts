@@ -19,6 +19,24 @@ export interface TurnConfig {
   cwd?: string;
   anthropicBaseUrl?: string;
   anthropicAuthToken?: string;
+  model?: string;
+  provider?: string;
+}
+
+export interface ModelSelection {
+  provider: string;
+  modelId: string;
+}
+
+/** Resolve model + provider as runtime inputs: config > env > default. */
+export function resolveModelSelection(
+  config?: { model?: string; provider?: string },
+  env: NodeJS.ProcessEnv = process.env,
+): ModelSelection {
+  return {
+    provider: config?.provider ?? env.SH_MODEL_PROVIDER ?? "anthropic",
+    modelId: config?.model ?? env.SH_MODEL ?? "claude-opus-4-8",
+  };
 }
 
 export interface TurnResult {
@@ -75,7 +93,8 @@ export async function runTurn(
   });
   await resourceLoader.reload();
 
-  const baseModel = getModel("anthropic", "claude-opus-4-8");
+  const { provider, modelId } = resolveModelSelection(config);
+  const baseModel = getModel(provider, modelId);
   const gatewayBase = config?.anthropicBaseUrl ?? process.env.ANTHROPIC_BASE_URL;
   const model =
     gatewayBase || authToken
