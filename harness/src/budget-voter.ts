@@ -18,13 +18,12 @@ export function decideBudget(s: BudgetState): BudgetDecision {
 }
 
 /**
- * Cumulative token spend = sum of assistant message usage over the current branch
- * (same total as AgentSession.getSessionStats().tokens.total). Mirrors the
- * custom-footer example's read of ctx.sessionManager.getBranch().
- * Returns 0 for an empty branch (a valid baseline); null only when the branch is unavailable.
+ * Sum of assistant-message token usage over a SessionManager-like branch holder.
+ * Returns 0 for an empty branch (a valid baseline); null only when getBranch is unavailable.
+ * Exported so the caller (run-turn) can compute the pre-turn baseline directly from the
+ * loaded SessionManager — the voter does not depend on a session_start event (see below).
  */
-export function sessionSpendTotal(ctx: ExtensionContext): number | null {
-  const sm = ctx.sessionManager as { getBranch?: () => unknown[] } | undefined;
+export function branchSpend(sm: { getBranch?: () => unknown[] } | undefined): number | null {
   if (!sm || typeof sm.getBranch !== "function") return null;
   let total = 0;
   for (const entry of sm.getBranch() as Array<{
@@ -39,23 +38,31 @@ export function sessionSpendTotal(ctx: ExtensionContext): number | null {
   return total;
 }
 
+/** Cumulative assistant token spend on the current branch, read from a tool_call ctx. */
+export function sessionSpendTotal(ctx: ExtensionContext): number | null {
+  return branchSpend((ctx as { sessionManager?: { getBranch?: () => unknown[] } }).sessionManager);
+}
+
 /**
- * Meters per-turn token spend (delta from the per-process baseline captured at
- * session_start) and blocks tool calls once the cap is breached, appending a single
- * `abort` custom entry. Inert when limit is non-finite or <= 0.
+ * Meters per-turn token spend (delta from the caller-supplied pre-turn `baseline`) and
+ * blocks tool calls once the cap is breached, appending a single `abort` custom entry.
+ * Inert when limit is non-finite or <= 0.
+ *
+ * Does NOT depend on the `session_start` event: the headless runTurn path never emits it
+ * (only bindExtensions / interactive / print / rpc modes do), so a session_start-derived
+ * baseline would stay null and the voter would never fire. The caller computes the pre-turn
+ * baseline from the loaded session (branchSpend) and passes it as opts.baseline, so a resumed
+ * session's loaded-tail spend is excluded from this turn's cap. Defaults to 0 (fresh session).
  */
 export function budgetVoterExtension(
   sm: SessionManager,
-  opts: { limit: number; margin?: number },
+  opts: { limit: number; margin?: number; baseline?: number },
 ): ExtensionFactory {
+  const baseline = opts.baseline ?? 0;
   return (pi) => {
-    let baseline: number | null = null;
-    pi.on("session_start", (_e, ctx) => {
-      baseline = sessionSpendTotal(ctx);
-    });
     pi.on("tool_call", (_e, ctx) => {
       const total = sessionSpendTotal(ctx);
-      if (baseline == null || total == null) return {}; // defensive: don't block on unknown
+      if (total == null) return {}; // defensive: don't block when spend is unknown
       const spent = total - baseline;
       const d = decideBudget({ spent, estimated: opts.margin ?? 0, limit: opts.limit });
       if (d.decision === "abort") {

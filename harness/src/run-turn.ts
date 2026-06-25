@@ -12,13 +12,31 @@ import { BufferedRedisBackend } from "./buffered-redis-backend.js";
 import { flushExtension } from "./flush-extension.js";
 import { k8sSandboxExtension } from "@sh/k8s-sandbox";
 import { checkpointExtension } from "./checkpoint-extension.js";
-import { budgetVoterExtension } from "./budget-voter.js";
+import { budgetVoterExtension, branchSpend } from "./budget-voter.js";
 
 export interface TurnConfig {
   redisUrl?: string;
   cwd?: string;
   anthropicBaseUrl?: string;
   anthropicAuthToken?: string;
+  model?: string;
+  provider?: string;
+}
+
+export interface ModelSelection {
+  provider: string;
+  modelId: string;
+}
+
+/** Resolve model + provider as runtime inputs: config > env > default. */
+export function resolveModelSelection(
+  config?: { model?: string; provider?: string },
+  env: NodeJS.ProcessEnv = process.env,
+): ModelSelection {
+  return {
+    provider: config?.provider ?? env.SH_MODEL_PROVIDER ?? "anthropic",
+    modelId: config?.model ?? env.SH_MODEL ?? "claude-opus-4-8",
+  };
 }
 
 export interface TurnResult {
@@ -59,9 +77,13 @@ export async function runTurn(
     checkpointExtension(store, sessionManager),
   ];
   if (Number.isFinite(budgetLimit) && budgetLimit > 0) {
+    // session_start is not emitted in the headless path, so compute the pre-turn baseline
+    // (cumulative spend already on the loaded branch) here and inject it into the voter.
+    const budgetBaseline = branchSpend(sessionManager) ?? 0;
     extensionFactories.push(
       budgetVoterExtension(sessionManager, {
         limit: budgetLimit,
+        baseline: budgetBaseline,
         ...(Number.isFinite(budgetMargin) && budgetMargin > 0 ? { margin: budgetMargin } : {}),
       }),
     );
@@ -75,7 +97,8 @@ export async function runTurn(
   });
   await resourceLoader.reload();
 
-  const baseModel = getModel("anthropic", "claude-opus-4-8");
+  const { provider, modelId } = resolveModelSelection(config);
+  const baseModel = getModel(provider, modelId);
   const gatewayBase = config?.anthropicBaseUrl ?? process.env.ANTHROPIC_BASE_URL;
   const model =
     gatewayBase || authToken

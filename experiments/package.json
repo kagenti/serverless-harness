@@ -1,19 +1,14 @@
 {
-  "name": "@sh/harness",
+  "name": "@sh/experiments",
   "type": "module",
+  "private": true,
   "version": "0.0.0",
-  "exports": {
-    ".": "./src/index.ts",
-    "./run-turn": "./src/run-turn.ts",
-    "./buffered-redis-backend": "./src/buffered-redis-backend.ts",
-    "./budget-voter": "./src/budget-voter.ts"
-  },
   "scripts": {
     "test": "vitest run"
   },
   "dependencies": {
     "@sh/session-backend": "workspace:*",
-    "@sh/k8s-sandbox": "workspace:*",
+    "@sh/harness": "workspace:*",
     "@earendil-works/pi-ai": "link:../pi-fork/packages/ai",
     "@earendil-works/pi-coding-agent": "link:../pi-fork/packages/coding-agent"
   },
