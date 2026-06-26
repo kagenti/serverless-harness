@@ -18,9 +18,11 @@ if ! echo "$(turn 'Say exactly: PONG')" | jq -r '.response' | grep -qi pong; the
 fi
 echo "setup OK"
 
-E1_OUT=$(./e1-economics.sh 2>&1); E1_RC=$?; echo "$E1_OUT"
-E3_OUT=$(./e3-mobility.sh 2>&1); E3_RC=$?; echo "$E3_OUT"
-E4_OUT=$(./e4-recovery.sh 2>&1); E4_RC=$?; echo "$E4_OUT"
+set +e   # run all three even if one fails; capture each exit code, then re-enable -e
+E1_OUT=$(bash ./e1-economics.sh 2>&1); E1_RC=$?; echo "$E1_OUT"
+E3_OUT=$(bash ./e3-mobility.sh 2>&1); E3_RC=$?; echo "$E3_OUT"
+E4_OUT=$(bash ./e4-recovery.sh 2>&1); E4_RC=$?; echo "$E4_OUT"
+set -e
 
 E1_LINE=$(echo "$E1_OUT" | grep '^E1_RESULT' || echo "E1_RESULT (missing)")
 verdict() { [ "$1" = 0 ] && echo PASS || echo FAIL; }
