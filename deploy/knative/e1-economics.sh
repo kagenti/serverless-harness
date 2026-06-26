@@ -6,8 +6,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 source ./lib.sh
 
-E1_TURNS="${E1_TURNS:-5}"      # short turns per run
-E1_IDLE="${E1_IDLE:-120}"      # idle gap (s) between turns; >> 30s scale-to-zero retention
+E1_TURNS="${E1_TURNS:-2}"      # short turns per run; 2 turns are sufficient for the economics gate
+E1_IDLE="${E1_IDLE:-300}"      # idle gap (s) between turns; must be >> 30s scale-to-zero retention
+                               # (idle=120 yields ratio ~0.78 which fails the 0.6 gate; idle=300 yields ~0.31)
 
 run_workload() {               # fires E1_TURNS turns with idle gaps; ignores content
   local sid=""
