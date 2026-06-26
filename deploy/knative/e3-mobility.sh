@@ -17,7 +17,13 @@ echo "  sessionId=$SID"
 
 # Force a fresh instance: ensure serverless, scale to zero, assert the pod is gone.
 set_min_scale 0
-if wait_for_zero_pods 120; then echo "  pod scaled to zero (instance A gone)"; else ko "pod did not scale to zero"; fi
+if wait_for_zero_pods 120; then
+  echo "  pod scaled to zero (instance A gone)"
+else
+  ko "pod did not scale to zero"
+  echo "=== E3: $PASS passed, $FAIL failed ==="
+  exit 1
+fi
 
 # Follow-up on instance B (cold start): must recall the token from the log.
 RESP2=$(turn "What is the code word? Reply with just the word. Do not add any other words." "$SID")
@@ -25,7 +31,7 @@ SID2=$(echo "$RESP2" | jq -r '.sessionId // empty')
 ANS=$(echo "$RESP2" | jq -r '.response // empty')
 echo "  fresh-pod response: $ANS"
 
-if [ "$SID2" = "$SID" ] && echo "$ANS" | grep -q "$TOKEN"; then
+if [ "$SID2" = "$SID" ] && echo "$ANS" | grep -qF "$TOKEN"; then
   ok "fresh instance recalled '$TOKEN' from the Redis log"
 else
   ko "expected '$TOKEN' from sid=$SID, got sid=$SID2 response=$ANS"
