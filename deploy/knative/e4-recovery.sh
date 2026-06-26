@@ -19,6 +19,9 @@ turn "Fruit 3 is ${FRUITS[2]}. Reply only with OK." "$SID" >/dev/null
 # Crash: force-kill the harness pod mid-session.
 echo "  force-killing harness pod..."
 force_kill_pod
+# Best-effort settle. force-kill (not min-scale=0) means Knative may reschedule a pod
+# immediately, so this often times out — that's fine. Unlike E3, scale state is NOT the gate
+# here; the post-crash recall grep below is. So `|| true` is correct (not the E3 fall-through).
 wait_for_zero_pods 60 || true
 
 # Next turn on a freshly-started pod: must recall all three completed turns.

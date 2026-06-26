@@ -7,6 +7,10 @@ const REDIS = process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
 const store = new RedisSessionBackend<FileEntry>(REDIS);
 const createdSessions: string[] = [];
 
+// These cases call the real model through the gateway. Gate them so CI does not fail on an
+// ungated live call (e.g. stopReason variance). Run with SH_RUN_LIVE=1 + ANTHROPIC_AUTH_TOKEN.
+const LIVE = process.env.SH_RUN_LIVE === "1" && !!process.env.ANTHROPIC_AUTH_TOKEN;
+
 afterAll(async () => {
   for (const sid of createdSessions) {
     await store.reset(sid);
@@ -15,7 +19,7 @@ afterAll(async () => {
 });
 
 describe("runTurn()", () => {
-  it("creates a new session when sessionId is undefined", async () => {
+  it.runIf(LIVE)("creates a new session when sessionId is undefined", async () => {
     const result = await runTurn("Say exactly: PONG", undefined, {
       redisUrl: REDIS,
     });
@@ -26,7 +30,7 @@ describe("runTurn()", () => {
     createdSessions.push(result.sessionId);
   });
 
-  it("resumes an existing session from Redis", async () => {
+  it.runIf(LIVE)("resumes an existing session from Redis", async () => {
     // Create a session first
     const first = await runTurn("Remember the code word: ZEBRA42", undefined, {
       redisUrl: REDIS,

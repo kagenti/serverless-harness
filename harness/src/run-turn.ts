@@ -135,8 +135,8 @@ export async function runTurn(
                 headers: {
                   ...baseModel.headers,
                   Authorization: `Bearer ${authToken}`,
-                  "x-api-key": null,
-                } as Record<string, string>,
+                  "x-api-key": null, // strip x-api-key when using gateway Bearer auth
+                } as unknown as Record<string, string>,
               }
             : {}),
         }
