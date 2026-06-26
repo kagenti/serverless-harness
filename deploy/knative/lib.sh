@@ -83,7 +83,7 @@ ensure_port_forward() {
 # Background pod sampler. start_sampler <outfile> echoes pid; sum with pod_seconds_from.
 start_sampler() {
   local out="$1"
-  ( while :; do harness_running_pods >> "$out"; sleep "$SAMPLE_INTERVAL"; done ) &
+  { while :; do harness_running_pods >> "$out"; sleep "$SAMPLE_INTERVAL"; done; } >/dev/null 2>&1 &
   echo $!
 }
 stop_sampler() { kill "$1" 2>/dev/null || true; }
