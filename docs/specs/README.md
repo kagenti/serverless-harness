@@ -51,7 +51,7 @@ live only in identity-keyed egress points. Dependency-ordered:
 
 | ID | Title | Status | Spec / source | Alias |
 |----|-------|--------|---------------|-------|
-| **Z1** | Egress/identity spine — `CredentialInjector` interface + SPIRE/AuthBridge binding; SPIFFE IDs for harness & sandbox | design (no dedicated spec yet; reframed by Z2/Z3) | parent research doc §2–3, §M7 | parent M7 |
+| **Z1** | Identity spine — per-session SPIFFE bound to user; `CredentialInjector` interface; orchestrator + reconstruct-on-wake | **design ✅** | [`2026-06-26-identity-spine-design.md`](2026-06-26-identity-spine-design.md) | parent M7 (reframed) |
 | **Z2** | **Harness lock-down** — fail-closed redirection, secret-free container, default-deny egress, distroless, scoped RBAC; argues the harness needs **no** egress proxy | **design ✅** | [`2026-06-26-harness-lockdown-design.md`](2026-06-26-harness-lockdown-design.md) | — |
 | **Z3** | **Inference injector** — shared provider-key chokepoint; multi-provider table, `x-sh-provider` routing, strip-then-set, mTLS, streaming, audit-only | **design ✅** | [`2026-06-26-inference-injector-design.md`](2026-06-26-inference-injector-design.md) | parent M8 |
 | **Z4** | MCP code-mode in the sandbox (placeholder-swap; **supersedes** the parent's MCP *gateway*) | design ✅ | [`2026-06-18-m10-mcp-code-mode-design.md`](2026-06-18-m10-mcp-code-mode-design.md) | M10 (spec); parent M10 (superseded) |
