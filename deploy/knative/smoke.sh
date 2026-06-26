@@ -2,7 +2,7 @@
 # deploy/knative/smoke.sh
 # Live smoke: proves scale 0→1→0 and session recall across cold starts.
 # Prereq: setup-kind.sh done + port-forward: kubectl port-forward -n kourier-system svc/kourier 8080:80
-# Usage: ./deploy/knative/smoke.sh [--port 8080]
+# Usage: ./deploy/knative/smoke.sh [--port=8080]
 set -euo pipefail
 cd "$(dirname "$0")"
 source ./lib.sh
