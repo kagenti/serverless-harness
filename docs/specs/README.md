@@ -46,7 +46,7 @@ The decoupled scale-to-zero pattern. These are done and referenced across commit
 
 ## Phase 2 — Zero-Trust Credential Plane (`Z`-prefix)
 
-> **Roadmap anchor:** [Leaf-Session Backend Capability Charter](2026-06-26-leaf-session-backend-capability-charter.md) tests the design against three independent agentic-pipeline archetypes and **reprioritizes** this track: the harness's core role is a **leaf-session backend for external orchestrators**; **Z6 (recursive subagents) and Z1 (per-user identity) are deferred** (no observed demand), while Z3/Z5 stay "keep-light." Build the credential plane when multi-tenant hosting is an explicit goal.
+> **Roadmap anchor:** [Leaf-Session Backend Capability Charter](2026-06-26-leaf-session-backend-capability-charter.md) (evidence base: [Pipeline Archetypes & Requirements](2026-06-26-pipeline-archetypes-requirements.md)) tests the design against three independent agentic-pipeline archetypes and **reprioritizes** this track: the harness's core role is a **leaf-session backend for external orchestrators**. **Z1 (per-user identity) defers** until multi-tenant hosting; **Z6 _extras_ defer** — the core clean-context-subagent need (one archetype plans it) is met by a **re-entrant leaf-session contract**, not new machinery. Z3/Z5 stay "keep-light."
 >
 > **First buildable milestone:** [MVP Thin Slice — Leaf-Session Invocation Contract](2026-06-26-mvp-leaf-session-contract-design.md) (Archetype A) — proves an external orchestrator can dispatch N parallel, parameterized, run-to-completion leaf sessions with structured (volume-envelope) results, retry, and coverage audit, on scale-to-zero. Reuses M2–M6; defers the whole credential plane.
 

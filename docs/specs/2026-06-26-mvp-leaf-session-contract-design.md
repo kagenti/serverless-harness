@@ -9,7 +9,7 @@ workspace-isolated, on scale-to-zero infra — and nothing domain-specific.
 Realizes: [Capability Charter](2026-06-26-leaf-session-backend-capability-charter.md) §5 (MVP core)
 + §7 (G1, G6). Single-tenant, key-in-env.
 Builds on (reuse, no new design): M2/M3 (sandbox), M4 (Knative scale-to-zero), M5 (checkpoint/resume), M6 (runtime model selection).
-Defers (per charter): Z1 identity, Z3 injector, Z5 egress, Z6 subagents; human-gates; triggers; real candidate-generation and PoC/exploit stages.
+Defers (per charter): Z1 identity, Z3 injector, Z5 egress, Z6 *extras* (the core clean-context-subagent need is met by a **re-entrant contract**, §2.5); human-gates; triggers; real candidate-generation and PoC/exploit stages.
 
 > **What this slice is NOT.** It is not the real analysis pipeline. The agentic task is a
 > representative **stub** (flag a pattern in a file) so the slice measures *the contract and the
@@ -103,6 +103,19 @@ with no valid `submit_verdict`, the invocation is `failed`.
 
 `session_id` is the idempotency key. Re-invoking with the same `session_id`/`result_ref` re-runs and
 overwrites — so **retry = re-invoke**. The harness writes `result_ref` fresh each run.
+
+### 2.5 Re-entrancy (design property, not MVP scope)
+
+The contract must be designed so a **leaf session can itself invoke `/run-leaf`** to dispatch a
+**child** leaf session. This is *not built or tested in the MVP* (the MVP is single-level:
+orchestrator → leaf), but the contract must **not preclude** it, because it is how the one genuine
+near-term subagent need is met: a leaf agent that wants a fresh-context subtask (see
+[Archetypes & Requirements](2026-06-26-pipeline-archetypes-requirements.md) §6, archetype B's planned
+`explore`/per-arm subagents) simply dispatches a child leaf — which gets a clean context and its own
+sandbox **by construction**, with no separate subagent runtime. Concretely, the MVP keeps the
+contract self-contained (no caller-identity assumption that only an external orchestrator may call
+it) so re-entrancy is a later increment, not a redesign. The Z6 *extras* — parent/child lineage
+(`parent_session_id`), budget propagation, sandbox policy, inter-agent messaging — are deferred.
 
 ---
 

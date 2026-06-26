@@ -47,8 +47,11 @@ does each actually need?*
 1. **The orchestrator is deterministic, non-LLM.** A state machine / staged script / scheduler
    drives control flow. The LLM is always a **leaf**, never the controller.
 2. **Agents are parameterized leaf invocations** — `(model, inputs) → structured output`.
-3. **No recursive subagents in any of them.** "Parallel agentic work" is a deterministic
+3. **No recursive subagents in currently-running code.** "Parallel agentic work" is a deterministic
    orchestrator fanning out leaf sessions, or **isolated workspaces** — never agent-spawns-agent.
+   *(Verified nuance: A **deliberately rejected** agent-managed subagents for bulk fan-out; B has
+   **planned-but-not-yet-merged** clean-context subagents for per-scope exploration and per-arm
+   isolation. See [Archetypes & Requirements](2026-06-26-pipeline-archetypes-requirements.md) §6.)*
 4. **Per-role / per-phase model tiering**, multi-provider, env-selected.
 5. **Structured, schema-governed artifacts** on a durable store, with **audit/coverage/ledger** and
    **checkpoint/resume + incremental memory**.
@@ -91,7 +94,8 @@ does each actually need?*
 | **Trigger/start on-ramp** (HTTP/event/cron) | C | ⭐ **new — promote (post-MVP)**; Knative is already HTTP-triggered |
 | Model-key injection (hide provider key) | A, B, C | �ðŸ”¹ keep-light (Z3); MVP may keep key in env |
 | Per-source **credentialed egress** (VCS, content APIs, registries) | A, C | 🔹 keep-light (Z5) when sources are authenticated |
-| Recursive subagents | **none** | ⏸️ **defer (Z6)** — not exercised |
+| Clean-context subtask delegation (a leaf spawns a fresh-context child) | B (planned) | ⭐ **re-entrant contract** (design property) — core need met for free |
+| Recursive-subagent **extras** (lineage, budget, policy, mail) | B (later) | ⏸️ **defer (Z6 extras)** — not the MVP |
 | Per-user identity / multi-tenant isolation | **none** (all are per-project automations) | ⏸️ **defer (Z1)** — only if multi-tenant hosting becomes a goal |
 
 ---
@@ -119,10 +123,16 @@ is the **next step** after this charter — see Open Questions §8.
 
 ## 6. Explicit deferrals (with rationale)
 
-- **Z6 recursive subagents — deferred.** Zero of three archetypes use agent-spawns-agent. What each
-  calls "parallel agentic work" is a deterministic orchestrator over leaf sessions, or isolated
-  workspaces. Building Z6 now would serve no observed demand. Revisit if a use case genuinely needs
-  an agent to *decide and spawn* children at runtime.
+- **Z6 recursive subagents — extras deferred; core met by a re-entrant contract.** Zero of three
+  archetypes spawn subagents in running code, and A *deliberately rejected* agent-managed subagents
+  for **bulk** fan-out (a deterministic pool over leaf sessions is better). **But demand is not
+  zero:** B has planned (not-yet-merged) **clean-context subagents** for per-scope exploration and
+  per-arm isolation — a leaf agent offloading a focused subtask to a fresh-context child. That need
+  is satisfied **for free by a re-entrant leaf-session contract**: a leaf session dispatches a
+  **child** leaf session via the same contract, getting clean context + its own sandbox by
+  construction. So the MVP contract must be **re-entrancy-friendly**, and only Z6's *extras* —
+  parent/child lineage, budget propagation, sandbox policy, inter-agent messaging — actually defer.
+  Bulk fan-out stays deterministic; recursion is opt-in via the same contract.
 - **Z1 per-user identity — deferred.** All three are **per-project automations**, not multi-user
   shared-namespace workloads. The whole per-session-SPIFFE-bound-to-user apparatus (Z1) is justified
   only by multi-tenant hosting, which none of these require. Keep the Z1/Z2/Z3/Z5 designs on the
@@ -140,7 +150,7 @@ plane ahead of demand.
 | G1 | Harness role | **Leaf-session backend**, invoked by an external orchestrator; not an orchestrator itself. |
 | G2 | Orchestrator placement | **External / workers-only.** The harness never hosts the orchestrator. |
 | G3 | Artifact store | **Not imposed.** Harness owns session/turn durability; domain artifacts stay the orchestrator's (volume/git). |
-| G4 | Subagents | **Deferred (Z6).** Leaf sessions + deterministic fan-out cover all observed cases. |
+| G4 | Subagents | **Core met by a re-entrant contract; Z6 extras deferred.** Bulk fan-out is deterministic over leaf sessions; clean-context delegation (B, planned) = a leaf dispatching a child leaf via the same contract. Only lineage/budget/policy/mail defer. |
 | G5 | Identity | **Per-user identity deferred (Z1).** Single-tenant MVP; key in env. |
 | G6 | Core MVP capability | The **leaf-session invocation contract** (run-to-completion, parameterized, structured output) + **workspace isolation**. |
 | G7 | Model tiering | Reuse **runtime model selection (M6)**; injector (Z3) is a later hardening, not MVP. |
