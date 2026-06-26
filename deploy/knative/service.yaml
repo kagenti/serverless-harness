@@ -23,6 +23,8 @@ spec:
           env:
             - name: REDIS_URL
               value: "redis://redis.default.svc:6379"
+            - name: SH_MODEL
+              value: "claude-haiku-4-5"
             - name: KAGENTI_SANDBOX_POD
               value: "sandbox-0"
             - name: ANTHROPIC_API_KEY
