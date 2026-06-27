@@ -7,7 +7,7 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { getModel } from "@earendil-works/pi-ai";
-import { resolveModelSelection, requireModel, type TurnConfig } from "./run-turn.js";
+import { resolveModelSelection, requireModel, applyModelGateway, type TurnConfig } from "./run-turn.js";
 import { submitVerdictExtension, type VerdictCapture } from "./submit-verdict-tool.js";
 import { validateVerdict } from "./verdict.js";
 
@@ -94,7 +94,9 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
     provider: env.provider ?? config?.provider,
   });
   const baseModel = requireModel(provider, modelId);
-  const model = baseModel;
+  // Honor the LLM gateway (base URL + Bearer auth) exactly as runTurn does, so leaf model
+  // calls reach the same endpoint with the same credentials.
+  const model = applyModelGateway(baseModel as { headers?: Record<string, unknown> }, config);
 
   const agentDir = getAgentDir();
   const settingsManager = SettingsManager.create(cwd, agentDir);
