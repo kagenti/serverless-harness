@@ -86,11 +86,16 @@ export function applyModelGateway<M extends { headers?: Record<string, unknown> 
   baseModel: M,
   config?: Pick<TurnConfig, "anthropicBaseUrl" | "anthropicAuthToken">,
 ): M {
-  const authToken = config?.anthropicAuthToken ?? process.env.ANTHROPIC_AUTH_TOKEN;
+  // `||` (not `??`) so an empty-string config value falls back to the env var rather than
+  // suppressing it — "" is a "not set" sentinel here, not a meaningful credential.
+  const authToken = config?.anthropicAuthToken || process.env.ANTHROPIC_AUTH_TOKEN;
+  // Intentional process.env mutation: some pi-ai code paths read ANTHROPIC_API_KEY at
+  // invocation time, so seed it from the auth token. This now runs from two call sites
+  // (runTurn and runLeaf via applyModelGateway) — do NOT "clean it up" into a local.
   if (authToken && !process.env.ANTHROPIC_API_KEY) {
     process.env.ANTHROPIC_API_KEY = authToken;
   }
-  const gatewayBase = config?.anthropicBaseUrl ?? process.env.ANTHROPIC_BASE_URL;
+  const gatewayBase = config?.anthropicBaseUrl || process.env.ANTHROPIC_BASE_URL;
   if (!gatewayBase && !authToken) return baseModel;
   return {
     ...baseModel,

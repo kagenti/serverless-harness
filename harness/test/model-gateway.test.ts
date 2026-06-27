@@ -62,4 +62,21 @@ describe("applyModelGateway", () => {
     const m = applyModelGateway(baseModel, { anthropicAuthToken: "tok-only" }) as any;
     expect(m.compat).toBeUndefined();
   });
+
+  it("applies baseUrl + disables compat but sets no auth header for a token-less public gateway", () => {
+    const m = applyModelGateway(baseModel, { anthropicBaseUrl: "https://public-gw/v1" }) as any;
+    expect(m.baseUrl).toBe("https://public-gw/v1");
+    expect(m.compat.supportsEagerToolInputStreaming).toBe(false);
+    // no token → no Authorization header, and the original headers are left untouched
+    expect(m.headers.Authorization).toBeUndefined();
+    expect(m.headers["x-api-key"]).toBe("orig");
+  });
+
+  it("treats an empty-string config value as unset and falls back to the env var", () => {
+    process.env.ANTHROPIC_BASE_URL = "https://env-gw/v1";
+    process.env.ANTHROPIC_AUTH_TOKEN = "env-tok";
+    const m = applyModelGateway(baseModel, { anthropicBaseUrl: "", anthropicAuthToken: "" }) as any;
+    expect(m.baseUrl).toBe("https://env-gw/v1");
+    expect(m.headers.Authorization).toBe("Bearer env-tok");
+  });
 });

@@ -12,6 +12,8 @@ spec:
   restartPolicy: Always
   containers:
     - name: tools
+      # alpine:3.20 is a tag, not a digest — fine for a local Kind smoke. If this orchestrator
+      # is ever promoted beyond Kind, pin to a digest (alpine@sha256:...) for reproducibility.
       image: alpine:3.20
       command: ["sh", "-c", "apk add --no-cache curl jq >/dev/null 2>&1 && sleep 100000"]
       volumeMounts:
