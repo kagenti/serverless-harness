@@ -33,9 +33,11 @@ kubectl -n "$NS" wait --for=condition=Ready "pod/$ORCH" --timeout=90s >/dev/null
 kubectl -n "$NS" wait --for=condition=Ready "pod/$SBOX" --timeout=90s >/dev/null
 for _ in $(seq 1 30); do oexec sh -c 'command -v jq >/dev/null && command -v curl >/dev/null' && break; sleep 2; done
 oexec mkdir -p "$INPUTS" "$RES"
-kubectl -n "$NS" cp ./fixtures/inputs "$ORCH:$INPUTS"
+# Trailing /. copies the directory CONTENTS into the (pre-created) dest; without it
+# kubectl cp nests the source dir (…/inputs/inputs/i1.json) and runLeaf reads bad_inputs.
+kubectl -n "$NS" cp ./fixtures/inputs/. "$ORCH:$INPUTS"
 kubectl -n "$NS" exec "$SBOX" -- mkdir -p "$SBOX_REPO"
-kubectl -n "$NS" cp ./fixtures/repo "$SBOX:$SBOX_REPO"
+kubectl -n "$NS" cp ./fixtures/repo/. "$SBOX:$SBOX_REPO"
 
 # Claim 1: async accept (fast 202)
 claim 1 "Async accept: 202 + handle, returns fast"
