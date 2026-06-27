@@ -5,6 +5,14 @@ export interface VerdictCapture {
   verdict?: Verdict;
 }
 
+/** Custom session-entry type used to persist a captured verdict durably (for resume recovery). */
+export const VERDICT_ENTRY_TYPE = "verdict";
+
+/** Minimal slice of SessionManager the tool needs to persist the verdict durably. */
+export interface VerdictSink {
+  appendCustomEntry(customType: string, data?: unknown): string;
+}
+
 // Inline TypeBox-compatible schema (avoids importing typebox which is only in pi-fork's node_modules).
 // The `as any` cast on registerTool bypasses the TSchema constraint at compile time.
 const params = {
@@ -20,7 +28,13 @@ const params = {
   required: ["item_id", "verdict", "reason"],
 };
 
-export function submitVerdictExtension(capture: VerdictCapture): ExtensionFactory {
+/**
+ * Registers the `submit_verdict` tool. On a valid verdict it (1) captures it in-memory and
+ * (2) — when a `sink` (the SessionManager) is provided — appends a durable `verdict` custom
+ * session entry, so a session resumed after a crash can recover the verdict without re-running
+ * the agent (mirrors the checkpoint-marker pattern).
+ */
+export function submitVerdictExtension(capture: VerdictCapture, sink?: VerdictSink): ExtensionFactory {
   return (pi: ExtensionAPI) => {
     pi.registerTool({
       name: "submit_verdict",
@@ -35,6 +49,7 @@ export function submitVerdictExtension(capture: VerdictCapture): ExtensionFactor
           return { isError: true, content: [{ type: "text", text: `Invalid verdict: ${r.error}` }] };
         }
         capture.verdict = r.value;
+        sink?.appendCustomEntry(VERDICT_ENTRY_TYPE, r.value);
         return { content: [{ type: "text", text: "Verdict recorded." }] };
       },
     } as any);

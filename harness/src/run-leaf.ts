@@ -5,12 +5,40 @@ import {
   getAgentDir,
   SessionManager,
   SettingsManager,
+  type FileEntry,
 } from "@earendil-works/pi-coding-agent";
-import { getModel } from "@earendil-works/pi-ai";
+import { RedisSessionBackend } from "@sh/session-backend";
 import { k8sSandboxExtension } from "@sh/k8s-sandbox";
 import { resolveModelSelection, requireModel, applyModelGateway, type TurnConfig } from "./run-turn.js";
-import { submitVerdictExtension, type VerdictCapture } from "./submit-verdict-tool.js";
-import { validateVerdict } from "./verdict.js";
+import { BufferedRedisBackend } from "./buffered-redis-backend.js";
+import { flushExtension } from "./flush-extension.js";
+import { checkpointExtension } from "./checkpoint-extension.js";
+import { submitVerdictExtension, VERDICT_ENTRY_TYPE, type VerdictCapture } from "./submit-verdict-tool.js";
+import { validateVerdict, type Verdict } from "./verdict.js";
+
+/**
+ * Recover a verdict from a persisted `verdict` custom session entry (written by
+ * submitVerdictExtension). Returns the validated verdict, or null if the entry is not a
+ * verdict marker or its data is not schema-valid. Used to recover a verdict on resume when
+ * the in-memory capture was lost to a crash.
+ */
+export function verdictFromCustomEntry(entry: unknown): Verdict | null {
+  const e = entry as { type?: string; customType?: string; data?: unknown } | null;
+  if (!e || e.type !== "custom" || e.customType !== VERDICT_ENTRY_TYPE) return null;
+  const r = validateVerdict(e.data);
+  return r.ok ? r.value : null;
+}
+
+/**
+ * Map an envelope session_id (the idempotency key, e.g. "<run>/<item>") to a valid Pi session
+ * id: Pi requires it to contain only [A-Za-z0-9._-] and to start/end alphanumeric. Slashes (used
+ * by the spec's "<run_id>/<item_id>" convention) and other separators become "-". Deterministic,
+ * so a retry/resume of the same envelope id maps to the same session.
+ */
+export function toSessionId(sessionId: string): string {
+  const cleaned = sessionId.replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "");
+  return cleaned || "leaf";
+}
 
 export interface LeafItem { item_id: string; file: string; pattern: string }
 
@@ -85,11 +113,10 @@ export async function runLeaf(
   return { status: "done", resultRef: env.resultRef };
 }
 
-// Real Pi session runner — mirrors harness/src/run-turn.ts session setup.
-// Extensions are passed via DefaultResourceLoader's extensionFactories array,
-// exactly as run-turn.ts does at lines 117-122. The submitVerdictExtension(capture)
-// factory is prepended so the agent can call submit_verdict before any other extension runs.
-// Exercised by the Kind smoke (Task 6), not the unit tests.
+// Real Pi session runner — mirrors harness/src/run-turn.ts session setup, made resumable
+// (MVP spec §7 gate 7, §2.4 idempotency). The session is persisted to Redis under env.sessionId;
+// re-invoking the same sessionId after a crash resumes from the durable log (M5) instead of
+// starting fresh. Exercised by the Kind smoke, not the unit tests.
 export const realProduceVerdict: ProduceVerdict = async (item, env, config, capture) => {
   // Session cwd is a harness-local path (NOT workspaceRef): the agent's file/search tools run
   // in the sandbox pod, and workspaceRef is an absolute path inside that pod (see buildLeafPrompt).
@@ -105,19 +132,53 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
   // calls reach the same endpoint with the same credentials.
   const model = applyModelGateway(baseModel as { headers?: Record<string, unknown> }, config);
 
+  // Durable, resumable session keyed by the (sanitized) session id. BufferedRedisBackend drains
+  // writes continuously, so a mid-run crash preserves progress up to the last drained entry.
+  const sid = toSessionId(env.sessionId);
+  const store = new RedisSessionBackend<FileEntry>(config?.redisUrl ?? "redis://localhost:6379");
+  const backend = new BufferedRedisBackend(store);
+  const isVerdictEntry = (e: unknown) =>
+    (e as { type?: string }).type === "custom" &&
+    (e as { customType?: string }).customType === VERDICT_ENTRY_TYPE;
+
+  // Resume the session if one already exists under this id (retry / post-crash); otherwise
+  // create a fresh session persisted under the sanitized id.
+  const prior = await store.read(sid);
+  const resuming = prior.length > 0;
+  const sessionManager = resuming
+    ? await SessionManager.openFromCheckpoint(sid, backend, cwd)
+    : SessionManager.create(cwd, undefined, { id: sid }, backend);
+
+  // Fast path: if a verdict was already submitted (and persisted) before a crash, recover it
+  // from the durable log and skip re-running the agent entirely.
+  if (resuming) {
+    const row = await store.latestWhere(sid, isVerdictEntry);
+    const recovered = verdictFromCustomEntry(row?.entry);
+    if (recovered) {
+      capture.verdict = recovered;
+      await backend.flush();
+      return;
+    }
+  }
+
   const agentDir = getAgentDir();
   const settingsManager = SettingsManager.create(cwd, agentDir);
-  const sessionManager = SessionManager.create(cwd, undefined, undefined);
 
   // Wire extensions via DefaultResourceLoader extensionFactories — the same mechanism
   // run-turn.ts uses. k8sSandboxExtension() routes read/grep/bash/edit/write into the sandbox
   // pod (KAGENTI_SANDBOX_POD), so agent-driven execution never runs in the credentialed harness
-  // pod; submitVerdictExtension(capture) is the only harness-side tool.
+  // pod. submitVerdictExtension persists the verdict durably (for resume); flush + checkpoint
+  // give M5 turn-level durability.
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir,
     settingsManager,
-    extensionFactories: [submitVerdictExtension(capture), k8sSandboxExtension()],
+    extensionFactories: [
+      submitVerdictExtension(capture, sessionManager),
+      k8sSandboxExtension(),
+      flushExtension(backend),
+      checkpointExtension(store, sessionManager),
+    ],
   });
   await resourceLoader.reload();
 
@@ -128,6 +189,17 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
     settingsManager,
   });
 
-  // TODO(Task 6 / live path): wire env.maxTurns into the session run loop once the live agentic path is verified.
-  await session.prompt(buildLeafPrompt(item, env.workspaceRef));
+  try {
+    // TODO(maxTurns): wire env.maxTurns into the run loop once a turn bound is needed.
+    await session.prompt(buildLeafPrompt(item, env.workspaceRef));
+    // Belt-and-suspenders: if the agent submitted before a prior crash but the in-memory capture
+    // is empty on this run, recover from the durable log.
+    if (!capture.verdict) {
+      const row = await store.latestWhere(sid, isVerdictEntry);
+      const recovered = verdictFromCustomEntry(row?.entry);
+      if (recovered) capture.verdict = recovered;
+    }
+  } finally {
+    await backend.flush();
+  }
 };
