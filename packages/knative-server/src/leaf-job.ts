@@ -18,18 +18,24 @@ async function main(): Promise<void> {
   await queue.ensureGroup();
   const consumerId = process.env.HOSTNAME ?? `leaf-job-${process.pid}`;
   // Drain: process entries until the queue yields nothing, then exit so KEDA can scale to zero.
-  // A transient "retry" rethrows below (non-zero exit) so the entry is reclaimed by a later Job.
-  for (;;) {
-    const outcome = await processOne({
-      queue,
-      runLeaf: (env: LeafEnvelope) => runLeaf(env, buildConfig()),
-      consumerId,
-    });
-    if (outcome === "idle") break;
-    if (outcome === "retry") { await queue.close(); process.exit(1); }
+  // A transient "retry" exits non-zero (process.exit(1)) so the entry stays pending and a later Job reclaims it.
+  try {
+    for (;;) {
+      const outcome = await processOne({
+        queue,
+        runLeaf: (env: LeafEnvelope) => runLeaf(env, buildConfig()),
+        consumerId,
+      });
+      if (outcome === "idle") process.exit(0);
+      if (outcome === "retry") process.exit(1);
+    }
+  } finally {
+    try {
+      await queue.close();
+    } catch {
+      // Best-effort close; suppress errors on exit.
+    }
   }
-  await queue.close();
-  process.exit(0);
 }
 
 main().catch(async (err) => {

@@ -47,6 +47,9 @@ spec:
   #  - pendingEntriesCount: the PEL (delivered-but-unacked) → keeps a reclaimer scheduled for a
   #    crashed consumer's stuck entry so XAUTOCLAIM can resume it (gate-7) even with no new work.
   # pendingEntriesCount ALONE deadlocks (PEL stays 0 until something reads; nothing reads until PEL>0).
+  # Trade-off: while a leaf runs, its entry sits in the PEL so the pendingEntriesCount trigger spawns extra
+  # reclaimer Jobs that find nothing to reclaim (entry heartbeat keeps idleCount < min-idle) and exit "idle",
+  # bounded by maxReplicaCount; future optimization could gate reclaim-spawning on min-idle-exceeded entries only.
   triggers:
     - type: redis-streams
       metadata:
