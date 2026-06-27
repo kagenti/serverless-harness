@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const runLeaf = vi.fn();
 vi.mock("@sh/harness/run-leaf", () => ({ runLeaf: (...a: any[]) => runLeaf(...a) }));
@@ -17,11 +17,11 @@ async function post(path: string, body: unknown) {
 
 describe("POST /run-leaf", () => {
   beforeEach(() => { server = startServer(0); base = `http://127.0.0.1:${server.address().port}`; });
+  afterEach(() => { server.close(); });
 
   it("400s on a malformed envelope (missing inputsRef)", async () => {
     const r = await post("/run-leaf", { sessionId: "s", resultRef: "/x" });
     expect(r.status).toBe(400);
-    server.close();
   });
 
   it("returns runLeaf's terminal status on a valid envelope", async () => {
@@ -30,6 +30,5 @@ describe("POST /run-leaf", () => {
     expect(r.status).toBe(200);
     expect(r.json).toEqual({ status: "done", resultRef: "/work/out.json" });
     expect(runLeaf).toHaveBeenCalledOnce();
-    server.close();
   });
 });

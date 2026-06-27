@@ -5,7 +5,6 @@ import {
   getAgentDir,
   SessionManager,
   SettingsManager,
-  type AssistantMessage,
 } from "@earendil-works/pi-coding-agent";
 import { getModel } from "@earendil-works/pi-ai";
 import { resolveModelSelection, requireModel, type TurnConfig } from "./run-turn.js";
@@ -118,8 +117,6 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
     settingsManager,
   });
 
+  // TODO(Task 6 / live path): wire env.maxTurns into the session run loop once the live agentic path is verified.
   await session.prompt(buildLeafPrompt(item, env.workspaceRef));
-
-  // Unused result — capture.verdict is populated as a side effect of submit_verdict.
-  void (session.state.messages.at(-1) as AssistantMessage | undefined);
 };

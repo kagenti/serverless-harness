@@ -51,4 +51,23 @@ describe("runLeaf", () => {
     expect(res.status).toBe("failed");
     if (res.status === "failed") expect(res.reason).toBe("bad_inputs");
   });
+
+  it("returns failed:invalid_verdict and writes nothing when verdict label is off-schema", async () => {
+    const env = envelope();
+    const produceVerdict = async (_i, _e, _c, capture) => {
+      capture.verdict = { item_id: "i1", verdict: "MAYBE", reason: "x" };
+    };
+    const res = await runLeaf(env, undefined, { produceVerdict });
+    expect(res).toMatchObject({ status: "failed", reason: "invalid_verdict" });
+    expect(existsSync(env.resultRef)).toBe(false);
+  });
+
+  it("returns failed:error and writes nothing when produceVerdict throws", async () => {
+    const env = envelope();
+    const produceVerdict = async () => { throw new Error("boom"); };
+    const res = await runLeaf(env, undefined, { produceVerdict });
+    expect(res.status).toBe("failed");
+    if (res.status === "failed") expect(res.reason).toBe("error");
+    expect(existsSync(env.resultRef)).toBe(false);
+  });
 });
