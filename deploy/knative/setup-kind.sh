@@ -83,7 +83,8 @@ kubectl patch configmap/config-features \
 KEDA_VERSION="${KEDA_VERSION:-v2.14.0}"
 if ! kubectl get crd scaledjobs.keda.sh >/dev/null 2>&1; then
   echo "--- Installing KEDA $KEDA_VERSION ---"
-  kubectl apply --server-side -f "https://github.com/kedacore/keda/releases/download/${KEDA_VERSION}/keda-${KEDA_VERSION}.yaml"
+  # The release asset filename drops the leading "v" (tag v2.14.0 → asset keda-2.14.0.yaml).
+  kubectl apply --server-side -f "https://github.com/kedacore/keda/releases/download/${KEDA_VERSION}/keda-${KEDA_VERSION#v}.yaml"
 fi
 kubectl wait --for=condition=Available deployment --all -n keda --timeout=180s || true
 
