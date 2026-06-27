@@ -48,4 +48,18 @@ describe("applyModelGateway", () => {
     applyModelGateway(baseModel, { anthropicAuthToken: "tok-xyz" });
     expect(process.env.ANTHROPIC_API_KEY).toBe("tok-xyz");
   });
+
+  it("disables gateway-incompatible compat flags when a gateway base is set", () => {
+    // litellm rejects per-tool eager_input_streaming / cache_control; the gateway model must
+    // disable these so convertTools() omits them (otherwise tool-bearing requests 400).
+    const m = applyModelGateway(baseModel, { anthropicBaseUrl: "https://gw.example/v1" }) as any;
+    expect(m.compat.supportsEagerToolInputStreaming).toBe(false);
+    expect(m.compat.supportsCacheControlOnTools).toBe(false);
+    expect(m.compat.supportsLongCacheRetention).toBe(false);
+  });
+
+  it("does not add compat when no gateway base is set (direct API)", () => {
+    const m = applyModelGateway(baseModel, { anthropicAuthToken: "tok-only" }) as any;
+    expect(m.compat).toBeUndefined();
+  });
 });

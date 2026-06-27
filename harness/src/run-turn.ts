@@ -95,6 +95,20 @@ export function applyModelGateway<M extends { headers?: Record<string, unknown> 
   return {
     ...baseModel,
     ...(gatewayBase ? { baseUrl: gatewayBase } : {}),
+    ...(gatewayBase
+      ? {
+          // Anthropic-compatible gateways (e.g. litellm) reject the per-tool extras the
+          // direct Anthropic API accepts. Without this, tool-bearing requests fail with
+          // "tools.0.custom.eager_input_streaming: Extra inputs are not permitted". Disable
+          // the gateway-incompatible compat flags so convertTools() omits those fields.
+          compat: {
+            ...(baseModel as { compat?: Record<string, unknown> }).compat,
+            supportsEagerToolInputStreaming: false,
+            supportsCacheControlOnTools: false,
+            supportsLongCacheRetention: false,
+          },
+        }
+      : {}),
     ...(authToken
       ? {
           headers: {
