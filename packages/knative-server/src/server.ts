@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { runTurn, type TurnConfig } from "@sh/harness/run-turn";
+import { runLeaf, type LeafEnvelope } from "@sh/harness/run-leaf";
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -60,9 +61,34 @@ async function handleTurn(req: IncomingMessage, res: ServerResponse): Promise<vo
   }
 }
 
+function isLeafEnvelope(o: any): o is LeafEnvelope {
+  return o && typeof o.sessionId === "string" && typeof o.inputsRef === "string" && typeof o.resultRef === "string";
+}
+
+async function handleRunLeaf(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = JSON.parse(await readBody(req));
+  if (!isLeafEnvelope(body)) {
+    res.writeHead(400, JSON_HEADERS).end(JSON.stringify({ error: "envelope_invalid" }));
+    return;
+  }
+  const result = await runLeaf(body, buildConfig());
+  res.writeHead(200, JSON_HEADERS).end(JSON.stringify(result));
+}
+
 function handler(req: IncomingMessage, res: ServerResponse): void {
   if (req.method === "GET" && req.url === "/health") {
     res.writeHead(200).end("ok");
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/run-leaf") {
+    handleRunLeaf(req, res).catch((err) => {
+      if (!res.headersSent) {
+        res.writeHead(500, JSON_HEADERS).end(
+          JSON.stringify({ error: String(err) }),
+        );
+      }
+    });
     return;
   }
 
