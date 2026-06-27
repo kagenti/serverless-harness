@@ -10,7 +10,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@sh/harness": "workspace:*"
+    "@sh/harness": "workspace:*",
+    "@sh/work-queue": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
