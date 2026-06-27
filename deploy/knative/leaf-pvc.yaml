@@ -1,0 +1,16 @@
+# deploy/knative/leaf-pvc.yaml
+# Shared work volume for the leaf-session contract (MVP spec §5 volume layout).
+# The harness pods read inputs_ref / workspace_ref and write result_ref here; the
+# orchestrator pod seeds fixtures and reads results. ReadWriteOnce is sufficient on a
+# single-node Kind cluster (all pods land on the one node). The long-lived orchestrator
+# pod is the first consumer, binding the PVC to the node before harness pods scale up.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: leaf-work
+  namespace: default
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi

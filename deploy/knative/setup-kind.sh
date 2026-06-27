@@ -71,6 +71,14 @@ kubectl patch configmap/config-deployment \
   --type merge \
   --patch '{"data":{"registries-skipping-tag-resolving":"kind.local,ko.local,dev.local"}}'
 
+# Enable persistent-volume-claim support (read + write) so the leaf-session contract can
+# mount the shared leaf-work PVC into the harness service (deploy/knative/leaf-pvc.yaml).
+# The validating webhook rejects a writable PVC mount unless both flags are enabled.
+kubectl patch configmap/config-features \
+  --namespace knative-serving \
+  --type merge \
+  --patch '{"data":{"kubernetes.podspec-persistent-volume-claim":"enabled","kubernetes.podspec-persistent-volume-write":"enabled"}}'
+
 # Wait for Knative components
 echo "--- Waiting for Knative Serving to be ready ---"
 kubectl wait --for=condition=Available deployment --all -n knative-serving --timeout=120s

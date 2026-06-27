@@ -57,6 +57,18 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "500m"
+          # Shared leaf-session work volume (MVP spec §5). The harness reads inputs_ref /
+          # workspace_ref and writes result_ref under /work. Requires the Knative feature
+          # flags kubernetes.podspec-persistent-volume-claim and
+          # kubernetes.podspec-persistent-volume-write (enabled in config-features).
+          volumeMounts:
+            - name: work
+              mountPath: /work
+      volumes:
+        - name: work
+          persistentVolumeClaim:
+            claimName: leaf-work
+            readOnly: false
 ---
 apiVersion: v1
 kind: ServiceAccount
