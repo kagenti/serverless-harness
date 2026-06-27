@@ -36,14 +36,19 @@ claim() { echo ""; echo "--- Claim $1: $2 ---"; }
 oexec() { kubectl -n "$NS" exec "$ORCH" -- "$@"; }
 sexec() { kubectl -n "$NS" exec "$SBOX" -- "$@"; }
 
+# dispatch_sid <sessionId> <inputsRef> <resultRef> [model] -> echoes terminal-status JSON
+dispatch_sid() {
+  local sid="$1" in="$2" out="$3" model="${4:-$MODEL}"
+  local body
+  body=$(jq -nc --arg s "$sid" --arg m "$model" --arg in "$in" --arg out "$out" --arg ws "$SBOX_REPO" \
+    '{sessionId:$s, model:$m, inputsRef:$in, resultRef:$out, workspaceRef:$ws}')
+  curl -s --max-time 240 -H "$HOST_HEADER" -H "Content-Type: application/json" -d "$body" "$BASE/run-leaf"
+}
+
 # dispatch <item_id> [model] [inputs_override] -> echoes terminal-status JSON from /run-leaf
 dispatch() {
   local id="$1" model="${2:-$MODEL}" in="${3:-$INPUTS/$id.json}"
-  local body
-  body=$(jq -nc --arg s "$RUN/$id" --arg m "$model" \
-    --arg in "$in" --arg out "$RES/$id.json" --arg ws "$SBOX_REPO" \
-    '{sessionId:$s, model:$m, inputsRef:$in, resultRef:$out, workspaceRef:$ws}')
-  curl -s --max-time 240 -H "$HOST_HEADER" -H "Content-Type: application/json" -d "$body" "$BASE/run-leaf"
+  dispatch_sid "$RUN/$id" "$in" "$RES/$id.json" "$model"
 }
 
 echo "=== Leaf smoke (run=$RUN, model=$MODEL, sandbox=$SBOX) ==="
@@ -114,8 +119,30 @@ claim 5 "Idempotent re-invoke overwrites result_ref"
 re=$(dispatch i1 "$MODEL" | jq -r '.status // "none"')
 if [ "$re" = "done" ] && oexec sh -c "jq -e '.verdict' $RES/i1.json >/dev/null 2>&1"; then ok "re-invoke of i1 succeeded and rewrote a valid verdict"; else ko "re-invoke status=$re"; fi
 
-# --- Claim 6: scale-to-zero after idle ---
-claim 6 "Service scales to zero when idle"
+# --- Claim 6: crash mid-run, resume via M5 durable session, still produce the verdict (§7 gate 7) ---
+claim 6 "Killed mid-run, the session resumes and still produces its verdict"
+RSID="$RUN/i1-resume"; RRES="$RES/i1-resume.json"
+oexec rm -f "$RRES" 2>/dev/null || true
+# dispatch in the background, then kill the harness pod while the request is in flight
+( dispatch_sid "$RSID" "$INPUTS/i1.json" "$RRES" >/dev/null 2>&1 ) & bgpid=$!
+sleep 12
+# the harness sanitizes the envelope id (slash -> dash) into the Pi/Redis session id; match it
+RSID_KEY=$(printf '%s' "$RSID" | sed -E 's#[^A-Za-z0-9._-]#-#g; s#^[^A-Za-z0-9]+|[^A-Za-z0-9]+$##g')
+sid_persisted=0
+kubectl -n "$NS" exec deploy/redis -- redis-cli EXISTS "session:$RSID_KEY" 2>/dev/null | grep -q 1 && sid_persisted=1
+force_kill_pod                       # crash the harness pod mid-run
+wait "$bgpid" 2>/dev/null || true    # the in-flight request dies with the pod
+# re-invoke the same sessionId — runLeaf resumes from the durable Redis log
+re_status=$(dispatch_sid "$RSID" "$INPUTS/i1.json" "$RRES" | jq -r '.status // "none"')
+if [ "$re_status" = "done" ] && [ "$sid_persisted" = 1 ] \
+   && oexec sh -c "jq -e '.verdict' $RRES >/dev/null 2>&1"; then
+  ok "persisted mid-run (redis), pod killed, resumed → verdict produced"
+else
+  ko "resume failed: status=$re_status persisted_in_redis=$sid_persisted"
+fi
+
+# --- Claim 7: scale-to-zero after idle ---
+claim 7 "Service scales to zero when idle"
 stop_sampler "$SAMPLER_PID"
 wait_for_zero_pods 150 && ok "scaled to zero" || ko "did not scale to zero within 150s"
 
