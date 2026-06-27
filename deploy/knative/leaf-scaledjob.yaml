@@ -41,10 +41,22 @@ spec:
   maxReplicaCount: 10
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
+  # Two redis-streams triggers (KEDA activates the ScaledJob if EITHER is active):
+  #  - lagCount: undelivered backlog (entries never XREADGROUP'd) → spawns jobs for NEW work
+  #    and is the metric that scales the group to zero when fully drained. (Redis 7+.)
+  #  - pendingEntriesCount: the PEL (delivered-but-unacked) → keeps a reclaimer scheduled for a
+  #    crashed consumer's stuck entry so XAUTOCLAIM can resume it (gate-7) even with no new work.
+  # pendingEntriesCount ALONE deadlocks (PEL stays 0 until something reads; nothing reads until PEL>0).
   triggers:
     - type: redis-streams
       metadata:
-        addressFromEnv: ""
+        address: redis.default.svc:6379
+        stream: leaf-queue
+        consumerGroup: leaf-workers
+        lagCount: "1"
+        activationLagCount: "0"
+    - type: redis-streams
+      metadata:
         address: redis.default.svc:6379
         stream: leaf-queue
         consumerGroup: leaf-workers
