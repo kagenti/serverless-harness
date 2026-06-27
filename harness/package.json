@@ -15,6 +15,7 @@
   "dependencies": {
     "@sh/session-backend": "workspace:*",
     "@sh/k8s-sandbox": "workspace:*",
+    "@sh/work-queue": "workspace:*",
     "@earendil-works/pi-ai": "link:../pi-fork/packages/ai",
     "@earendil-works/pi-coding-agent": "link:../pi-fork/packages/coding-agent"
   },
