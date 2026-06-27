@@ -29,6 +29,17 @@ export function verdictFromCustomEntry(entry: unknown): Verdict | null {
   return r.ok ? r.value : null;
 }
 
+/**
+ * Map an envelope session_id (the idempotency key, e.g. "<run>/<item>") to a valid Pi session
+ * id: Pi requires it to contain only [A-Za-z0-9._-] and to start/end alphanumeric. Slashes (used
+ * by the spec's "<run_id>/<item_id>" convention) and other separators become "-". Deterministic,
+ * so a retry/resume of the same envelope id maps to the same session.
+ */
+export function toSessionId(sessionId: string): string {
+  const cleaned = sessionId.replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "");
+  return cleaned || "leaf";
+}
+
 export interface LeafItem { item_id: string; file: string; pattern: string }
 
 export interface LeafEnvelope {
@@ -121,27 +132,27 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
   // calls reach the same endpoint with the same credentials.
   const model = applyModelGateway(baseModel as { headers?: Record<string, unknown> }, config);
 
-  // Durable, resumable session keyed by env.sessionId. BufferedRedisBackend drains writes
-  // continuously, so a mid-run crash preserves progress up to the last drained entry.
+  // Durable, resumable session keyed by the (sanitized) session id. BufferedRedisBackend drains
+  // writes continuously, so a mid-run crash preserves progress up to the last drained entry.
+  const sid = toSessionId(env.sessionId);
   const store = new RedisSessionBackend<FileEntry>(config?.redisUrl ?? "redis://localhost:6379");
   const backend = new BufferedRedisBackend(store);
+  const isVerdictEntry = (e: unknown) =>
+    (e as { type?: string }).type === "custom" &&
+    (e as { customType?: string }).customType === VERDICT_ENTRY_TYPE;
 
   // Resume the session if one already exists under this id (retry / post-crash); otherwise
-  // create a fresh session persisted under env.sessionId.
-  const prior = await store.read(env.sessionId);
+  // create a fresh session persisted under the sanitized id.
+  const prior = await store.read(sid);
   const resuming = prior.length > 0;
   const sessionManager = resuming
-    ? await SessionManager.openFromCheckpoint(env.sessionId, backend, cwd)
-    : SessionManager.create(cwd, undefined, { id: env.sessionId }, backend);
+    ? await SessionManager.openFromCheckpoint(sid, backend, cwd)
+    : SessionManager.create(cwd, undefined, { id: sid }, backend);
 
   // Fast path: if a verdict was already submitted (and persisted) before a crash, recover it
   // from the durable log and skip re-running the agent entirely.
   if (resuming) {
-    const row = await store.latestWhere(
-      env.sessionId,
-      (e) => (e as { type?: string }).type === "custom" &&
-        (e as { customType?: string }).customType === VERDICT_ENTRY_TYPE,
-    );
+    const row = await store.latestWhere(sid, isVerdictEntry);
     const recovered = verdictFromCustomEntry(row?.entry);
     if (recovered) {
       capture.verdict = recovered;
@@ -184,11 +195,7 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
     // Belt-and-suspenders: if the agent submitted before a prior crash but the in-memory capture
     // is empty on this run, recover from the durable log.
     if (!capture.verdict) {
-      const row = await store.latestWhere(
-        env.sessionId,
-        (e) => (e as { type?: string }).type === "custom" &&
-          (e as { customType?: string }).customType === VERDICT_ENTRY_TYPE,
-      );
+      const row = await store.latestWhere(sid, isVerdictEntry);
       const recovered = verdictFromCustomEntry(row?.entry);
       if (recovered) capture.verdict = recovered;
     }
