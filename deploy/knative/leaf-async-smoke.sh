@@ -1,5 +1,5 @@
-# deploy/knative/leaf-async-smoke.sh
 #!/usr/bin/env bash
+# deploy/knative/leaf-async-smoke.sh
 # Gated Kind smoke for async leaf completion (design §6.2). Proves: async accept, KEDA
 # scale-out, completion via done-marker, crash-resume, scale-to-zero, deterministic failure.
 # Prereq: setup-kind.sh (incl. KEDA) done; image rebuilt with leaf-job + async routes;
@@ -68,7 +68,10 @@ done
 
 # Claim 4: crash-resume — kill a running leaf-job mid-run, entry reclaimed, still completes
 claim 4 "Crash mid-run → reclaimed → resumes → verdict"
-RID="$RUN/r1"; adispatch "r1" "$MODEL" "$INPUTS/i1.json" >/dev/null
+# Quiesce: let Claim-3 leaf-job pods drain to zero so the pod we kill below provably belongs to r1
+# (otherwise we might kill an i1/i2/i3 pod and r1's own un-killed run would complete → false pass).
+for _ in $(seq 1 36); do [ "$(leaf_job_pods)" = "0" ] && break; sleep 5; done
+adispatch "r1" "$MODEL" "$INPUTS/i1.json" >/dev/null
 # wait for a running leaf-job pod, then kill it
 killed=0
 for _ in $(seq 1 24); do
