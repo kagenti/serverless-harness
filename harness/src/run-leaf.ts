@@ -7,7 +7,8 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { getModel } from "@earendil-works/pi-ai";
-import { resolveModelSelection, requireModel, type TurnConfig } from "./run-turn.js";
+import { k8sSandboxExtension } from "@sh/k8s-sandbox";
+import { resolveModelSelection, requireModel, applyModelGateway, type TurnConfig } from "./run-turn.js";
 import { submitVerdictExtension, type VerdictCapture } from "./submit-verdict-tool.js";
 import { validateVerdict } from "./verdict.js";
 
@@ -28,13 +29,15 @@ export type LeafResult =
   | { status: "failed"; reason: "no_verdict" | "invalid_verdict" | "bad_inputs" | "error"; message?: string };
 
 export function buildLeafPrompt(item: LeafItem, workspaceRef?: string): string {
-  const root = workspaceRef ?? ".";
+  // The file/grep tools run in the sandbox pod; give the agent the absolute path so it does
+  // not resolve a relative path against the harness process cwd (which the sandbox maps away).
+  const filePath = workspaceRef ? `${workspaceRef.replace(/\/+$/, "")}/${item.file}` : item.file;
   return [
-    `You are reviewing one candidate finding in the repository at ${root}.`,
+    `You are reviewing one candidate finding in a sandboxed workspace.`,
     `Item id: ${item.item_id}`,
-    `File: ${item.file}`,
+    `File (read this exact absolute path with the read tool): ${filePath}`,
     `Pattern of interest: ${item.pattern}`,
-    `Open the file, decide whether the pattern is present and relevant, then report by calling`,
+    `Read the file, decide whether the pattern is present and relevant, then report by calling`,
     `the submit_verdict tool exactly once with item_id="${item.item_id}". Do not do anything else.`,
   ].join("\n");
 }
@@ -88,25 +91,33 @@ export async function runLeaf(
 // factory is prepended so the agent can call submit_verdict before any other extension runs.
 // Exercised by the Kind smoke (Task 6), not the unit tests.
 export const realProduceVerdict: ProduceVerdict = async (item, env, config, capture) => {
-  const cwd = env.workspaceRef ?? config?.cwd ?? process.cwd();
+  // Session cwd is a harness-local path (NOT workspaceRef): the agent's file/search tools run
+  // in the sandbox pod, and workspaceRef is an absolute path inside that pod (see buildLeafPrompt).
+  // Pointing the session cwd at workspaceRef would make the harness try to load a path it does
+  // not have. The k8sSandboxExtension uses process.cwd() as its head cwd regardless.
+  const cwd = config?.cwd ?? process.cwd();
   const { provider, modelId } = resolveModelSelection({
     model: env.model ?? config?.model,
     provider: env.provider ?? config?.provider,
   });
   const baseModel = requireModel(provider, modelId);
-  const model = baseModel;
+  // Honor the LLM gateway (base URL + Bearer auth) exactly as runTurn does, so leaf model
+  // calls reach the same endpoint with the same credentials.
+  const model = applyModelGateway(baseModel as { headers?: Record<string, unknown> }, config);
 
   const agentDir = getAgentDir();
   const settingsManager = SettingsManager.create(cwd, agentDir);
   const sessionManager = SessionManager.create(cwd, undefined, undefined);
 
-  // Wire the verdict extension via DefaultResourceLoader extensionFactories —
-  // the same mechanism run-turn.ts uses for flushExtension, k8sSandboxExtension, etc.
+  // Wire extensions via DefaultResourceLoader extensionFactories — the same mechanism
+  // run-turn.ts uses. k8sSandboxExtension() routes read/grep/bash/edit/write into the sandbox
+  // pod (KAGENTI_SANDBOX_POD), so agent-driven execution never runs in the credentialed harness
+  // pod; submitVerdictExtension(capture) is the only harness-side tool.
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir,
     settingsManager,
-    extensionFactories: [submitVerdictExtension(capture)],
+    extensionFactories: [submitVerdictExtension(capture), k8sSandboxExtension()],
   });
   await resourceLoader.reload();
 
