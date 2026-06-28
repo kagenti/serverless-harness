@@ -85,14 +85,20 @@ export function buildLeafPrompt(item: LeafItem, workspaceRef?: string): string {
     `Read the file, decide whether the pattern is present and relevant.`,
   ];
   if (item.require_approval) {
+    // Gated turn: steer the agent to request_approval ONLY, and withhold the submit_verdict
+    // instruction — otherwise the model takes the simpler path and submits a verdict directly,
+    // skipping the gate. The verdict instruction is delivered later by the approve continuation.
     lines.push(
-      `Before reporting, you MUST call the request_approval tool exactly once with a short summary`,
-      `of what you found and the proposed_action ("submit verdict <X>"); then stop and wait.`,
+      `A human MUST approve before you finish. Your FIRST and ONLY action now is to call the`,
+      `request_approval tool exactly once, with a short summary of what you found and a`,
+      `proposed_action stating the verdict you intend to submit. Do NOT submit your verdict yet —`,
+      `you will be asked to submit it after the human responds. Call request_approval, then stop.`,
+    );
+  } else {
+    lines.push(
+      `Report by calling the submit_verdict tool exactly once with item_id="${item.item_id}". Do not do anything else.`,
     );
   }
-  lines.push(
-    `Report by calling the submit_verdict tool exactly once with item_id="${item.item_id}". Do not do anything else.`,
-  );
   return lines.join("\n");
 }
 

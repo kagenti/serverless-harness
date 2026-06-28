@@ -119,6 +119,12 @@ describe("buildLeafPrompt with require_approval", () => {
     const p = buildLeafPrompt({ item_id: "i1", file: "a.py", pattern: "eval(", require_approval: true });
     expect(p).toContain("request_approval");
   });
+  it("withholds the submit_verdict instruction in the gated turn (verdict comes after approval)", () => {
+    // Steering the agent to request_approval ONLY; leaving the submit_verdict instruction in would
+    // let the model skip the gate and submit a verdict directly.
+    const p = buildLeafPrompt({ item_id: "i1", file: "a.py", pattern: "eval(", require_approval: true });
+    expect(p).not.toContain("submit_verdict");
+  });
   it("omits the gate instruction by default", () => {
     const p = buildLeafPrompt({ item_id: "i1", file: "a.py", pattern: "eval(" });
     expect(p).not.toContain("request_approval");
