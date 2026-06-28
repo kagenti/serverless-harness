@@ -70,7 +70,13 @@ echo "OK approved -> FLAGGED verdict, done"
 claim 4 "Idempotent resume: re-invoke with consumed decision -> still done, verdict unchanged, no duplicate result file"
 before="$(result)"
 dispatch '{"decisionRef":"'"$RES"'/i1.json.decision"}' >/dev/null
-# Poll up to 60s for any new leaf-job pod to appear then drain (proves the re-invoke actually ran).
+# Best-effort: poll up to 60s for a new leaf-job pod to appear then drain. NOTE: an idempotent
+# re-invoke of an already-completed session hits the verdict fast-path (M5 recovery, no agent/model
+# call), so the pod's Running window is sub-second and the 5s poll may not observe it. Pod
+# observation is therefore NOT a hard gate (it would be flaky); the real idempotency proof is the
+# terminal-state-unchanged assertions below (done stable, verdict content identical, exactly 1
+# result file). The loop also serves as a settle delay before asserting. Deeper idempotency is
+# unit-tested (decideSeed double-resume; verdict fast-path recovery).
 n=0
 while [ $n -lt 12 ]; do
   if [ "$(leaf_job_pods)" != "0" ]; then
