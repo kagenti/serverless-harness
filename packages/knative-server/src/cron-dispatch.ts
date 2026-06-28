@@ -65,6 +65,7 @@ async function main(): Promise<void> {
   const fireId = process.env.JOB_NAME ?? `manual-${process.pid}`;
   const configPath = process.env.CRON_CONFIG ?? "/config/schedule.json";
   const items = loadConfig(configPath);
+  if (items.length === 0) console.warn(`cron-dispatch: config has no items — nothing to dispatch (fire=${fireId})`);
   const result = await dispatchAll(items, fireId, buildPost());
   console.log(`cron-dispatch: ${result.accepted}/${result.total} accepted, ${result.failed} failed (fire=${fireId})`);
   process.exit(exitCodeFor(result));
