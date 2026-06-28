@@ -68,8 +68,7 @@ operator/orchestrator reads markers under the fire-stamped resultRef dir
 | Unit | Responsibility | Lives in |
 |---|---|---|
 | `cron-dispatch` | read config + fire id → POST each templated envelope async; aggregate result → exit code | `packages/knative-server/src/cron-dispatch.ts` |
-| schedule ConfigMap | the envelope list + `sessionId`/`resultRef` templates (with `__FIRE__` placeholder) | `deploy/knative/leaf-cron-config.yaml` |
-| CronJob | schedule, `concurrencyPolicy: Forbid`, downward-API Job-name env, ConfigMap mount, harness image, `serverless-harness` SA | `deploy/knative/leaf-cron.yaml` |
+| schedule + item list | **one manifest, two YAML docs:** a ConfigMap (envelope list + `sessionId`/`resultRef` templates with `__FIRE__`) and the CronJob (schedule, `concurrencyPolicy: Forbid`, downward-API Job-name env, ConfigMap mount, harness image, `serverless-harness` SA). Single `kubectl apply -f`. | `deploy/knative/leaf-cron.yaml` |
 | live gate | gated smoke: a fire dispatches the list → leaves complete; dispatcher-retry is idempotent | `deploy/knative/leaf-cron-smoke.sh` |
 
 **Key properties:** no new harness logic on the enqueue path (the dispatcher is a client of the
@@ -80,7 +79,15 @@ lives in `CronJob.spec.schedule` so Kubernetes owns cron semantics.
 
 ## 3. The dispatch contract
 
-### 3.1 Config (a ConfigMap-mounted JSON document)
+### 3.1 Config (a ConfigMap-mounted JSON document, co-located with the CronJob)
+
+The config ships as a ConfigMap defined **in the same `deploy/knative/leaf-cron.yaml`** as the
+CronJob (two `---`-separated documents). The operator workflow is plain declarative Kubernetes: edit
+the manifest and `kubectl apply -f deploy/knative/leaf-cron.yaml` to create or change the batch and
+its cadence; `kubectl create job --from=cronjob/leaf-cron <name>` to fire one on demand. There is no
+schedule-submission API — registering schedules is the operator's `kubectl` (or the external
+orchestrator's), not a harness control plane (charter G1/G2).
+
 
 ```json
 { "items": [
@@ -173,7 +180,7 @@ The dispatcher POSTs to the Knative service over cluster-internal networking:
 
 Deterministic (no waiting on a real cron tick): trigger a fire with
 `kubectl create job --from=cronjob/leaf-cron <name>`. Prereq: async path deployed (KEDA + ScaledJob),
-fixtures seeded (inputs on `/work`, repo in `sandbox-0`), CronJob + ConfigMap applied.
+fixtures seeded (inputs on `/work`, repo in `sandbox-0`), `leaf-cron.yaml` applied (its ConfigMap + CronJob).
 
 1. **Schedule validity:** `leaf-cron.yaml` applies clean (the cron expression is accepted by the API
    server).
@@ -211,8 +218,8 @@ out here so the harness performs no work-selection.
 
 - Everything async already needs (KEDA, `leaf-queue`/group, the `leaf-work` PVC, `sandbox-0`,
   `llm-credentials`, the Knative service).
-- The new `leaf-cron` CronJob + `leaf-cron-config` ConfigMap (applied like the other `deploy/knative`
-  manifests). `CronJob` is core Kubernetes — `setup-kind.sh` needs nothing new.
+- The new `deploy/knative/leaf-cron.yaml` — the ConfigMap and the CronJob in one manifest, a single
+  `kubectl apply -f`. `CronJob` is core Kubernetes — `setup-kind.sh` needs nothing new.
 
 ---
 
