@@ -22,10 +22,13 @@ export interface LeafJobDeps {
  * Claim and process at most one queue entry. Returns a label describing the outcome.
  * - "idle": nothing to claim.
  * - "deadletter": delivery count exceeded → failed marker + ack, runLeaf not run.
- * - "done"/"failed": runLeaf reached a terminal state → marker + ack.
+ * - "done"/"failed"/"paused"/"aborted": runLeaf reached this terminal/parked state → ack (a
+ *   terminal marker for done/failed/aborted; the gate marker for paused is written by runLeaf).
  * - "retry": transient error → NOT acked (entry stays pending for reclaim).
  */
-export async function processOne(deps: LeafJobDeps): Promise<"done" | "failed" | "deadletter" | "idle" | "retry"> {
+export async function processOne(
+  deps: LeafJobDeps,
+): Promise<"done" | "failed" | "paused" | "aborted" | "deadletter" | "idle" | "retry"> {
   const maxAttempts = deps.maxAttempts ?? 3;
   const minIdleMs = deps.minIdleMs ?? 90_000;
   const blockMs = deps.blockMs ?? 5_000;
@@ -61,7 +64,7 @@ export async function processOne(deps: LeafJobDeps): Promise<"done" | "failed" |
   }
   if (outcome.ack) {
     await deps.queue.ack(claimed.entryId);
-    return result.status === "done" ? "done" : "failed";
+    return result.status; // done | failed | paused | aborted — accurate label for log/metrics
   }
   return "retry";
 }

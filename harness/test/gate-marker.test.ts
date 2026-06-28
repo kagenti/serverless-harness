@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { deriveGateRef, writeGateMarker, readGateMarker, type GateMarker } from "../src/gate-marker";
@@ -28,5 +28,12 @@ describe("gate marker write/read", () => {
   });
   it("returns null for a missing/garbled file", () => {
     expect(readGateMarker(join(dir, "nope.gate"))).toBeNull();
+  });
+  it("returns null for an off-shape marker (wrong status / missing fields)", () => {
+    const p = join(dir, "bad.gate");
+    writeFileSync(p, JSON.stringify({ status: "done", sessionId: "s", gateId: 0, ts: "t", gate: { summary: "x", proposed_action: "y" } }));
+    expect(readGateMarker(p)).toBeNull(); // status must be awaiting_approval
+    writeFileSync(p, JSON.stringify({ status: "awaiting_approval", sessionId: "s", gateId: 0, ts: "t", gate: { summary: "x" } }));
+    expect(readGateMarker(p)).toBeNull(); // gate.proposed_action missing
   });
 });

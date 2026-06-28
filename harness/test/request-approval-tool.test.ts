@@ -38,4 +38,16 @@ describe("requestApprovalExtension", () => {
     expect(appended).toHaveLength(0);
     expect(res.isError).toBe(true);
   });
+
+  it("rejects an empty proposed_action (valid summary) and does not capture or append", async () => {
+    const capture: GateCapture = {};
+    const appended: unknown[] = [];
+    const sink = { appendCustomEntry: (t: string, d?: unknown) => { appended.push({ t, d }); return "id"; } };
+    const { api, tools } = fakePi();
+    requestApprovalExtension(capture, sink, 0)(api);
+    const res = await tools[0].execute("c", { summary: "did X", proposed_action: "" }, undefined, undefined, {} as any);
+    expect(capture.gate).toBeUndefined();
+    expect(appended).toHaveLength(0);
+    expect(res.isError).toBe(true);
+  });
 });
