@@ -167,14 +167,22 @@ export async function runLeaf(
 // re-invoking the same sessionId after a crash resumes from the durable log (M5) instead of
 // starting fresh. Exercised by the Kind smoke, not the unit tests.
 export const realProduceVerdict: ProduceVerdict = async (item, env, config, capture) => {
+  // Session cwd is a harness-local path (NOT workspaceRef): the agent's file/search tools run in
+  // the sandbox pod, and workspaceRef is an absolute path inside that pod (see buildLeafPrompt).
+  // Pointing the session cwd at workspaceRef would make the harness try to load a path it does not
+  // have. The k8sSandboxExtension uses process.cwd() as its head cwd regardless.
   const cwd = config?.cwd ?? process.cwd();
   const { provider, modelId } = resolveModelSelection({
     model: env.model ?? config?.model,
     provider: env.provider ?? config?.provider,
   });
   const baseModel = requireModel(provider, modelId);
+  // Honor the LLM gateway (base URL + Bearer auth) exactly as runTurn does, so leaf model calls
+  // reach the same endpoint with the same credentials.
   const model = applyModelGateway(baseModel as { headers?: Record<string, unknown> }, config);
 
+  // Durable, resumable session keyed by the (sanitized) session id. BufferedRedisBackend drains
+  // writes continuously, so a mid-run crash preserves progress up to the last drained entry.
   const sid = leafSessionId(env);
   const store = new RedisSessionBackend<FileEntry>(config?.redisUrl ?? "redis://localhost:6379");
   const backend = new BufferedRedisBackend(store);
@@ -182,13 +190,16 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
     (e as { type?: string }).type === "custom" &&
     (e as { customType?: string }).customType === VERDICT_ENTRY_TYPE;
 
+  // Resume the session if one already exists under this id (retry / post-crash); otherwise create
+  // a fresh session persisted under the sanitized id.
   const prior = await store.read(sid);
   const resuming = prior.length > 0;
   const sessionManager = resuming
     ? await SessionManager.openFromCheckpoint(sid, backend, cwd)
     : SessionManager.create(cwd, undefined, { id: sid }, backend);
 
-  // Verdict fast-path (unchanged): recover a previously-submitted verdict on resume.
+  // Verdict fast-path (unchanged, M5): if a verdict was already submitted and persisted before a
+  // crash, recover it from the durable log and skip re-running the agent entirely.
   if (resuming) {
     const row = await store.latestWhere(sid, isVerdictEntry);
     const recovered = verdictFromCustomEntry(row?.entry);

@@ -21,9 +21,24 @@ export function writeGateMarker(path: string, marker: GateMarker): void {
   renameSync(tmp, path);
 }
 
+/** Read + shape-validate a gate marker. Returns null on missing/garbled/off-shape input. */
 export function readGateMarker(path: string): GateMarker | null {
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as GateMarker;
+    const o = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    if (
+      !o ||
+      o.status !== "awaiting_approval" ||
+      typeof o.sessionId !== "string" ||
+      typeof o.gateId !== "number" ||
+      typeof o.ts !== "string" ||
+      typeof o.gate !== "object" ||
+      o.gate === null ||
+      typeof (o.gate as Record<string, unknown>).summary !== "string" ||
+      typeof (o.gate as Record<string, unknown>).proposed_action !== "string"
+    ) {
+      return null;
+    }
+    return o as unknown as GateMarker;
   } catch {
     return null;
   }

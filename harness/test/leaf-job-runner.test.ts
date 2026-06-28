@@ -71,6 +71,24 @@ describe("processOne", () => {
     expect(q.acked).toEqual(["1-0"]);
   });
 
+  it("paused → acks, writes no terminal marker, returns paused", async () => {
+    const q = fakeQueue({ entryId: "1-0", envelope: ENV, deliveryCount: 1 });
+    const markers: any[] = [];
+    const r = await processOne(baseDeps({ queue: q, runLeaf: async () => ({ status: "paused", gateRef: "/out.gate", gateId: 0 }), writeMarker: (p, m) => markers.push(m) }));
+    expect(r).toBe("paused");
+    expect(markers).toEqual([]); // gate marker is written by runLeaf, not the runner
+    expect(q.acked).toEqual(["1-0"]);
+  });
+
+  it("aborted → writes aborted marker + ack, returns aborted", async () => {
+    const q = fakeQueue({ entryId: "1-0", envelope: ENV, deliveryCount: 1 });
+    const markers: any[] = [];
+    const r = await processOne(baseDeps({ queue: q, runLeaf: async () => ({ status: "aborted" }), writeMarker: (p, m) => markers.push(m) }));
+    expect(r).toBe("aborted");
+    expect(markers[0]).toMatchObject({ status: "aborted", reason: null });
+    expect(q.acked).toEqual(["1-0"]);
+  });
+
   it("retryable error → no ack, no marker, returns retry", async () => {
     const q = fakeQueue({ entryId: "1-0", envelope: ENV, deliveryCount: 1 });
     const markers: any[] = [];
