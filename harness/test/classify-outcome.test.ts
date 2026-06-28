@@ -19,4 +19,14 @@ describe("classifyOutcome", () => {
       ack: false, marker: null, retryable: true,
     });
   });
+  it("paused → ack, no terminal marker (runLeaf wrote the gate marker)", () => {
+    expect(classifyOutcome({ status: "paused", gateRef: "/out.gate", gateId: 0 })).toEqual({
+      ack: true, marker: null, retryable: false,
+    });
+  });
+  it("aborted → ack + aborted terminal marker", () => {
+    expect(classifyOutcome({ status: "aborted" })).toEqual({
+      ack: true, marker: { status: "aborted", reason: null }, retryable: false,
+    });
+  });
 });

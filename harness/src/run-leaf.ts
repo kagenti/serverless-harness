@@ -16,6 +16,10 @@ import { flushExtension } from "./flush-extension.js";
 import { checkpointExtension } from "./checkpoint-extension.js";
 import { submitVerdictExtension, VERDICT_ENTRY_TYPE, type VerdictCapture } from "./submit-verdict-tool.js";
 import { validateVerdict, type Verdict } from "./verdict.js";
+import { deriveGateRef, writeGateMarker } from "./gate-marker.js";
+import type { GateCapture } from "./request-approval-tool.js";
+import { computeGateState, decideSeed, readDecision, GATE_DECISION_ENTRY_TYPE } from "./gate.js";
+import { requestApprovalExtension } from "./request-approval-tool.js";
 
 /**
  * Recover a verdict from a persisted `verdict` custom session entry (written by
@@ -41,7 +45,7 @@ export function toSessionId(sessionId: string): string {
   return cleaned || "leaf";
 }
 
-export interface LeafItem { item_id: string; file: string; pattern: string }
+export interface LeafItem { item_id: string; file: string; pattern: string; require_approval?: boolean }
 
 export interface LeafEnvelope {
   sessionId: string;
@@ -54,6 +58,8 @@ export interface LeafEnvelope {
   async?: boolean;            // when true, the HTTP layer enqueues instead of running inline
   doneMarkerRef?: string;     // overrides the derived <resultRef>.status
   tenant?: string;            // namespaces the session id (non-precluding; design §7)
+  gateRef?: string;           // overrides the derived <resultRef>.gate marker path (design §2.4)
+  decisionRef?: string;       // present on a resume invocation; the decision file to apply (design §2.3)
 }
 
 /** The Pi/Redis session id for a leaf: tenant-prefixed (if any), then sanitized. */
@@ -63,34 +69,53 @@ export function leafSessionId(env: { sessionId: string; tenant?: string }): stri
 
 export type LeafResult =
   | { status: "done"; resultRef: string }
+  | { status: "paused"; gateRef: string; gateId: number }
+  | { status: "aborted" }
   | { status: "failed"; reason: "no_verdict" | "invalid_verdict" | "bad_inputs" | "error"; message?: string };
 
 export function buildLeafPrompt(item: LeafItem, workspaceRef?: string): string {
   // The file/grep tools run in the sandbox pod; give the agent the absolute path so it does
   // not resolve a relative path against the harness process cwd (which the sandbox maps away).
   const filePath = workspaceRef ? `${workspaceRef.replace(/\/+$/, "")}/${item.file}` : item.file;
-  return [
+  const lines = [
     `You are reviewing one candidate finding in a sandboxed workspace.`,
     `Item id: ${item.item_id}`,
     `File (read this exact absolute path with the read tool): ${filePath}`,
     `Pattern of interest: ${item.pattern}`,
-    `Read the file, decide whether the pattern is present and relevant, then report by calling`,
-    `the submit_verdict tool exactly once with item_id="${item.item_id}". Do not do anything else.`,
-  ].join("\n");
+    `Read the file, decide whether the pattern is present and relevant.`,
+  ];
+  if (item.require_approval) {
+    // Gated turn: steer the agent to request_approval ONLY, and withhold the submit_verdict
+    // instruction — otherwise the model takes the simpler path and submits a verdict directly,
+    // skipping the gate. The verdict instruction is delivered later by the approve continuation.
+    lines.push(
+      `A human MUST approve before you finish. Your FIRST and ONLY action now is to call the`,
+      `request_approval tool exactly once, with a short summary of what you found and a`,
+      `proposed_action stating the verdict you intend to submit. Do NOT submit your verdict yet —`,
+      `you will be asked to submit it after the human responds. Call request_approval, then stop.`,
+    );
+  } else {
+    lines.push(
+      `Report by calling the submit_verdict tool exactly once with item_id="${item.item_id}". Do not do anything else.`,
+    );
+  }
+  return lines.join("\n");
 }
+
+export type LeafCapture = VerdictCapture & GateCapture;
 
 export type ProduceVerdict = (
   item: LeafItem,
   env: LeafEnvelope,
   config: TurnConfig | undefined,
-  capture: VerdictCapture,
+  capture: LeafCapture,
 ) => Promise<void>;
 
 function readItem(inputsRef: string): LeafItem | null {
   try {
     const o = JSON.parse(readFileSync(inputsRef, "utf8"));
     if (o && typeof o.item_id === "string" && typeof o.file === "string" && typeof o.pattern === "string") {
-      return { item_id: o.item_id, file: o.file, pattern: o.pattern };
+      return { item_id: o.item_id, file: o.file, pattern: o.pattern, require_approval: o.require_approval === true };
     }
     return null;
   } catch {
@@ -106,12 +131,26 @@ export async function runLeaf(
   const item = readItem(env.inputsRef);
   if (!item) return { status: "failed", reason: "bad_inputs" };
 
-  const capture: VerdictCapture = {};
+  const capture: LeafCapture = {};
   const produce = deps?.produceVerdict ?? realProduceVerdict;
   try {
     await produce(item, env, config, capture);
   } catch (err) {
     return { status: "failed", reason: "error", message: err instanceof Error ? err.message : String(err) };
+  }
+
+  // Gate outcomes take precedence over verdict handling.
+  if (capture.aborted) return { status: "aborted" };
+  if (capture.gate) {
+    const gateRef = deriveGateRef(env.resultRef, env.gateRef);
+    writeGateMarker(gateRef, {
+      status: "awaiting_approval",
+      sessionId: env.sessionId,
+      gateId: capture.gate.gateId,
+      gate: { summary: capture.gate.summary, proposed_action: capture.gate.proposed_action },
+      ts: new Date().toISOString(),
+    });
+    return { status: "paused", gateRef, gateId: capture.gate.gateId };
   }
 
   if (!capture.verdict) return { status: "failed", reason: "no_verdict" };
@@ -128,22 +167,14 @@ export async function runLeaf(
 // re-invoking the same sessionId after a crash resumes from the durable log (M5) instead of
 // starting fresh. Exercised by the Kind smoke, not the unit tests.
 export const realProduceVerdict: ProduceVerdict = async (item, env, config, capture) => {
-  // Session cwd is a harness-local path (NOT workspaceRef): the agent's file/search tools run
-  // in the sandbox pod, and workspaceRef is an absolute path inside that pod (see buildLeafPrompt).
-  // Pointing the session cwd at workspaceRef would make the harness try to load a path it does
-  // not have. The k8sSandboxExtension uses process.cwd() as its head cwd regardless.
   const cwd = config?.cwd ?? process.cwd();
   const { provider, modelId } = resolveModelSelection({
     model: env.model ?? config?.model,
     provider: env.provider ?? config?.provider,
   });
   const baseModel = requireModel(provider, modelId);
-  // Honor the LLM gateway (base URL + Bearer auth) exactly as runTurn does, so leaf model
-  // calls reach the same endpoint with the same credentials.
   const model = applyModelGateway(baseModel as { headers?: Record<string, unknown> }, config);
 
-  // Durable, resumable session keyed by the (sanitized) session id. BufferedRedisBackend drains
-  // writes continuously, so a mid-run crash preserves progress up to the last drained entry.
   const sid = leafSessionId(env);
   const store = new RedisSessionBackend<FileEntry>(config?.redisUrl ?? "redis://localhost:6379");
   const backend = new BufferedRedisBackend(store);
@@ -151,16 +182,13 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
     (e as { type?: string }).type === "custom" &&
     (e as { customType?: string }).customType === VERDICT_ENTRY_TYPE;
 
-  // Resume the session if one already exists under this id (retry / post-crash); otherwise
-  // create a fresh session persisted under the sanitized id.
   const prior = await store.read(sid);
   const resuming = prior.length > 0;
   const sessionManager = resuming
     ? await SessionManager.openFromCheckpoint(sid, backend, cwd)
     : SessionManager.create(cwd, undefined, { id: sid }, backend);
 
-  // Fast path: if a verdict was already submitted (and persisted) before a crash, recover it
-  // from the durable log and skip re-running the agent entirely.
+  // Verdict fast-path (unchanged): recover a previously-submitted verdict on resume.
   if (resuming) {
     const row = await store.latestWhere(sid, isVerdictEntry);
     const recovered = verdictFromCustomEntry(row?.entry);
@@ -171,20 +199,42 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
     }
   }
 
+  // Gate front-end (design §3): decide whether to pause, abort, or seed a prompt.
+  const gateState = computeGateState(prior.map((p) => p.entry));
+  const decision = env.decisionRef ? readDecision(env.decisionRef) : null;
+  const seed = decideSeed(gateState, decision, buildLeafPrompt(item, env.workspaceRef));
+
+  if (seed.kind === "abort") {
+    if (seed.record) sessionManager.appendCustomEntry(GATE_DECISION_ENTRY_TYPE, seed.record);
+    capture.aborted = true;
+    await backend.flush();
+    return;
+  }
+  if (seed.kind === "paused") {
+    capture.gate = seed.gate; // re-report the pending gate; runLeaf (re)writes the marker
+    await backend.flush();
+    return;
+  }
+  // seed.kind === "seed": record the decision (once) before running the continuation/fresh turn.
+  if (seed.record) sessionManager.appendCustomEntry(GATE_DECISION_ENTRY_TYPE, seed.record);
+
+  // Enforce the gate as a hard guarantee, not a prompt suggestion: for a require_approval item the
+  // submit_verdict tool is WITHHELD until the agent has passed at least one gate (a gate-decision
+  // exists in the log, or one is being applied this turn). In the pre-gate turn the agent's only
+  // structured-output path is request_approval, so it cannot bypass the gate even if it ignores the
+  // prompt. After approve/reject the verdict tool is available so the agent can finalize.
+  const allowVerdict =
+    !item.require_approval || gateState.gateDecisions.length > 0 || seed.record != null;
+
   const agentDir = getAgentDir();
   const settingsManager = SettingsManager.create(cwd, agentDir);
-
-  // Wire extensions via DefaultResourceLoader extensionFactories — the same mechanism
-  // run-turn.ts uses. k8sSandboxExtension() routes read/grep/bash/edit/write into the sandbox
-  // pod (KAGENTI_SANDBOX_POD), so agent-driven execution never runs in the credentialed harness
-  // pod. submitVerdictExtension persists the verdict durably (for resume); flush + checkpoint
-  // give M5 turn-level durability.
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir,
     settingsManager,
     extensionFactories: [
-      submitVerdictExtension(capture, sessionManager),
+      ...(allowVerdict ? [submitVerdictExtension(capture, sessionManager)] : []),
+      requestApprovalExtension(capture, sessionManager, gateState.nextGateId),
       k8sSandboxExtension(),
       flushExtension(backend),
       checkpointExtension(store, sessionManager),
@@ -200,11 +250,8 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
   });
 
   try {
-    // TODO(maxTurns): wire env.maxTurns into the run loop once a turn bound is needed.
-    await session.prompt(buildLeafPrompt(item, env.workspaceRef));
-    // Belt-and-suspenders: if the agent submitted before a prior crash but the in-memory capture
-    // is empty on this run, recover from the durable log.
-    if (!capture.verdict) {
+    await session.prompt(seed.prompt);
+    if (!capture.verdict && !capture.gate) {
       const row = await store.latestWhere(sid, isVerdictEntry);
       const recovered = verdictFromCustomEntry(row?.entry);
       if (recovered) capture.verdict = recovered;

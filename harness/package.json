@@ -9,6 +9,7 @@
     "./buffered-redis-backend": "./src/buffered-redis-backend.ts",
     "./budget-voter": "./src/budget-voter.ts",
     "./done-marker": "./src/done-marker.ts",
+    "./gate-marker": "./src/gate-marker.ts",
     "./leaf-job-runner": "./src/leaf-job-runner.ts"
   },
   "scripts": {
