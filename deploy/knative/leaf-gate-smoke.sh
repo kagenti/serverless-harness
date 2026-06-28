@@ -21,11 +21,14 @@ trap '
 ' EXIT
 claim() { echo ""; echo "--- Claim $1: $2 ---"; }
 oexec() { kubectl -n "$NS" exec "$ORCH" -- "$@"; }
+# Stdin-forwarding variant (-i) for writes fed by a heredoc or a pipe. Without -i, kubectl exec
+# does NOT forward local stdin to the pod, so `cat > file` would write an empty file.
+oexec_i() { kubectl -n "$NS" exec -i "$ORCH" -- "$@"; }
 leaf_job_pods() { kubectl get pods -n "$NS" -l scaledjob.keda.sh/name=leaf-worker --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d ' '; }
 
 # Seed one gated item (require_approval:true) and the fixture repo file.
 oexec mkdir -p "$INPUTS" "$RES"
-oexec sh -c "cat > $INPUTS/i1.json" <<JSON
+oexec_i sh -c "cat > $INPUTS/i1.json" <<JSON
 { "item_id": "i1", "file": "a.py", "pattern": "eval(", "require_approval": true }
 JSON
 kubectl -n "$NS" exec "$SBOX" -- sh -c "mkdir -p $SBOX_REPO && printf 'x = eval(\"1+1\")\n' > $SBOX_REPO/a.py"
@@ -40,7 +43,7 @@ dispatch() { # $1=extra-json
 # write_decision GATEID ACTION [FEEDBACK]
 write_decision() { # $1=gateId $2=action $3=feedback?
   jq -nc --argjson g "$1" --arg a "$2" --arg f "${3:-}" '{gateId:$g, action:$a} + (if $f=="" then {} else {feedback:$f} end)' \
-  | oexec sh -c "cat > $RES/i1.json.decision"
+  | oexec_i sh -c "cat > $RES/i1.json.decision"
 }
 gate_marker() { oexec sh -c "cat $RES/i1.json.gate 2>/dev/null || true"; }
 result() { oexec sh -c "cat $RES/i1.json 2>/dev/null || true"; }
@@ -97,7 +100,7 @@ echo "OK idempotent re-invoke: done status stable, verdict unchanged, exactly 1 
 # Reject scenario on a fresh run id.
 RUN="$RUN_REJ"; INPUTS="/work/$RUN/inputs"; RES="/work/$RUN/results"; SBOX_REPO="/workspace/$RUN/repo"
 oexec mkdir -p "$INPUTS" "$RES"
-oexec sh -c "cat > $INPUTS/i1.json" <<JSON
+oexec_i sh -c "cat > $INPUTS/i1.json" <<JSON
 { "item_id": "i1", "file": "a.py", "pattern": "eval(", "require_approval": true }
 JSON
 kubectl -n "$NS" exec "$SBOX" -- sh -c "mkdir -p $SBOX_REPO && printf 'x = eval(\"1+1\")\n' > $SBOX_REPO/a.py"
@@ -141,7 +144,7 @@ echo "OK reject continuation: session reached done with a result verdict (re-gat
 # Abort scenario on a fresh run id.
 RUN="grun-abort-$$"; INPUTS="/work/$RUN/inputs"; RES="/work/$RUN/results"; SBOX_REPO="/workspace/$RUN/repo"
 oexec mkdir -p "$INPUTS" "$RES"
-oexec sh -c "cat > $INPUTS/i1.json" <<JSON
+oexec_i sh -c "cat > $INPUTS/i1.json" <<JSON
 { "item_id": "i1", "file": "a.py", "pattern": "eval(", "require_approval": true }
 JSON
 kubectl -n "$NS" exec "$SBOX" -- sh -c "mkdir -p $SBOX_REPO && printf 'x = eval(\"1+1\")\n' > $SBOX_REPO/a.py"
