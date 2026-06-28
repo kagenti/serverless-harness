@@ -35,7 +35,7 @@ kubectl -n "$NS" exec "$SBOX" -- sh -c "mkdir -p $SBOX_REPO && printf 'x = eval(
 
 # Dispatch async; substitute resume fields per call.
 dispatch() { # $1=extra-json (defaults to {}); avoid ${1:-{}} which bash mis-parses (trailing })
-  local extra="$1"; [ -n "$extra" ] || extra='{}'
+  local extra="${1:-}"; [ -n "$extra" ] || extra='{}'
   jq -nc --arg s "$RUN/i1" --arg m "$MODEL" --arg in "$INPUTS/i1.json" --arg out "$RES/i1.json" --arg ws "$SBOX_REPO" \
     --argjson extra "$extra" \
     '{sessionId:$s, model:$m, inputsRef:$in, resultRef:$out, workspaceRef:$ws, async:true} + $extra' \
