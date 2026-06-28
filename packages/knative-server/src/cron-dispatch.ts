@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 /** Replace every __FIRE__ in each string field with fireId; non-strings pass through. Pure, non-mutating. */
 export function applyFire(envelope: Record<string, unknown>, fireId: string): Record<string, unknown> {
@@ -40,4 +41,40 @@ export function loadConfig(path: string): Record<string, unknown>[] {
   const parsed = JSON.parse(readFileSync(path, "utf8"));
   if (!Array.isArray(parsed?.items)) throw new Error("cron config: 'items' must be an array");
   return parsed.items as Record<string, unknown>[];
+}
+
+/** Build the real POST function: fetch the in-cluster Knative service; accepted == 202 + {status:"accepted"}. */
+function buildPost(): (env: Record<string, unknown>) => Promise<boolean> {
+  const base = process.env.SH_SERVICE_URL ?? "http://serverless-harness.default.svc.cluster.local";
+  return async (env) => {
+    const res = await fetch(`${base}/run-leaf`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(env),
+    });
+    if (res.status !== 202) {
+      console.error(`dispatch rejected: HTTP ${res.status}`);
+      return false;
+    }
+    const body = await res.json().catch(() => ({}) as Record<string, unknown>);
+    return (body as Record<string, unknown>).status === "accepted";
+  };
+}
+
+async function main(): Promise<void> {
+  const fireId = process.env.JOB_NAME ?? `manual-${process.pid}`;
+  const configPath = process.env.CRON_CONFIG ?? "/config/schedule.json";
+  const items = loadConfig(configPath);
+  const result = await dispatchAll(items, fireId, buildPost());
+  console.log(`cron-dispatch: ${result.accepted}/${result.total} accepted, ${result.failed} failed (fire=${fireId})`);
+  process.exit(exitCodeFor(result));
+}
+
+// Only run when invoked as the entrypoint (so tests can import the pure helpers above).
+const isMainModule = process.argv[1] === fileURLToPath(import.meta.url);
+if (isMainModule) {
+  main().catch((err) => {
+    console.error("cron-dispatch error:", err);
+    process.exit(1);
+  });
 }
