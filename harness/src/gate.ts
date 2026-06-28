@@ -73,3 +73,38 @@ export function gateDecisionFromEntry(entry: unknown): GateDecision | null {
   const r = validateDecision((entry as CustomEntry).data);
   return r.ok ? r.value : null;
 }
+
+export interface GateState {
+  gateRequests: GateRequest[];
+  gateDecisions: GateDecision[];
+  pendingGate: GateRequest | null;
+  lastDecision: GateDecision | null;
+  nextGateId: number;
+}
+
+/** Derive gate state from the durable session entries (the .entry payloads from store.read). */
+export function computeGateState(entries: unknown[]): GateState {
+  const gateRequests = entries.map(gateRequestFromEntry).filter((r): r is GateRequest => r !== null);
+  const gateDecisions = entries.map(gateDecisionFromEntry).filter((d): d is GateDecision => d !== null);
+  const decidedIds = new Set(gateDecisions.map((d) => d.gateId));
+  // At most one gate is unanswered at a time (gates are sequential); pick the latest undecided.
+  let pendingGate: GateRequest | null = null;
+  for (const r of gateRequests) {
+    if (!decidedIds.has(r.gateId)) pendingGate = r;
+  }
+  const lastDecision = gateDecisions.length ? gateDecisions[gateDecisions.length - 1] : null;
+  return { gateRequests, gateDecisions, pendingGate, lastDecision, nextGateId: gateRequests.length };
+}
+
+export function continuationPrompt(action: "approve" | "reject", feedback?: string): string {
+  if (action === "approve") {
+    return [
+      `Human decision: APPROVED.${feedback ? ` ${feedback}` : ""}`,
+      `Proceed with the proposed action. When finished, call submit_verdict exactly once, then stop.`,
+    ].join("\n");
+  }
+  return [
+    `Human decision: REJECTED. ${feedback ?? "No feedback provided."}`,
+    `Revise accordingly. You may call request_approval again when ready, or call submit_verdict when done.`,
+  ].join("\n");
+}

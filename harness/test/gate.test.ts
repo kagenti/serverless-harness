@@ -57,3 +57,51 @@ describe("entry helpers", () => {
     expect(gateDecisionFromEntry(req)).toBeNull();
   });
 });
+
+import { computeGateState, continuationPrompt } from "../src/gate";
+
+function reqEntry(gateId: number) {
+  return { type: "custom", customType: "gate-request", data: { gateId, summary: `s${gateId}`, proposed_action: `a${gateId}` } };
+}
+function decEntry(gateId: number, action = "approve", feedback?: string) {
+  return { type: "custom", customType: "gate-decision", data: { gateId, action, feedback } };
+}
+
+describe("computeGateState", () => {
+  it("no gates → no pending, nextGateId 0", () => {
+    const s = computeGateState([{ type: "user" }]);
+    expect(s.pendingGate).toBeNull();
+    expect(s.lastDecision).toBeNull();
+    expect(s.nextGateId).toBe(0);
+  });
+  it("one undecided request → it is pending, nextGateId 1", () => {
+    const s = computeGateState([reqEntry(0)]);
+    expect(s.pendingGate).toEqual({ gateId: 0, summary: "s0", proposed_action: "a0" });
+    expect(s.nextGateId).toBe(1);
+  });
+  it("decided request → no pending, lastDecision set", () => {
+    const s = computeGateState([reqEntry(0), decEntry(0, "approve")]);
+    expect(s.pendingGate).toBeNull();
+    expect(s.lastDecision).toEqual({ gateId: 0, action: "approve", feedback: undefined });
+  });
+  it("second request after a decided first → second is pending, nextGateId 2", () => {
+    const s = computeGateState([reqEntry(0), decEntry(0), reqEntry(1)]);
+    expect(s.pendingGate?.gateId).toBe(1);
+    expect(s.nextGateId).toBe(2);
+  });
+});
+
+describe("continuationPrompt", () => {
+  it("approve mentions APPROVED and submit_verdict", () => {
+    const p = continuationPrompt("approve", "looks good");
+    expect(p).toContain("APPROVED");
+    expect(p).toContain("looks good");
+    expect(p).toContain("submit_verdict");
+  });
+  it("reject mentions REJECTED and revise", () => {
+    const p = continuationPrompt("reject", "fix the query");
+    expect(p).toContain("REJECTED");
+    expect(p).toContain("fix the query");
+    expect(p.toLowerCase()).toContain("revise");
+  });
+});
