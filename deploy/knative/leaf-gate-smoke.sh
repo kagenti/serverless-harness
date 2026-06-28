@@ -34,9 +34,10 @@ JSON
 kubectl -n "$NS" exec "$SBOX" -- sh -c "mkdir -p $SBOX_REPO && printf 'x = eval(\"1+1\")\n' > $SBOX_REPO/a.py"
 
 # Dispatch async; substitute resume fields per call.
-dispatch() { # $1=extra-json
+dispatch() { # $1=extra-json (defaults to {}); avoid ${1:-{}} which bash mis-parses (trailing })
+  local extra="$1"; [ -n "$extra" ] || extra='{}'
   jq -nc --arg s "$RUN/i1" --arg m "$MODEL" --arg in "$INPUTS/i1.json" --arg out "$RES/i1.json" --arg ws "$SBOX_REPO" \
-    --argjson extra "${1:-{}}" \
+    --argjson extra "$extra" \
     '{sessionId:$s, model:$m, inputsRef:$in, resultRef:$out, workspaceRef:$ws, async:true} + $extra' \
   | curl -s --max-time 30 -H "$HOST_HEADER" -H "Content-Type: application/json" -d @- "$BASE/run-leaf"
 }
