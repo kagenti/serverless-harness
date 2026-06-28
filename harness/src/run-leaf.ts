@@ -16,6 +16,8 @@ import { flushExtension } from "./flush-extension.js";
 import { checkpointExtension } from "./checkpoint-extension.js";
 import { submitVerdictExtension, VERDICT_ENTRY_TYPE, type VerdictCapture } from "./submit-verdict-tool.js";
 import { validateVerdict, type Verdict } from "./verdict.js";
+import { deriveGateRef, writeGateMarker } from "./gate-marker.js";
+import type { GateCapture } from "./request-approval-tool.js";
 
 /**
  * Recover a verdict from a persisted `verdict` custom session entry (written by
@@ -41,7 +43,7 @@ export function toSessionId(sessionId: string): string {
   return cleaned || "leaf";
 }
 
-export interface LeafItem { item_id: string; file: string; pattern: string }
+export interface LeafItem { item_id: string; file: string; pattern: string; require_approval?: boolean }
 
 export interface LeafEnvelope {
   sessionId: string;
@@ -54,6 +56,8 @@ export interface LeafEnvelope {
   async?: boolean;            // when true, the HTTP layer enqueues instead of running inline
   doneMarkerRef?: string;     // overrides the derived <resultRef>.status
   tenant?: string;            // namespaces the session id (non-precluding; design §7)
+  gateRef?: string;           // overrides the derived <resultRef>.gate marker path (design §2.4)
+  decisionRef?: string;       // present on a resume invocation; the decision file to apply (design §2.3)
 }
 
 /** The Pi/Redis session id for a leaf: tenant-prefixed (if any), then sanitized. */
@@ -71,28 +75,39 @@ export function buildLeafPrompt(item: LeafItem, workspaceRef?: string): string {
   // The file/grep tools run in the sandbox pod; give the agent the absolute path so it does
   // not resolve a relative path against the harness process cwd (which the sandbox maps away).
   const filePath = workspaceRef ? `${workspaceRef.replace(/\/+$/, "")}/${item.file}` : item.file;
-  return [
+  const lines = [
     `You are reviewing one candidate finding in a sandboxed workspace.`,
     `Item id: ${item.item_id}`,
     `File (read this exact absolute path with the read tool): ${filePath}`,
     `Pattern of interest: ${item.pattern}`,
-    `Read the file, decide whether the pattern is present and relevant, then report by calling`,
-    `the submit_verdict tool exactly once with item_id="${item.item_id}". Do not do anything else.`,
-  ].join("\n");
+    `Read the file, decide whether the pattern is present and relevant.`,
+  ];
+  if (item.require_approval) {
+    lines.push(
+      `Before reporting, you MUST call the request_approval tool exactly once with a short summary`,
+      `of what you found and the proposed_action ("submit verdict <X>"); then stop and wait.`,
+    );
+  }
+  lines.push(
+    `Report by calling the submit_verdict tool exactly once with item_id="${item.item_id}". Do not do anything else.`,
+  );
+  return lines.join("\n");
 }
+
+export type LeafCapture = VerdictCapture & GateCapture;
 
 export type ProduceVerdict = (
   item: LeafItem,
   env: LeafEnvelope,
   config: TurnConfig | undefined,
-  capture: VerdictCapture,
+  capture: LeafCapture,
 ) => Promise<void>;
 
 function readItem(inputsRef: string): LeafItem | null {
   try {
     const o = JSON.parse(readFileSync(inputsRef, "utf8"));
     if (o && typeof o.item_id === "string" && typeof o.file === "string" && typeof o.pattern === "string") {
-      return { item_id: o.item_id, file: o.file, pattern: o.pattern };
+      return { item_id: o.item_id, file: o.file, pattern: o.pattern, require_approval: o.require_approval === true };
     }
     return null;
   } catch {
@@ -108,12 +123,26 @@ export async function runLeaf(
   const item = readItem(env.inputsRef);
   if (!item) return { status: "failed", reason: "bad_inputs" };
 
-  const capture: VerdictCapture = {};
+  const capture: LeafCapture = {};
   const produce = deps?.produceVerdict ?? realProduceVerdict;
   try {
     await produce(item, env, config, capture);
   } catch (err) {
     return { status: "failed", reason: "error", message: err instanceof Error ? err.message : String(err) };
+  }
+
+  // Gate outcomes take precedence over verdict handling.
+  if (capture.aborted) return { status: "aborted" };
+  if (capture.gate) {
+    const gateRef = deriveGateRef(env.resultRef, env.gateRef);
+    writeGateMarker(gateRef, {
+      status: "awaiting_approval",
+      sessionId: env.sessionId,
+      gateId: capture.gate.gateId,
+      gate: { summary: capture.gate.summary, proposed_action: capture.gate.proposed_action },
+      ts: new Date().toISOString(),
+    });
+    return { status: "paused", gateRef, gateId: capture.gate.gateId };
   }
 
   if (!capture.verdict) return { status: "failed", reason: "no_verdict" };
