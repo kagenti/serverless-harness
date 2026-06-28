@@ -18,6 +18,8 @@ import { submitVerdictExtension, VERDICT_ENTRY_TYPE, type VerdictCapture } from 
 import { validateVerdict, type Verdict } from "./verdict.js";
 import { deriveGateRef, writeGateMarker } from "./gate-marker.js";
 import type { GateCapture } from "./request-approval-tool.js";
+import { computeGateState, decideSeed, readDecision, GATE_DECISION_ENTRY_TYPE } from "./gate.js";
+import { requestApprovalExtension } from "./request-approval-tool.js";
 
 /**
  * Recover a verdict from a persisted `verdict` custom session entry (written by
@@ -159,22 +161,14 @@ export async function runLeaf(
 // re-invoking the same sessionId after a crash resumes from the durable log (M5) instead of
 // starting fresh. Exercised by the Kind smoke, not the unit tests.
 export const realProduceVerdict: ProduceVerdict = async (item, env, config, capture) => {
-  // Session cwd is a harness-local path (NOT workspaceRef): the agent's file/search tools run
-  // in the sandbox pod, and workspaceRef is an absolute path inside that pod (see buildLeafPrompt).
-  // Pointing the session cwd at workspaceRef would make the harness try to load a path it does
-  // not have. The k8sSandboxExtension uses process.cwd() as its head cwd regardless.
   const cwd = config?.cwd ?? process.cwd();
   const { provider, modelId } = resolveModelSelection({
     model: env.model ?? config?.model,
     provider: env.provider ?? config?.provider,
   });
   const baseModel = requireModel(provider, modelId);
-  // Honor the LLM gateway (base URL + Bearer auth) exactly as runTurn does, so leaf model
-  // calls reach the same endpoint with the same credentials.
   const model = applyModelGateway(baseModel as { headers?: Record<string, unknown> }, config);
 
-  // Durable, resumable session keyed by the (sanitized) session id. BufferedRedisBackend drains
-  // writes continuously, so a mid-run crash preserves progress up to the last drained entry.
   const sid = leafSessionId(env);
   const store = new RedisSessionBackend<FileEntry>(config?.redisUrl ?? "redis://localhost:6379");
   const backend = new BufferedRedisBackend(store);
@@ -182,16 +176,13 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
     (e as { type?: string }).type === "custom" &&
     (e as { customType?: string }).customType === VERDICT_ENTRY_TYPE;
 
-  // Resume the session if one already exists under this id (retry / post-crash); otherwise
-  // create a fresh session persisted under the sanitized id.
   const prior = await store.read(sid);
   const resuming = prior.length > 0;
   const sessionManager = resuming
     ? await SessionManager.openFromCheckpoint(sid, backend, cwd)
     : SessionManager.create(cwd, undefined, { id: sid }, backend);
 
-  // Fast path: if a verdict was already submitted (and persisted) before a crash, recover it
-  // from the durable log and skip re-running the agent entirely.
+  // Verdict fast-path (unchanged): recover a previously-submitted verdict on resume.
   if (resuming) {
     const row = await store.latestWhere(sid, isVerdictEntry);
     const recovered = verdictFromCustomEntry(row?.entry);
@@ -202,20 +193,34 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
     }
   }
 
+  // Gate front-end (design §3): decide whether to pause, abort, or seed a prompt.
+  const gateState = computeGateState(prior.map((p) => p.entry));
+  const decision = env.decisionRef ? readDecision(env.decisionRef) : null;
+  const seed = decideSeed(gateState, decision, buildLeafPrompt(item, env.workspaceRef));
+
+  if (seed.kind === "abort") {
+    if (seed.record) sessionManager.appendCustomEntry(GATE_DECISION_ENTRY_TYPE, seed.record);
+    capture.aborted = true;
+    await backend.flush();
+    return;
+  }
+  if (seed.kind === "paused") {
+    capture.gate = seed.gate; // re-report the pending gate; runLeaf (re)writes the marker
+    await backend.flush();
+    return;
+  }
+  // seed.kind === "seed": record the decision (once) before running the continuation/fresh turn.
+  if (seed.record) sessionManager.appendCustomEntry(GATE_DECISION_ENTRY_TYPE, seed.record);
+
   const agentDir = getAgentDir();
   const settingsManager = SettingsManager.create(cwd, agentDir);
-
-  // Wire extensions via DefaultResourceLoader extensionFactories — the same mechanism
-  // run-turn.ts uses. k8sSandboxExtension() routes read/grep/bash/edit/write into the sandbox
-  // pod (KAGENTI_SANDBOX_POD), so agent-driven execution never runs in the credentialed harness
-  // pod. submitVerdictExtension persists the verdict durably (for resume); flush + checkpoint
-  // give M5 turn-level durability.
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir,
     settingsManager,
     extensionFactories: [
       submitVerdictExtension(capture, sessionManager),
+      requestApprovalExtension(capture, sessionManager, gateState.nextGateId),
       k8sSandboxExtension(),
       flushExtension(backend),
       checkpointExtension(store, sessionManager),
@@ -231,11 +236,8 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
   });
 
   try {
-    // TODO(maxTurns): wire env.maxTurns into the run loop once a turn bound is needed.
-    await session.prompt(buildLeafPrompt(item, env.workspaceRef));
-    // Belt-and-suspenders: if the agent submitted before a prior crash but the in-memory capture
-    // is empty on this run, recover from the durable log.
-    if (!capture.verdict) {
+    await session.prompt(seed.prompt);
+    if (!capture.verdict && !capture.gate) {
       const row = await store.latestWhere(sid, isVerdictEntry);
       const recovered = verdictFromCustomEntry(row?.entry);
       if (recovered) capture.verdict = recovered;
