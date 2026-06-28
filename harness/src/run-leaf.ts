@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -117,6 +118,7 @@ export async function runLeaf(
   const v = validateVerdict(capture.verdict);
   if (!v.ok) return { status: "failed", reason: "invalid_verdict", message: v.error };
 
+  mkdirSync(dirname(env.resultRef), { recursive: true }); // ensure the (possibly fire-stamped) parent dir exists
   writeFileSync(env.resultRef, JSON.stringify(v.value));
   return { status: "done", resultRef: env.resultRef };
 }
