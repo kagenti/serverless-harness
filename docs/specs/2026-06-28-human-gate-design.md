@@ -184,34 +184,28 @@ A front-end runs on **every** invocation (fresh or resume), before the agent loo
      pendingGate = the latest gate-request entry whose gateId has NO matching gate-decision entry
                    (null if none)
 
-4. branch
+4. branch — compute `seedPrompt` (the turn to drive) or short-circuit:
    (a) pendingGate AND decisionRef provided AND decision.gateId == pendingGate.gateId:
-         if a gate-decision entry for this gateId ALREADY exists:
-             skip BOTH recording and re-seeding (idempotent — the decision was applied and the
-             continuation turn is already durable in the log) → go (c)
-         else (first application of this decision):
-             action == "abort"   → append gate-decision entry {gateId, abort} → write `aborted`
-                                    marker → return { status: "aborted" }   (no agent run)
-             action == "approve" → append gate-decision entry + a DURABLE continuation user-turn:
-                                    "Human decision: APPROVED. <feedback?> Proceed."
-             action == "reject"  → append gate-decision entry + a DURABLE continuation user-turn:
-                                    "Human decision: REJECTED: <feedback>. Revise; you may request
-                                    approval again when ready."
-         → run the agent loop (step 5)
+         if NO gate-decision entry exists yet for this gateId → append a durable gate-decision
+           entry { gateId, action, feedback }   (idempotent: appended at most once per gateId)
+         action == "abort"           → return { status: "aborted" }   (no agent run)
+         action == "approve"|"reject"→ seedPrompt = continuationPrompt(action, feedback)
 
    (b) pendingGate AND (no decisionRef OR decision.gateId != pendingGate.gateId):
-         duplicate / early / stale resume → ensure the `awaiting_approval` marker is present →
+         duplicate / early / stale resume → set capture.gate from pendingGate →
          return { status: "paused", gateRef, gateId }   (NO agent run — idempotent no-op)
 
    (c) no pendingGate:
-         fresh start    → seed the initial job-mode prompt (UNCHANGED)
-         resumed-past   → the durable continuation turn (or initial prompt) is replayed by
-                          openFromCheckpoint; just run the loop against the pending turn
-         → run the agent loop (step 5)
+         lastDecision = the most recent gate-decision entry (null if none)
+         seedPrompt = lastDecision ? continuationPrompt(lastDecision.action, lastDecision.feedback)
+                                   : buildLeafPrompt(item)          // fresh start (UNCHANGED)
 
-5. after the loop (inspect capture flags)
+5. run the agent loop:  session.prompt(seedPrompt)   // re-seeds each invocation, exactly like the
+                                                      // existing verdict-resume re-prompts buildLeafPrompt
+
+6. after the loop (inspect capture flags)
      submit_verdict called    → write `done` marker, return { status: "done", resultRef }
-     request_approval called  → write `awaiting_approval` marker (the new gateId), return
+     request_approval called  → write `awaiting_approval` gate marker (the new gateId), return
                                 { status: "paused", gateRef, gateId }
      neither                  → return { status: "failed", reason: "no_verdict" }
 ```
@@ -220,26 +214,32 @@ A front-end runs on **every** invocation (fresh or resume), before the agent loo
 *current* `gateId` and the decision file must echo it. A resume applies a decision **only** when its
 `gateId` matches the pending gate, so:
 
-- a **stale/replayed** decision (answering an already-consumed gate) is **ignored**;
-- a **double-resume** with the same decision is a **no-op continuation** (the gate-decision entry
-  already exists → branch (a) "skip" → (c) continue from current state).
+- a **stale/replayed** decision (answering an already-consumed gate) is **ignored** (branch (b));
+- a **double-resume** with the same decision **re-seeds the same continuation** (branch (a) →
+  re-derive → (c)/run), which is idempotent: the gate-decision entry is appended **at most once** per
+  `gateId`, and re-running the post-decision turn overwrites to the same verdict — exactly the
+  idempotency the existing initial-prompt resume already relies on.
 
 This is the gate analogue of the verdict fast-path: **durable custom entries make replay safe.**
 
 ### 3.1 Continuation seeding (B2 in practice)
 
-On resume, `openFromCheckpoint` replays the full prior context (including the `request_approval`
-exchange). The harness then appends a **new user turn** carrying the decision — the same mechanism
-job-mode uses to seed its initial prompt. No `tool_use`/`tool_result` surgery; the transcript stays
+The harness drives every turn — fresh or resumed — by calling `session.prompt(seedPrompt)`, the same
+mechanism job-mode uses to seed its initial prompt (`openFromCheckpoint` loads the prior context but
+does not by itself run a turn). On a gate resume the `seedPrompt` is the **continuation prompt**
+derived from the decision (`"Human decision: APPROVED. <feedback?> Proceed."` /
+`"Human decision: REJECTED: <feedback>. Revise; you may request approval again."`). Because the prior
+turns (including the `request_approval` exchange) are already in the durable log and replayed into
+context, the agent continues coherently. No `tool_use`/`tool_result` surgery; the transcript stays
 well-formed across the park.
 
-**Durability ordering (crash-mid-resume safety).** The gate-decision entry **and** the continuation
-user-turn are both appended to the durable session log (through `BufferedRedisBackend`, flushed
-before the agent loop starts its first model call). So if the pod crashes after the decision is
-applied but before a verdict, the reclaim/re-invoke finds the gate already consumed (branch (a)
-"skip") and the continuation turn already in the log, and simply **continues** (branch (c)) — the
-decision is never applied or seeded twice. The gate-decision entry is the idempotency guard that
-prevents a second continuation turn from being appended on redelivery.
+**Crash-mid-resume safety.** The gate-decision entry is appended (once) before the agent loop and
+flushed through `BufferedRedisBackend`. If the pod crashes after the decision is recorded but before
+a verdict, the reclaim/re-invoke finds the gate already decided (no pending gate), takes branch (c),
+**re-derives the same continuation prompt** from the durable gate-decision entry, and re-runs — the
+decision is never recorded twice and the re-run is idempotent (overwrites to the same verdict). The
+gate-decision entry is the idempotency guard that prevents a *second* decision from being recorded
+for a consumed `gateId`.
 
 ---
 
@@ -288,8 +288,8 @@ async enqueue with the same `sessionId` + `decisionRef`. On the async path it `X
   and returns `paused`. The `gateId` is unchanged (derived from the durable entry). (Sync caller sees
   a connection drop → re-invokes → same result. Async: entry unacked → reclaimed.)
 - **Crash mid-resume (decision recorded, no verdict yet):** the gate-decision entry is durable →
-  reclaim/re-invoke resumes **past** the gate (branch (a) "skip" → (c) continue) → runs to verdict.
-  No re-prompt, no double-apply.
+  reclaim/re-invoke finds no pending gate (branch (c)), **re-derives the same continuation prompt**
+  from that entry, and re-runs idempotently to verdict. The decision is never recorded twice.
 - **Double / conflicting decision (approve-then-reject):** the **first** matching-`gateId` decision
   is recorded durably and wins; later decisions for a consumed `gateId` are ignored. If two decision
   files race **before** any resume reads one, last-writer-on-the-file wins — documented; the
