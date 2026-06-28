@@ -4,6 +4,7 @@ import { runTurn, type TurnConfig } from "@sh/harness/run-turn";
 import { runLeaf, type LeafEnvelope } from "@sh/harness/run-leaf";
 import { RedisWorkQueue } from "@sh/work-queue";
 import { readDoneMarker, deriveDoneMarkerPath } from "@sh/harness/done-marker";
+import { readGateMarker } from "@sh/harness/gate-marker";
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
 // Status markers live under the orchestrator-owned work root; the status endpoint refuses
@@ -94,21 +95,38 @@ async function handleRunLeafParsed(body: any, _raw: string, res: ServerResponse)
   res.writeHead(200, JSON_HEADERS).end(JSON.stringify(result));
 }
 
+// Confine an untrusted marker path to the work root (path-traversal guard). Returns null if outside.
+function confineToWorkRoot(p: string): string | null {
+  const resolved = resolvePath(p);
+  if (resolved !== WORK_ROOT && !resolved.startsWith(`${WORK_ROOT}/`)) return null;
+  return resolved;
+}
+
 function handleLeafStatus(url: URL, res: ServerResponse): void {
   const doneMarker = url.searchParams.get("doneMarker");
   if (!doneMarker) { res.writeHead(400, JSON_HEADERS).end(JSON.stringify({ error: "doneMarker_required" })); return; }
-  // Resolve and confine to the work root so a crafted param can't read arbitrary files.
-  const resolved = resolvePath(doneMarker);
-  if (resolved !== WORK_ROOT && !resolved.startsWith(`${WORK_ROOT}/`)) {
-    res.writeHead(403, JSON_HEADERS).end(JSON.stringify({ error: "doneMarker_forbidden" }));
-    return;
-  }
+  const resolved = confineToWorkRoot(doneMarker);
+  if (!resolved) { res.writeHead(403, JSON_HEADERS).end(JSON.stringify({ error: "doneMarker_forbidden" })); return; }
+
   const marker = readDoneMarker(resolved);
   if (marker) {
     res.writeHead(200, JSON_HEADERS).end(JSON.stringify({ status: marker.status, reason: marker.reason ?? undefined }));
     return;
   }
-  // No terminal marker yet — best-effort non-terminal state for visibility.
+
+  // No terminal marker yet — if a gate marker path is supplied, report awaiting_approval.
+  const gateMarker = url.searchParams.get("gateMarker");
+  if (gateMarker) {
+    const g = confineToWorkRoot(gateMarker);
+    if (!g) { res.writeHead(403, JSON_HEADERS).end(JSON.stringify({ error: "gateMarker_forbidden" })); return; }
+    const gm = readGateMarker(g);
+    if (gm) {
+      res.writeHead(200, JSON_HEADERS).end(JSON.stringify({ status: gm.status, gateId: gm.gateId }));
+      return;
+    }
+  }
+
+  // Best-effort non-terminal state for visibility.
   res.writeHead(200, JSON_HEADERS).end(JSON.stringify({ status: "queued" }));
 }
 

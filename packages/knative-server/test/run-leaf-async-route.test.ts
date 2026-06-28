@@ -11,6 +11,12 @@ vi.mock("@sh/harness/done-marker", () => ({
   readDoneMarker: (...a: any[]) => readDoneMarker(...a),
   deriveDoneMarkerPath: (r: string, o?: string) => o ?? `${r}.status`,
 }));
+vi.mock("@sh/harness/gate-marker", () => ({
+  readGateMarker: vi.fn(),
+  deriveGateRef: (r: string, o?: string) => o ?? `${r}.gate`,
+}));
+import { readGateMarker } from "@sh/harness/gate-marker";
+const mockedReadGate = vi.mocked(readGateMarker);
 
 import { startServer } from "../src/server";
 
@@ -58,6 +64,33 @@ describe("async /run-leaf", () => {
     const r = await req("GET", "/run-leaf/status?doneMarker=/etc/passwd");
     expect(r.status).toBe(403);
     expect(readDoneMarker).not.toHaveBeenCalled();
+    server.close();
+  });
+
+  it("status returns awaiting_approval from the gate marker when no terminal marker yet", async () => {
+    readDoneMarker.mockReturnValue(null);
+    mockedReadGate.mockReturnValue({
+      status: "awaiting_approval", sessionId: "run/i1", gateId: 0,
+      gate: { summary: "s", proposed_action: "a" }, ts: "t",
+    });
+    const r = await req("GET", "/run-leaf/status?doneMarker=/work/out.status&gateMarker=/work/out.json.gate");
+    expect(r.status).toBe(200);
+    expect(r.json).toMatchObject({ status: "awaiting_approval", gateId: 0 });
+    server.close();
+  });
+
+  it("status rejects a gateMarker outside the work root (path traversal)", async () => {
+    readDoneMarker.mockReturnValue(null);
+    const r = await req("GET", "/run-leaf/status?doneMarker=/work/out.status&gateMarker=/etc/shadow");
+    expect(r.status).toBe(403);
+    server.close();
+  });
+
+  it("status still returns queued when neither terminal nor gate marker is present", async () => {
+    readDoneMarker.mockReturnValue(null);
+    mockedReadGate.mockReturnValue(null);
+    const r = await req("GET", "/run-leaf/status?doneMarker=/work/out.status&gateMarker=/work/out.json.gate");
+    expect(r.json).toMatchObject({ status: "queued" });
     server.close();
   });
 });
