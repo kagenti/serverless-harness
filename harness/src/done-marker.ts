@@ -2,7 +2,7 @@ import { writeFileSync, renameSync, readFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 export interface DoneMarker {
-  status: "done" | "failed";
+  status: "done" | "failed" | "aborted";
   sessionId: string;
   reason: string | null;
   ts: string;

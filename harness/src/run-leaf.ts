@@ -63,6 +63,8 @@ export function leafSessionId(env: { sessionId: string; tenant?: string }): stri
 
 export type LeafResult =
   | { status: "done"; resultRef: string }
+  | { status: "paused"; gateRef: string; gateId: number }
+  | { status: "aborted" }
   | { status: "failed"; reason: "no_verdict" | "invalid_verdict" | "bad_inputs" | "error"; message?: string };
 
 export function buildLeafPrompt(item: LeafItem, workspaceRef?: string): string {
