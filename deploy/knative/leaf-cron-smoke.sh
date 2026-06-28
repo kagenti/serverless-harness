@@ -1,5 +1,5 @@
-# deploy/knative/leaf-cron-smoke.sh
 #!/usr/bin/env bash
+# deploy/knative/leaf-cron-smoke.sh
 # Gated Kind smoke for scheduled leaf dispatch (Archetype C, design §6.2). Proves: the CronJob's
 # dispatcher enqueues a config list onto the async path (leaves complete with correct verdicts) and
 # a re-run of the SAME fire is idempotent (same fire-stamped paths, no second run dir).
@@ -18,7 +18,7 @@ FIRE="cronfire-$$"                       # the manual fire id (becomes the Job n
 NRES="/work/nightly/$FIRE/results"        # fire-stamped result dir the config templates produce
 ITEMS="i1 i2 i3"
 declare -A EXPECT=( [i1]=FLAGGED [i2]=CLEAR [i3]=CLEAR )
-trap 'kubectl -n "$NS" delete job "$FIRE" --force --grace-period=0 >/dev/null 2>&1 || true; kubectl -n "$NS" exec "$SBOX" -- sh -c "rm -rf /workspace/nightly" 2>/dev/null || true' EXIT
+trap 'kubectl -n "$NS" delete job "$FIRE" --force --grace-period=0 >/dev/null 2>&1 || true; kubectl -n "$NS" exec "$ORCH" -- sh -c "rm -rf /work/nightly/$FIRE" 2>/dev/null || true; kubectl -n "$NS" exec "$SBOX" -- sh -c "rm -rf /workspace/nightly" 2>/dev/null || true' EXIT
 oexec() { kubectl -n "$NS" exec "$ORCH" -- "$@"; }
 claim() { echo ""; echo "--- Claim $1: $2 ---"; }
 fire_and_wait() {  # create a Job named $FIRE from the cronjob, wait for the dispatcher to finish
@@ -57,17 +57,25 @@ for id in $ITEMS; do
 done
 [ "$cov_ok" = 1 ] && ok "all dispatched leaves completed with correct verdicts" || ko "missing/incorrect"
 
-# Claim 3: re-running the SAME fire id is idempotent — same fire-stamped dir, no second run directory
-claim 3 "Idempotent retry: same fire id → same paths, no duplicate run dir"
+# Claim 3: re-running the SAME fire id is idempotent — the dispatcher re-runs to completion, writes to
+# the SAME fire-stamped dir (no second run directory), markers still done with the same verdicts.
+claim 3 "Idempotent retry: same fire id → re-dispatch completes, same paths, no duplicate run dir"
 before=$(oexec sh -c 'ls -1d /work/nightly/cronfire-* 2>/dev/null | wc -l' | tr -d ' ')
 fire_and_wait
+refire_done=0
+kubectl -n "$NS" wait --for=condition=complete "job/$FIRE" --timeout=120s >/dev/null 2>&1 && refire_done=1
 after=$(oexec sh -c 'ls -1d /work/nightly/cronfire-* 2>/dev/null | wc -l' | tr -d ' ')
 still_done=1
 for id in $ITEMS; do
   s=$(oexec sh -c "jq -r .status $NRES/$id.json.status" 2>/dev/null || echo "")
-  [ "$s" = "done" ] || still_done=0
+  v=$(oexec sh -c "jq -r .verdict $NRES/$id.json 2>/dev/null" 2>/dev/null || echo "")
+  { [ "$s" = "done" ] && [ "$v" = "${EXPECT[$id]}" ]; } || still_done=0
 done
-if [ "$before" = "$after" ] && [ "$still_done" = 1 ]; then ok "re-fire reused id (dirs: $before→$after), markers still done"; else ko "dirs $before→$after still_done=$still_done"; fi
+if [ "$refire_done" = 1 ] && [ "$before" = "$after" ] && [ "$still_done" = 1 ]; then
+  ok "re-fire ran+completed, reused id (dirs: $before→$after), markers still done"
+else
+  ko "refire_done=$refire_done dirs $before→$after still_done=$still_done"
+fi
 
 echo ""; echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt 0 ]; then echo "CRON SMOKE FAIL"; exit 1; else echo "CRON SMOKE PASS"; exit 0; fi
