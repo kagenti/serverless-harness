@@ -13,8 +13,12 @@ source ./lib.sh
 
 ORCH=leaf-orchestrator; SBOX="${KAGENTI_SANDBOX_POD:-sandbox-0}"
 RUN="grun-$$"; INPUTS="/work/$RUN/inputs"; RES="/work/$RUN/results"; SBOX_REPO="/workspace/$RUN/repo"
+RUN_REJ="grun-rej-$$"
 MODEL="${SH_MODEL:-claude-haiku-4-5}"
-trap 'kubectl -n "$NS" exec "$SBOX" -- sh -c "rm -rf /workspace/$RUN" 2>/dev/null || true' EXIT
+trap '
+  kubectl -n "$NS" exec "$SBOX" -- sh -c "rm -rf /workspace/$RUN" 2>/dev/null || true
+  kubectl -n "$NS" exec "$SBOX" -- sh -c "rm -rf /workspace/$RUN_REJ" 2>/dev/null || true
+' EXIT
 claim() { echo ""; echo "--- Claim $1: $2 ---"; }
 oexec() { kubectl -n "$NS" exec "$ORCH" -- "$@"; }
 leaf_job_pods() { kubectl get pods -n "$NS" -l scaledjob.keda.sh/name=leaf-worker --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d ' '; }
@@ -33,8 +37,9 @@ dispatch() { # $1=extra-json
     '{sessionId:$s, model:$m, inputsRef:$in, resultRef:$out, workspaceRef:$ws, async:true} + $extra' \
   | curl -s --max-time 30 -H "$HOST_HEADER" -H "Content-Type: application/json" -d @- "$BASE/run-leaf"
 }
-write_decision() { # $1=action $2=feedback?
-  jq -nc --argjson g 0 --arg a "$1" --arg f "${2:-}" '{gateId:$g, action:$a} + (if $f=="" then {} else {feedback:$f} end)' \
+# write_decision GATEID ACTION [FEEDBACK]
+write_decision() { # $1=gateId $2=action $3=feedback?
+  jq -nc --argjson g "$1" --arg a "$2" --arg f "${3:-}" '{gateId:$g, action:$a} + (if $f=="" then {} else {feedback:$f} end)' \
   | oexec sh -c "cat > $RES/i1.json.decision"
 }
 gate_marker() { oexec sh -c "cat $RES/i1.json.gate 2>/dev/null || true"; }
@@ -55,18 +60,77 @@ n=0; until [ "$(leaf_job_pods)" = "0" ]; do n=$((n+1)); [ $n -gt 60 ] && { echo 
 echo "OK leaf-job pods at zero while gate pending"
 
 claim 3 "Resume-approve -> verdict"
-write_decision approve
+write_decision 0 approve
 dispatch '{"decisionRef":"'"$RES"'/i1.json.decision"}' >/dev/null
 wait_for "$RES/i1.json.status"
 result | grep -q '"verdict":"FLAGGED"' || { echo "FAIL: expected FLAGGED verdict after approve"; exit 1; }
 done_marker | grep -q '"status":"done"' || { echo "FAIL: expected done marker"; exit 1; }
 echo "OK approved -> FLAGGED verdict, done"
 
-claim 4 "Idempotent resume: re-invoke with the same consumed decision -> still done, no change"
+claim 4 "Idempotent resume: re-invoke with consumed decision -> still done, verdict unchanged, no duplicate result file"
+before="$(result)"
 dispatch '{"decisionRef":"'"$RES"'/i1.json.decision"}' >/dev/null
-wait_for "$RES/i1.json.status"
+# Poll up to 60s for any new leaf-job pod to appear then drain (proves the re-invoke actually ran).
+n=0
+while [ $n -lt 12 ]; do
+  if [ "$(leaf_job_pods)" != "0" ]; then
+    # A pod appeared; now wait for it to drain.
+    m=0; until [ "$(leaf_job_pods)" = "0" ]; do m=$((m+1)); [ $m -gt 24 ] && break; sleep 5; done
+    break
+  fi
+  n=$((n+1)); sleep 5
+done
+# Whether or not a pod ran, assert terminal state is unchanged.
 done_marker | grep -q '"status":"done"' || { echo "FAIL: terminal state changed on re-invoke"; exit 1; }
-echo "OK idempotent re-invoke stable"
+after="$(result)"
+[ "$after" = "$before" ] || { echo "FAIL: result content changed on re-invoke"; exit 1; }
+nfiles=$(oexec sh -c "ls $RES/i1.json 2>/dev/null | wc -l | tr -d ' '")
+[ "$nfiles" = "1" ] || { echo "FAIL: expected exactly 1 result file, got $nfiles"; exit 1; }
+echo "OK idempotent re-invoke: done status stable, verdict unchanged, exactly 1 result file"
+
+# Reject scenario on a fresh run id.
+RUN="$RUN_REJ"; INPUTS="/work/$RUN/inputs"; RES="/work/$RUN/results"; SBOX_REPO="/workspace/$RUN/repo"
+oexec mkdir -p "$INPUTS" "$RES"
+oexec sh -c "cat > $INPUTS/i1.json" <<JSON
+{ "item_id": "i1", "file": "a.py", "pattern": "eval(", "require_approval": true }
+JSON
+kubectl -n "$NS" exec "$SBOX" -- sh -c "mkdir -p $SBOX_REPO && printf 'x = eval(\"1+1\")\n' > $SBOX_REPO/a.py"
+
+claim 6 "Reject continuation: reject -> agent reaches done (or re-gates) -> final done with a verdict"
+dispatch >/dev/null
+wait_for "$RES/i1.json.gate"
+gate_marker | grep -q '"gateId":0' || { echo "FAIL: first gate should be gateId 0"; exit 1; }
+write_decision 0 reject "reconsider and double-check before deciding"
+dispatch '{"decisionRef":"'"$RES"'/i1.json.decision"}' >/dev/null
+
+# Poll up to 120s for EITHER a done marker OR a gateId-1 gate marker.
+final_gate_id=0
+n=0
+while [ $n -lt 60 ]; do
+  if oexec sh -c "test -f $RES/i1.json.status" 2>/dev/null; then
+    echo "INFO: agent reached done directly after reject"
+    break
+  fi
+  gate_content="$(oexec sh -c "cat $RES/i1.json.gate 2>/dev/null || true")"
+  if echo "$gate_content" | grep -q '"gateId":1'; then
+    echo "INFO: agent re-gated at gateId 1 after reject"
+    final_gate_id=1
+    break
+  fi
+  n=$((n+1)); sleep 2
+done
+[ $n -lt 60 ] || { echo "FAIL: timeout waiting for done or gateId-1 after reject"; exit 1; }
+
+# If agent re-gated, approve the second gate.
+if [ "$final_gate_id" = "1" ]; then
+  write_decision 1 approve
+  dispatch '{"decisionRef":"'"$RES"'/i1.json.decision"}' >/dev/null
+  wait_for "$RES/i1.json.status"
+fi
+
+done_marker | grep -q '"status":"done"' || { echo "FAIL: expected done marker after reject continuation"; exit 1; }
+oexec sh -c "test -f $RES/i1.json" || { echo "FAIL: no result verdict file after reject continuation"; exit 1; }
+echo "OK reject continuation: session reached done with a result verdict (re-gated=$final_gate_id)"
 
 # Abort scenario on a fresh run id.
 RUN="grun-abort-$$"; INPUTS="/work/$RUN/inputs"; RES="/work/$RUN/results"; SBOX_REPO="/workspace/$RUN/repo"
@@ -79,7 +143,7 @@ kubectl -n "$NS" exec "$SBOX" -- sh -c "mkdir -p $SBOX_REPO && printf 'x = eval(
 claim 5 "Abort -> aborted marker, no verdict"
 dispatch >/dev/null
 wait_for "$RES/i1.json.gate"
-write_decision abort
+write_decision 0 abort
 dispatch '{"decisionRef":"'"$RES"'/i1.json.decision"}' >/dev/null
 wait_for "$RES/i1.json.status"
 done_marker | grep -q '"status":"aborted"' || { echo "FAIL: expected aborted marker"; exit 1; }
