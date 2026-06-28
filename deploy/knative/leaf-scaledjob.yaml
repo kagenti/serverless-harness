@@ -1,0 +1,71 @@
+# deploy/knative/leaf-scaledjob.yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledJob
+metadata:
+  name: leaf-worker
+  namespace: default
+spec:
+  jobTargetRef:
+    backoffLimit: 0
+    template:
+      spec:
+        restartPolicy: Never
+        serviceAccountName: serverless-harness
+        containers:
+          - name: leaf-job
+            image: dev.local/serverless-harness:local
+            imagePullPolicy: IfNotPresent
+            workingDir: /app/packages/knative-server
+            command: ["node", "--import", "tsx", "src/leaf-job.ts"]
+            # Baseline bounds so a runaway leaf (e.g. large LLM context) can't OOM the node;
+            # maxReplicaCount caps pod count, these cap per-pod usage. Tune to observed workloads.
+            resources:
+              requests: { memory: 256Mi, cpu: 100m }
+              limits: { memory: 1Gi, cpu: 500m }
+            env:
+              - name: REDIS_URL
+                value: "redis://redis.default.svc:6379"
+              - name: SH_MODEL
+                value: "claude-haiku-4-5"
+              - name: KAGENTI_SANDBOX_POD
+                value: "sandbox-0"
+              - name: ANTHROPIC_API_KEY
+                valueFrom: { secretKeyRef: { name: llm-credentials, key: api-key } }
+              - name: ANTHROPIC_BASE_URL
+                valueFrom: { secretKeyRef: { name: llm-credentials, key: base-url, optional: true } }
+              - name: ANTHROPIC_AUTH_TOKEN
+                valueFrom: { secretKeyRef: { name: llm-credentials, key: auth-token, optional: true } }
+            volumeMounts:
+              - name: work
+                mountPath: /work
+        volumes:
+          - name: work
+            persistentVolumeClaim:
+              claimName: leaf-work
+  pollingInterval: 5
+  maxReplicaCount: 10
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  # Two redis-streams triggers (KEDA activates the ScaledJob if EITHER is active):
+  #  - lagCount: undelivered backlog (entries never XREADGROUP'd) → spawns jobs for NEW work
+  #    and is the metric that scales the group to zero when fully drained. (Redis 7+.)
+  #  - pendingEntriesCount: the PEL (delivered-but-unacked) → keeps a reclaimer scheduled for a
+  #    crashed consumer's stuck entry so XAUTOCLAIM can resume it (gate-7) even with no new work.
+  # pendingEntriesCount ALONE deadlocks (PEL stays 0 until something reads; nothing reads until PEL>0).
+  # Trade-off: while a leaf runs, its entry sits in the PEL so the pendingEntriesCount trigger spawns extra
+  # reclaimer Jobs that find nothing to reclaim (entry heartbeat keeps idleCount < min-idle) and exit "idle",
+  # bounded by maxReplicaCount; future optimization could gate reclaim-spawning on min-idle-exceeded entries only.
+  triggers:
+    - type: redis-streams
+      metadata:
+        address: redis.default.svc:6379
+        stream: leaf-queue
+        consumerGroup: leaf-workers
+        lagCount: "1"
+        activationLagCount: "0"
+    - type: redis-streams
+      metadata:
+        address: redis.default.svc:6379
+        stream: leaf-queue
+        consumerGroup: leaf-workers
+        pendingEntriesCount: "1"

@@ -50,6 +50,14 @@ export interface LeafEnvelope {
   resultRef: string;
   workspaceRef?: string;
   maxTurns?: number;
+  async?: boolean;            // when true, the HTTP layer enqueues instead of running inline
+  doneMarkerRef?: string;     // overrides the derived <resultRef>.status
+  tenant?: string;            // namespaces the session id (non-precluding; design §7)
+}
+
+/** The Pi/Redis session id for a leaf: tenant-prefixed (if any), then sanitized. */
+export function leafSessionId(env: { sessionId: string; tenant?: string }): string {
+  return toSessionId(env.tenant ? `${env.tenant}/${env.sessionId}` : env.sessionId);
 }
 
 export type LeafResult =
@@ -134,7 +142,7 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
 
   // Durable, resumable session keyed by the (sanitized) session id. BufferedRedisBackend drains
   // writes continuously, so a mid-run crash preserves progress up to the last drained entry.
-  const sid = toSessionId(env.sessionId);
+  const sid = leafSessionId(env);
   const store = new RedisSessionBackend<FileEntry>(config?.redisUrl ?? "redis://localhost:6379");
   const backend = new BufferedRedisBackend(store);
   const isVerdictEntry = (e: unknown) =>

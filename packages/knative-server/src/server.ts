@@ -1,8 +1,14 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { resolve as resolvePath } from "node:path";
 import { runTurn, type TurnConfig } from "@sh/harness/run-turn";
 import { runLeaf, type LeafEnvelope } from "@sh/harness/run-leaf";
+import { RedisWorkQueue } from "@sh/work-queue";
+import { readDoneMarker, deriveDoneMarkerPath } from "@sh/harness/done-marker";
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
+// Status markers live under the orchestrator-owned work root; the status endpoint refuses
+// to read anything outside it (path-traversal guard on the untrusted doneMarker query param).
+const WORK_ROOT = process.env.LEAF_WORK_DIR ?? "/work";
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
 function buildConfig(): TurnConfig {
@@ -65,14 +71,45 @@ function isLeafEnvelope(o: any): o is LeafEnvelope {
   return o && typeof o.sessionId === "string" && typeof o.inputsRef === "string" && typeof o.resultRef === "string";
 }
 
-async function handleRunLeaf(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const body = JSON.parse(await readBody(req));
-  if (!isLeafEnvelope(body)) {
-    res.writeHead(400, JSON_HEADERS).end(JSON.stringify({ error: "envelope_invalid" }));
-    return;
-  }
+let queue: RedisWorkQueue | undefined;
+function getQueue(): RedisWorkQueue {
+  if (!queue) queue = new RedisWorkQueue(process.env.REDIS_URL);
+  return queue;
+}
+
+async function handleEnqueueLeafParsed(body: any, res: ServerResponse): Promise<void> {
+  if (!isLeafEnvelope(body)) { res.writeHead(400, JSON_HEADERS).end(JSON.stringify({ error: "envelope_invalid" })); return; }
+  const q = getQueue();
+  await q.ensureGroup();
+  await q.enqueue(body);
+  res.writeHead(202, JSON_HEADERS).end(JSON.stringify({
+    status: "accepted", sessionId: body.sessionId, resultRef: body.resultRef,
+    doneMarker: deriveDoneMarkerPath(body.resultRef, body.doneMarkerRef),
+  }));
+}
+
+async function handleRunLeafParsed(body: any, _raw: string, res: ServerResponse): Promise<void> {
+  if (!isLeafEnvelope(body)) { res.writeHead(400, JSON_HEADERS).end(JSON.stringify({ error: "envelope_invalid" })); return; }
   const result = await runLeaf(body, buildConfig());
   res.writeHead(200, JSON_HEADERS).end(JSON.stringify(result));
+}
+
+function handleLeafStatus(url: URL, res: ServerResponse): void {
+  const doneMarker = url.searchParams.get("doneMarker");
+  if (!doneMarker) { res.writeHead(400, JSON_HEADERS).end(JSON.stringify({ error: "doneMarker_required" })); return; }
+  // Resolve and confine to the work root so a crafted param can't read arbitrary files.
+  const resolved = resolvePath(doneMarker);
+  if (resolved !== WORK_ROOT && !resolved.startsWith(`${WORK_ROOT}/`)) {
+    res.writeHead(403, JSON_HEADERS).end(JSON.stringify({ error: "doneMarker_forbidden" }));
+    return;
+  }
+  const marker = readDoneMarker(resolved);
+  if (marker) {
+    res.writeHead(200, JSON_HEADERS).end(JSON.stringify({ status: marker.status, reason: marker.reason ?? undefined }));
+    return;
+  }
+  // No terminal marker yet — best-effort non-terminal state for visibility.
+  res.writeHead(200, JSON_HEADERS).end(JSON.stringify({ status: "queued" }));
 }
 
 function handler(req: IncomingMessage, res: ServerResponse): void {
@@ -81,14 +118,20 @@ function handler(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
 
+  if (req.method === "GET" && req.url?.startsWith("/run-leaf/status")) {
+    handleLeafStatus(new URL(req.url, "http://localhost"), res);
+    return;
+  }
+
   if (req.method === "POST" && req.url === "/run-leaf") {
-    handleRunLeaf(req, res).catch((err) => {
-      if (!res.headersSent) {
-        res.writeHead(500, JSON_HEADERS).end(
-          JSON.stringify({ error: String(err) }),
-        );
-      }
-    });
+    const route = async () => {
+      const raw = await readBody(req);
+      let parsed: any = {};
+      try { parsed = JSON.parse(raw); } catch { /* handled below */ }
+      if (parsed && parsed.async === true) return handleEnqueueLeafParsed(parsed, res);
+      return handleRunLeafParsed(parsed, raw, res);
+    };
+    route().catch((err) => { if (!res.headersSent) res.writeHead(500, JSON_HEADERS).end(JSON.stringify({ error: String(err) })); });
     return;
   }
 

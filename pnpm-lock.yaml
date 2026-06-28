@@ -45,6 +45,9 @@ importers:
       '@sh/session-backend':
         specifier: workspace:*
         version: link:../packages/session-backend
+      '@sh/work-queue':
+        specifier: workspace:*
+        version: link:../packages/work-queue
     devDependencies:
       tsx:
         specifier: ^4.19.0
@@ -77,6 +80,9 @@ importers:
       '@sh/harness':
         specifier: workspace:*
         version: link:../../harness
+      '@sh/work-queue':
+        specifier: workspace:*
+        version: link:../work-queue
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -92,6 +98,19 @@ importers:
         version: 2.1.9(@types/node@22.19.21)
 
   packages/session-backend:
+    dependencies:
+      redis:
+        specifier: ^6.0.0
+        version: 6.0.0
+    devDependencies:
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9(@types/node@22.19.21)
+
+  packages/work-queue:
     dependencies:
       redis:
         specifier: ^6.0.0

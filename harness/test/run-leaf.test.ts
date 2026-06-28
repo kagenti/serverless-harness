@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { runLeaf, buildLeafPrompt, type LeafEnvelope } from "../src/run-leaf";
+import { runLeaf, buildLeafPrompt, leafSessionId, type LeafEnvelope } from "../src/run-leaf";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "leaf-")); });
@@ -69,5 +69,14 @@ describe("runLeaf", () => {
     expect(res.status).toBe("failed");
     if (res.status === "failed") expect(res.reason).toBe("error");
     expect(existsSync(env.resultRef)).toBe(false);
+  });
+});
+
+describe("leafSessionId", () => {
+  it("sanitizes the bare sessionId when no tenant is set", () => {
+    expect(leafSessionId({ sessionId: "run-1/i1" })).toBe("run-1-i1");
+  });
+  it("prefixes and sanitizes with the tenant for per-tenant id isolation", () => {
+    expect(leafSessionId({ sessionId: "run-1/i1", tenant: "acme" })).toBe("acme-run-1-i1");
   });
 });
