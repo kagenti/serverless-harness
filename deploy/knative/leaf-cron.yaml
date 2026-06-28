@@ -36,12 +36,23 @@ spec:
         spec:
           restartPolicy: Never
           serviceAccountName: serverless-harness
+          # The dispatcher only reads the mounted config and makes HTTP POSTs — lock it down.
+          # runAsUser 65532 ("nonroot") is required because the harness image has no USER (runs as
+          # root by default), so runAsNonRoot alone would refuse to start.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile: { type: RuntimeDefault }
           containers:
             - name: cron-dispatch
               image: dev.local/serverless-harness:local
               imagePullPolicy: IfNotPresent
               workingDir: /app/packages/knative-server
               command: ["node", "--import", "tsx", "src/cron-dispatch.ts"]
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true   # nothing is written to the root fs; tsx/node use /tmp (emptyDir below)
+                capabilities: { drop: ["ALL"] }
               env:
                 - name: JOB_NAME    # the fire id — stable across this Job's pod retries, unique per fire
                   valueFrom: { fieldRef: { fieldPath: "metadata.labels['job-name']" } }
@@ -52,6 +63,8 @@ spec:
               volumeMounts:
                 - name: config
                   mountPath: /config
+                - name: tmp
+                  mountPath: /tmp
               resources:
                 requests: { memory: 128Mi, cpu: 50m }
                 limits: { memory: 256Mi, cpu: 200m }
@@ -59,3 +72,5 @@ spec:
             - name: config
               configMap:
                 name: leaf-cron-config
+            - name: tmp
+              emptyDir: {}
