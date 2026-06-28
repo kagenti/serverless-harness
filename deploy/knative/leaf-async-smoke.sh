@@ -15,6 +15,8 @@ ORCH=leaf-orchestrator; SBOX="${KAGENTI_SANDBOX_POD:-sandbox-0}"
 RUN="arun-$$"; INPUTS="/work/$RUN/inputs"; RES="/work/$RUN/results"; SBOX_REPO="/workspace/$RUN/repo"
 ITEMS="i1 i2 i3"; MODEL="${SH_MODEL:-claude-haiku-4-5}"
 declare -A EXPECT=( [i1]=FLAGGED [i2]=CLEAR [i3]=CLEAR )
+# Clean up sandbox workspace on ANY exit (incl. SIGTERM/OOM mid-run), not just the happy path.
+trap 'kubectl -n "$NS" exec "$SBOX" -- sh -c "rm -rf /workspace/$RUN" 2>/dev/null || true' EXIT
 claim() { echo ""; echo "--- Claim $1: $2 ---"; }
 oexec() { kubectl -n "$NS" exec "$ORCH" -- "$@"; }
 leaf_job_pods() { kubectl get pods -n "$NS" -l scaledjob.keda.sh/name=leaf-worker --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d ' '; }
@@ -108,6 +110,5 @@ for _ in $(seq 1 36); do
 done
 if [ "$neg" = "bad_inputs" ] && ! oexec test -f "$RES/ineg.json"; then ok "failed (bad_inputs), no result_ref"; else ko "reason=$neg"; fi
 
-kubectl -n "$NS" exec "$SBOX" -- sh -c "rm -rf /workspace/$RUN" 2>/dev/null || true
 echo ""; echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt 0 ]; then echo "ASYNC SMOKE FAIL"; exit 1; else echo "ASYNC SMOKE PASS"; exit 0; fi

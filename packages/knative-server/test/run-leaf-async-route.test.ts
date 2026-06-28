@@ -41,7 +41,7 @@ describe("async /run-leaf", () => {
 
   it("status returns done from the marker", async () => {
     readDoneMarker.mockReturnValue({ status: "done", sessionId: "run/i1", reason: null, ts: "t" });
-    const r = await req("GET", "/run-leaf/status?doneMarker=/out.status&sessionId=run/i1");
+    const r = await req("GET", "/run-leaf/status?doneMarker=/work/out.status&sessionId=run/i1");
     expect(r.status).toBe(200);
     expect(r.json).toMatchObject({ status: "done" });
     server.close();
@@ -49,8 +49,15 @@ describe("async /run-leaf", () => {
 
   it("status returns queued when no marker yet", async () => {
     readDoneMarker.mockReturnValue(null);
-    const r = await req("GET", "/run-leaf/status?doneMarker=/out.status&sessionId=run/i1");
+    const r = await req("GET", "/run-leaf/status?doneMarker=/work/out.status&sessionId=run/i1");
     expect(r.json).toMatchObject({ status: "queued" });
+    server.close();
+  });
+
+  it("status rejects a doneMarker outside the work root (path traversal)", async () => {
+    const r = await req("GET", "/run-leaf/status?doneMarker=/etc/passwd");
+    expect(r.status).toBe(403);
+    expect(readDoneMarker).not.toHaveBeenCalled();
     server.close();
   });
 });

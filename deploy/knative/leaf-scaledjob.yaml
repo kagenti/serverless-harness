@@ -17,6 +17,11 @@ spec:
             imagePullPolicy: IfNotPresent
             workingDir: /app/packages/knative-server
             command: ["node", "--import", "tsx", "src/leaf-job.ts"]
+            # Baseline bounds so a runaway leaf (e.g. large LLM context) can't OOM the node;
+            # maxReplicaCount caps pod count, these cap per-pod usage. Tune to observed workloads.
+            resources:
+              requests: { memory: 256Mi, cpu: 100m }
+              limits: { memory: 1Gi, cpu: 500m }
             env:
               - name: REDIS_URL
                 value: "redis://redis.default.svc:6379"

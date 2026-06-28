@@ -1,10 +1,14 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { resolve as resolvePath } from "node:path";
 import { runTurn, type TurnConfig } from "@sh/harness/run-turn";
-import { runLeaf, type LeafEnvelope, leafSessionId } from "@sh/harness/run-leaf";
+import { runLeaf, type LeafEnvelope } from "@sh/harness/run-leaf";
 import { RedisWorkQueue } from "@sh/work-queue";
 import { readDoneMarker, deriveDoneMarkerPath } from "@sh/harness/done-marker";
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
+// Status markers live under the orchestrator-owned work root; the status endpoint refuses
+// to read anything outside it (path-traversal guard on the untrusted doneMarker query param).
+const WORK_ROOT = process.env.LEAF_WORK_DIR ?? "/work";
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
 function buildConfig(): TurnConfig {
@@ -93,7 +97,13 @@ async function handleRunLeafParsed(body: any, _raw: string, res: ServerResponse)
 function handleLeafStatus(url: URL, res: ServerResponse): void {
   const doneMarker = url.searchParams.get("doneMarker");
   if (!doneMarker) { res.writeHead(400, JSON_HEADERS).end(JSON.stringify({ error: "doneMarker_required" })); return; }
-  const marker = readDoneMarker(doneMarker);
+  // Resolve and confine to the work root so a crafted param can't read arbitrary files.
+  const resolved = resolvePath(doneMarker);
+  if (resolved !== WORK_ROOT && !resolved.startsWith(`${WORK_ROOT}/`)) {
+    res.writeHead(403, JSON_HEADERS).end(JSON.stringify({ error: "doneMarker_forbidden" }));
+    return;
+  }
+  const marker = readDoneMarker(resolved);
   if (marker) {
     res.writeHead(200, JSON_HEADERS).end(JSON.stringify({ status: marker.status, reason: marker.reason ?? undefined }));
     return;
@@ -152,9 +162,6 @@ export function startServer(port = PORT): ReturnType<typeof createServer> {
 
   return server;
 }
-
-// leafSessionId is imported for future status-by-session lookups
-void leafSessionId;
 
 const isMainModule =
   typeof process.argv[1] === "string" &&

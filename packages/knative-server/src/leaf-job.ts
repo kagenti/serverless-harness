@@ -13,9 +13,13 @@ function buildConfig(): TurnConfig {
   };
 }
 
+// Module-scoped so the top-level catch can close it if an exception escapes the drain loop.
+let queue: RedisWorkQueue | undefined;
+
 async function main(): Promise<void> {
-  const queue = new RedisWorkQueue(process.env.REDIS_URL);
-  await queue.ensureGroup();
+  const q = new RedisWorkQueue(process.env.REDIS_URL);
+  queue = q;
+  await q.ensureGroup();
   const consumerId = process.env.HOSTNAME ?? `leaf-job-${process.pid}`;
   // Drain: process entries until the queue yields nothing ("idle"), then close and exit 0 so
   // KEDA can scale to zero. A transient "retry" closes and exits non-zero (process.exit(1)) so
@@ -23,21 +27,26 @@ async function main(): Promise<void> {
   // the queue is closed explicitly on each terminal path rather than in a finally.)
   for (;;) {
     const outcome = await processOne({
-      queue,
+      queue: q,
       runLeaf: (env: LeafEnvelope) => runLeaf(env, buildConfig()),
       consumerId,
     });
     if (outcome === "idle") break;
     if (outcome === "retry") {
-      await queue.close();
+      await q.close();
       process.exit(1);
     }
   }
-  await queue.close();
+  await q.close();
   process.exit(0);
 }
 
 main().catch(async (err) => {
   console.error("leaf-job error:", err);
+  try {
+    await queue?.close();
+  } catch {
+    // Best-effort close; suppress errors on exit.
+  }
   process.exit(1);
 });
