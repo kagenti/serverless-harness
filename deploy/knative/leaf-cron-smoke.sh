@@ -14,7 +14,7 @@ source ./lib.sh
 [ "${CRON_LIVE_SMOKE:-0}" = "1" ] || { echo "SKIP (set CRON_LIVE_SMOKE=1)"; exit 0; }
 
 ORCH=leaf-orchestrator; SBOX="${KAGENTI_SANDBOX_POD:-sandbox-0}"
-FIRE="cronfire-$$"                       # the manual fire id (becomes the Job name → JOB_NAME label)
+FIRE="cronfire-$$"                       # the manual fire id (becomes the Job name -> JOB_NAME label)
 NRES="/work/nightly/$FIRE/results"        # fire-stamped result dir the config templates produce
 ITEMS="i1 i2 i3"
 declare -A EXPECT=( [i1]=FLAGGED [i2]=CLEAR [i3]=CLEAR )
@@ -57,9 +57,9 @@ for id in $ITEMS; do
 done
 [ "$cov_ok" = 1 ] && ok "all dispatched leaves completed with correct verdicts" || ko "missing/incorrect"
 
-# Claim 3: re-running the SAME fire id is idempotent — the dispatcher re-runs to completion, writes to
+# Claim 3: re-running the SAME fire id is idempotent -- the dispatcher re-runs to completion, writes to
 # the SAME fire-stamped dir (no second run directory), markers still done with the same verdicts.
-claim 3 "Idempotent retry: same fire id → re-dispatch completes, same paths, no duplicate run dir"
+claim 3 "Idempotent retry: same fire id -> re-dispatch completes, same paths, no duplicate run dir"
 before=$(oexec sh -c 'ls -1d /work/nightly/cronfire-* 2>/dev/null | wc -l' | tr -d ' ')
 fire_and_wait
 refire_done=0
@@ -72,9 +72,9 @@ for id in $ITEMS; do
   { [ "$s" = "done" ] && [ "$v" = "${EXPECT[$id]}" ]; } || still_done=0
 done
 if [ "$refire_done" = 1 ] && [ "$before" = "$after" ] && [ "$still_done" = 1 ]; then
-  ok "re-fire ran+completed, reused id (dirs: $before→$after), markers still done"
+  ok "re-fire ran+completed, reused id (dirs: $before->$after), markers still done"
 else
-  ko "refire_done=$refire_done dirs $before→$after still_done=$still_done"
+  ko "refire_done=$refire_done dirs $before->$after still_done=$still_done"
 fi
 
 echo ""; echo "=== Results: $PASS passed, $FAIL failed ==="
