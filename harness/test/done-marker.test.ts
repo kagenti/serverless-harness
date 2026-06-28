@@ -32,4 +32,9 @@ describe("writeDoneMarker / readDoneMarker", () => {
   it("returns null for a missing marker", () => {
     expect(readDoneMarker(join(dir, "nope.status"))).toBeNull();
   });
+  it("creates missing parent directories (fire-stamped result dirs have no pre-created path)", () => {
+    const p = join(dir, "run-7", "results", "out.json.status");
+    writeDoneMarker(p, { status: "done", sessionId: "s3", reason: null, ts: "t" });
+    expect(readDoneMarker(p)).toMatchObject({ status: "done", sessionId: "s3" });
+  });
 });

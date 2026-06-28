@@ -1,4 +1,5 @@
-import { writeFileSync, renameSync, readFileSync } from "node:fs";
+import { writeFileSync, renameSync, readFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 
 export interface DoneMarker {
   status: "done" | "failed";
@@ -14,6 +15,7 @@ export function deriveDoneMarkerPath(resultRef: string, override?: string): stri
 /** Write atomically (temp + rename) so a reader never observes a partial marker. */
 export function writeDoneMarker(path: string, marker: DoneMarker): void {
   const tmp = `${path}.tmp`;
+  mkdirSync(dirname(path), { recursive: true }); // ensure the (possibly fire-stamped) parent dir exists
   writeFileSync(tmp, JSON.stringify(marker));
   renameSync(tmp, path);
 }
