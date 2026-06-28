@@ -218,6 +218,14 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
   // seed.kind === "seed": record the decision (once) before running the continuation/fresh turn.
   if (seed.record) sessionManager.appendCustomEntry(GATE_DECISION_ENTRY_TYPE, seed.record);
 
+  // Enforce the gate as a hard guarantee, not a prompt suggestion: for a require_approval item the
+  // submit_verdict tool is WITHHELD until the agent has passed at least one gate (a gate-decision
+  // exists in the log, or one is being applied this turn). In the pre-gate turn the agent's only
+  // structured-output path is request_approval, so it cannot bypass the gate even if it ignores the
+  // prompt. After approve/reject the verdict tool is available so the agent can finalize.
+  const allowVerdict =
+    !item.require_approval || gateState.gateDecisions.length > 0 || seed.record != null;
+
   const agentDir = getAgentDir();
   const settingsManager = SettingsManager.create(cwd, agentDir);
   const resourceLoader = new DefaultResourceLoader({
@@ -225,7 +233,7 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
     agentDir,
     settingsManager,
     extensionFactories: [
-      submitVerdictExtension(capture, sessionManager),
+      ...(allowVerdict ? [submitVerdictExtension(capture, sessionManager)] : []),
       requestApprovalExtension(capture, sessionManager, gateState.nextGateId),
       k8sSandboxExtension(),
       flushExtension(backend),
