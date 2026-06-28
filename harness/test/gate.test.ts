@@ -105,3 +105,51 @@ describe("continuationPrompt", () => {
     expect(p.toLowerCase()).toContain("revise");
   });
 });
+
+import { decideSeed } from "../src/gate";
+
+const FRESH = "FRESH_PROMPT";
+function state(entries: unknown[]) { return computeGateState(entries); }
+
+describe("decideSeed", () => {
+  it("fresh (no gates) → seed the fresh prompt, no record", () => {
+    expect(decideSeed(state([]), null, FRESH)).toEqual({ kind: "seed", prompt: FRESH, record: null });
+  });
+  it("pending gate + matching approve → seed continuation + record decision", () => {
+    const r = decideSeed(state([reqEntry(0)]), { gateId: 0, action: "approve" }, FRESH);
+    expect(r.kind).toBe("seed");
+    if (r.kind === "seed") {
+      expect(r.prompt).toContain("APPROVED");
+      expect(r.record).toEqual({ gateId: 0, action: "approve", feedback: undefined });
+    }
+  });
+  it("pending gate + matching reject → seed continuation with feedback", () => {
+    const r = decideSeed(state([reqEntry(0)]), { gateId: 0, action: "reject", feedback: "redo" }, FRESH);
+    expect(r.kind).toBe("seed");
+    if (r.kind === "seed") expect(r.prompt).toContain("redo");
+  });
+  it("pending gate + matching abort → abort + record", () => {
+    expect(decideSeed(state([reqEntry(0)]), { gateId: 0, action: "abort" }, FRESH)).toEqual({
+      kind: "abort", record: { gateId: 0, action: "abort", feedback: undefined },
+    });
+  });
+  it("pending gate + no decision → paused", () => {
+    expect(decideSeed(state([reqEntry(0)]), null, FRESH)).toEqual({
+      kind: "paused", gate: { gateId: 0, summary: "s0", proposed_action: "a0" },
+    });
+  });
+  it("pending gate + gateId mismatch → paused (stale decision ignored)", () => {
+    expect(decideSeed(state([reqEntry(1)]), { gateId: 0, action: "approve" }, FRESH).kind).toBe("paused");
+  });
+  it("already-decided this gate (double resume) → seed continuation, record null (no re-record)", () => {
+    // The decision entry for gate 0 already exists, so the gate is no longer pending.
+    const r = decideSeed(state([reqEntry(0), decEntry(0, "approve")]), { gateId: 0, action: "approve" }, FRESH);
+    expect(r.kind).toBe("seed");
+    if (r.kind === "seed") { expect(r.prompt).toContain("APPROVED"); expect(r.record).toBeNull(); }
+  });
+  it("already-aborted session (no pending, last decision abort) → terminal abort, record null", () => {
+    expect(decideSeed(state([reqEntry(0), decEntry(0, "abort")]), null, FRESH)).toEqual({
+      kind: "abort", record: null,
+    });
+  });
+});

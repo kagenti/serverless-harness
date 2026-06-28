@@ -108,3 +108,34 @@ export function continuationPrompt(action: "approve" | "reject", feedback?: stri
     `Revise accordingly. You may call request_approval again when ready, or call submit_verdict when done.`,
   ].join("\n");
 }
+
+export type SeedDecision =
+  | { kind: "paused"; gate: GateRequest }
+  | { kind: "abort"; record: GateDecision | null }
+  | { kind: "seed"; prompt: string; record: GateDecision | null };
+
+/**
+ * Decide what a runLeaf invocation should do, given the durable gate state, the (optional) decision
+ * read from decisionRef, and the fresh job-mode prompt. Pure: the caller performs the side effects
+ * (append `record`, run `session.prompt(prompt)`, set capture flags). See spec §3.
+ */
+export function decideSeed(state: GateState, decision: Decision | null, freshPrompt: string): SeedDecision {
+  const { pendingGate, lastDecision, gateDecisions } = state;
+  const decidedIds = new Set(gateDecisions.map((d) => d.gateId));
+
+  if (pendingGate) {
+    if (decision && decision.gateId === pendingGate.gateId) {
+      const record: GateDecision | null = decidedIds.has(pendingGate.gateId)
+        ? null
+        : { gateId: decision.gateId, action: decision.action, feedback: decision.feedback };
+      if (decision.action === "abort") return { kind: "abort", record };
+      return { kind: "seed", prompt: continuationPrompt(decision.action, decision.feedback), record };
+    }
+    return { kind: "paused", gate: pendingGate };
+  }
+
+  // No pending gate. A prior abort is terminal; otherwise re-derive the last continuation, else fresh.
+  if (lastDecision?.action === "abort") return { kind: "abort", record: null };
+  const prompt = lastDecision ? continuationPrompt(lastDecision.action, lastDecision.feedback) : freshPrompt;
+  return { kind: "seed", prompt, record: null };
+}
