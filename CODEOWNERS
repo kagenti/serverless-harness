@@ -1,0 +1,7 @@
+# Default owners for everything
+* @kagenti/serverless-harness-maintainers
+
+# CI and deployment
+.github/ @kagenti/platform
+deploy/ @kagenti/platform
+Dockerfile @kagenti/platform
