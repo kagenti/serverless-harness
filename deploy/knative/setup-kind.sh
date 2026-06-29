@@ -74,10 +74,12 @@ kubectl patch configmap/config-deployment \
 # Enable persistent-volume-claim support (read + write) so the leaf-session contract can
 # mount the shared leaf-work PVC into the harness service (deploy/knative/leaf-pvc.yaml).
 # The validating webhook rejects a writable PVC mount unless both flags are enabled.
+# Also enable kubernetes.podspec-securitycontext so the harness pods can use pod-level
+# and container-level securityContext fields (runAsNonRoot, fsGroup, etc.).
 kubectl patch configmap/config-features \
   --namespace knative-serving \
   --type merge \
-  --patch '{"data":{"kubernetes.podspec-persistent-volume-claim":"enabled","kubernetes.podspec-persistent-volume-write":"enabled"}}'
+  --patch '{"data":{"kubernetes.podspec-persistent-volume-claim":"enabled","kubernetes.podspec-persistent-volume-write":"enabled","kubernetes.podspec-securitycontext":"enabled"}}'
 
 # Install KEDA (event-driven autoscaling) — async leaf completion uses a KEDA ScaledJob.
 KEDA_VERSION="${KEDA_VERSION:-v2.14.0}"

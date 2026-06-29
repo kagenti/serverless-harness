@@ -44,6 +44,27 @@ The decoupled scale-to-zero pattern. These are done and referenced across commit
 
 ---
 
+## Leaf-Session Backend (BUILT)
+
+The MVP leaf-session contract and the three pipeline archetypes it was tested against
+([Pipeline Archetypes](2026-06-26-pipeline-archetypes-requirements.md)) — all shipped. These realize
+the [Capability Charter](2026-06-26-leaf-session-backend-capability-charter.md) §5 MVP core and §8
+promote-post-MVP (human-gate, cron trigger). They are the **MVP/charter track**, distinct from the
+`M`-numbered built harness (Phase 1) and the `Z`-numbered credential plane (Phase 2).
+
+| Slice | Spec | PR(s) |
+|----|-------|-------|
+| MVP leaf-session invocation contract (run-to-completion, structured output, volume envelope) + gate-7 durable resume | [`2026-06-26-mvp-leaf-session-contract-design.md`](2026-06-26-mvp-leaf-session-contract-design.md) | #10, #11 |
+| Async leaf completion (KEDA `ScaledJob` + Redis Streams queue, done-marker) | [`2026-06-27-async-leaf-completion-design.md`](2026-06-27-async-leaf-completion-design.md) | #12 |
+| Scheduled leaf dispatch (cron trigger on-ramp, Archetype C) | [`2026-06-28-scheduled-leaf-dispatch-design.md`](2026-06-28-scheduled-leaf-dispatch-design.md) | #13 |
+| Human-gate (gate-while-idle, Archetype B) | [`2026-06-28-human-gate-design.md`](2026-06-28-human-gate-design.md) | #14 |
+
+All three archetypes (A parallel-fan-out, B human-gate, C scheduled) from the evidence base are now
+built. Hardening hygiene across these is tracked in
+[`2026-06-28-registry-hardening-hygiene-design.md`](2026-06-28-registry-hardening-hygiene-design.md).
+
+---
+
 ## Phase 2 — Zero-Trust Credential Plane (`Z`-prefix)
 
 > **Roadmap anchor:** [Leaf-Session Backend Capability Charter](2026-06-26-leaf-session-backend-capability-charter.md) (evidence base: [Pipeline Archetypes & Requirements](2026-06-26-pipeline-archetypes-requirements.md)) tests the design against three independent agentic-pipeline archetypes and **reprioritizes** this track: the harness's core role is a **leaf-session backend for external orchestrators**. **Z1 (per-user identity) defers** until multi-tenant hosting; **Z6 _extras_ defer** — the core clean-context-subagent need (one archetype plans it) is met by a **re-entrant leaf-session contract**, not new machinery. Z3/Z5 stay "keep-light."
