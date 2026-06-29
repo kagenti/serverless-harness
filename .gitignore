@@ -2,3 +2,24 @@ node_modules/
 dist/
 *.log
 .pi/
+
+# Secrets and credentials
+.env
+.env.*
+.env.local
+*.key
+*.pem
+*.p12
+credentials.*
+secrets.*
+*kubeconfig*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
