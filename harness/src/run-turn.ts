@@ -174,7 +174,7 @@ export async function runTurn(
 
   const { provider, modelId } = resolveModelSelection(config);
   const baseModel = requireModel(provider, modelId);
-  const model = applyModelGateway(baseModel as { headers?: Record<string, unknown> }, config);
+  const model = applyModelGateway(baseModel, config);
 
   const { session } = await createAgentSession({
     sessionManager,

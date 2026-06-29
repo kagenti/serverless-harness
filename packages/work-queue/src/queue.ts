@@ -72,7 +72,7 @@ export class RedisWorkQueue implements WorkQueue {
   async touch(entryId: string, consumerId: string): Promise<void> {
     await this.ready;
     // Reset idle time without re-fetching the payload, so a healthy long run is not reclaimed.
-    await this.client.xClaim(this.stream, this.group, consumerId, 0, [entryId], { JUSTID: true });
+    await this.client.xClaimJustId(this.stream, this.group, consumerId, 0, [entryId]);
   }
 
   async pending(): Promise<number> {
