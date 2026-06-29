@@ -43,7 +43,7 @@ export function submitVerdictExtension(capture: VerdictCapture, sink?: VerdictSi
         "Submit your final verdict for the item. Call this exactly once when you are done. " +
         "After calling it, stop.",
       parameters: params,
-      async execute(_id, args) {
+      async execute(_id: string, args: unknown) {
         const r = validateVerdict(args);
         if (!r.ok) {
           return { isError: true, content: [{ type: "text", text: `Invalid verdict: ${r.error}` }] };

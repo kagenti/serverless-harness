@@ -43,7 +43,7 @@ export function requestApprovalExtension(
         "action you propose. Call this at most once, then stop; the session pauses and resumes with " +
         "the human's decision.",
       parameters: params,
-      async execute(_id, args) {
+      async execute(_id: string, args: unknown) {
         const summary = (args as { summary?: unknown })?.summary;
         const proposed_action = (args as { proposed_action?: unknown })?.proposed_action;
         if (typeof summary !== "string" || summary.length === 0 ||
