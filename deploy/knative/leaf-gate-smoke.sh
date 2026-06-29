@@ -28,6 +28,9 @@ leaf_job_pods() { kubectl get pods -n "$NS" -l scaledjob.keda.sh/name=leaf-worke
 
 # Seed one gated item (require_approval:true) and the fixture repo file.
 oexec mkdir -p "$INPUTS" "$RES"
+# The harness now runs non-root (uid 65532); the orchestrator (this pod, root) must provision the
+# /work result dirs writable by it. chmod 0777 the run dir models that operational contract.
+oexec chmod -R 0777 "/work/$RUN"
 oexec_i sh -c "cat > $INPUTS/i1.json" <<JSON
 { "item_id": "i1", "file": "a.py", "pattern": "eval(", "require_approval": true }
 JSON
@@ -101,6 +104,9 @@ echo "OK idempotent re-invoke: done status stable, verdict unchanged, exactly 1 
 # Reject scenario on a fresh run id.
 RUN="$RUN_REJ"; INPUTS="/work/$RUN/inputs"; RES="/work/$RUN/results"; SBOX_REPO="/workspace/$RUN/repo"
 oexec mkdir -p "$INPUTS" "$RES"
+# The harness now runs non-root (uid 65532); the orchestrator (this pod, root) must provision the
+# /work result dirs writable by it. chmod 0777 the run dir models that operational contract.
+oexec chmod -R 0777 "/work/$RUN"
 oexec_i sh -c "cat > $INPUTS/i1.json" <<JSON
 { "item_id": "i1", "file": "a.py", "pattern": "eval(", "require_approval": true }
 JSON
@@ -145,6 +151,9 @@ echo "OK reject continuation: session reached done with a result verdict (re-gat
 # Abort scenario on a fresh run id.
 RUN="grun-abort-$$"; INPUTS="/work/$RUN/inputs"; RES="/work/$RUN/results"; SBOX_REPO="/workspace/$RUN/repo"
 oexec mkdir -p "$INPUTS" "$RES"
+# The harness now runs non-root (uid 65532); the orchestrator (this pod, root) must provision the
+# /work result dirs writable by it. chmod 0777 the run dir models that operational contract.
+oexec chmod -R 0777 "/work/$RUN"
 oexec_i sh -c "cat > $INPUTS/i1.json" <<JSON
 { "item_id": "i1", "file": "a.py", "pattern": "eval(", "require_approval": true }
 JSON

@@ -97,10 +97,17 @@ applied unconditionally regardless.
 
 **Risks this surfaces (all caught by the live smoke):**
 - `runAsUser: 65532` must be able to **write the `/work` PVC** (the gate writes `result_ref`/markers
-  there). If the PVC's fsGroup/permissions reject uid 65532, set `fsGroup: 65532` on the pod
-  securityContext.
+  there). `fsGroup: 65532` makes the harness's own writes group-owned, **but** `fsGroup` does NOT
+  make a *result directory created by a different (root) writer* group-writable. **Operational
+  contract (confirmed in live verification — EACCES writing the gate marker):** because `/work` is
+  the orchestrator's store (charter G3) and the harness now runs as uid 65532, the **orchestrator
+  must provision the per-run result directories writable by uid 65532** (e.g. world-writable, or
+  created under a shared `fsGroup: 65532` with group-write). The live smoke models this by
+  `chmod 0777` on the run dir it provisions. Document this in the operator runbook for non-root
+  deployments. (The agent itself runs cleanly under the hardened context — only the cross-writer
+  `/work` directory ownership needs this coordination.)
 - The leaf-worker performs `kubectl exec` into `sandbox-0`; a non-root uid + dropped caps must still
-  do that (it is an API call, not a privileged syscall — expected to work).
+  do that (it is an API call, not a privileged syscall — confirmed working in live verification).
 
 ---
 
