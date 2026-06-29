@@ -11,18 +11,29 @@ spec:
       spec:
         restartPolicy: Never
         serviceAccountName: serverless-harness
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          fsGroup: 65532
+          seccompProfile: { type: RuntimeDefault }
         containers:
           - name: leaf-job
             image: dev.local/serverless-harness:local
             imagePullPolicy: IfNotPresent
             workingDir: /app/packages/knative-server
             command: ["node", "--import", "tsx", "src/leaf-job.ts"]
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities: { drop: ["ALL"] }
             # Baseline bounds so a runaway leaf (e.g. large LLM context) can't OOM the node;
             # maxReplicaCount caps pod count, these cap per-pod usage. Tune to observed workloads.
             resources:
               requests: { memory: 256Mi, cpu: 100m }
               limits: { memory: 1Gi, cpu: 500m }
             env:
+              - name: HOME
+                value: /tmp
               - name: REDIS_URL
                 value: "redis://redis.default.svc:6379"
               - name: SH_MODEL
@@ -38,10 +49,14 @@ spec:
             volumeMounts:
               - name: work
                 mountPath: /work
+              - name: tmp
+                mountPath: /tmp
         volumes:
           - name: work
             persistentVolumeClaim:
               claimName: leaf-work
+          - name: tmp
+            emptyDir: {}
   pollingInterval: 5
   maxReplicaCount: 10
   successfulJobsHistoryLimit: 3

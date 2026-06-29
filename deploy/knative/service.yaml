@@ -16,11 +16,22 @@ spec:
       containerConcurrency: 1
       timeoutSeconds: 300
       serviceAccountName: serverless-harness
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - image: dev.local/serverless-harness:local
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
           ports:
             - containerPort: 8080
           env:
+            - name: HOME
+              value: /tmp
             - name: REDIS_URL
               value: "redis://redis.default.svc:6379"
             - name: SH_MODEL
@@ -64,11 +75,15 @@ spec:
           volumeMounts:
             - name: work
               mountPath: /work
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: work
           persistentVolumeClaim:
             claimName: leaf-work
             readOnly: false
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: ServiceAccount
