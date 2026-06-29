@@ -102,16 +102,23 @@ export class RedisWorkQueue implements WorkQueue {
     return removed;
   }
 
+  // Bounded per startup; backlogs > REAP_BATCH drain across successive pod restarts.
+  private static readonly REAP_BATCH = 100;
+
   async reapDeadLetters(consumerId: string, opts: { minIdleMs: number; maxAttempts: number }): Promise<Array<{ entryId: string; envelope: unknown }>> {
     await this.ready;
     const deadLettered: Array<{ entryId: string; envelope: unknown }> = [];
-    const pending = await this.client.xPendingRange(this.stream, this.group, "-", "+", 100);
+    const pending = await this.client.xPendingRange(this.stream, this.group, "-", "+", RedisWorkQueue.REAP_BATCH);
     for (const entry of pending) {
       if (entry.millisecondsSinceLastDelivery >= opts.minIdleMs && entry.deliveriesCounter > opts.maxAttempts) {
         const claimed = await this.client.xClaim(this.stream, this.group, consumerId, opts.minIdleMs, [entry.id]);
         const msg = claimed?.[0];
+        if (!msg) continue; // entry was reclaimed by another consumer between inspect and claim
+        let envelope: unknown = null;
+        try {
+          envelope = msg.message?.envelope ? JSON.parse(msg.message.envelope) : null;
+        } catch { /* malformed — still dead-letter it */ }
         await this.client.xAck(this.stream, this.group, entry.id);
-        const envelope = msg?.message?.envelope ? JSON.parse(msg.message.envelope) : null;
         deadLettered.push({ entryId: entry.id, envelope });
       }
     }

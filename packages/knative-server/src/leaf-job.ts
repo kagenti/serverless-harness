@@ -30,13 +30,15 @@ async function main(): Promise<void> {
   // Startup reap: dead-letter stale PEL entries past maxAttempts so pendingEntriesCount drops
   // and KEDA can scale to zero without waiting for reclaim cycles.
   const deadLettered = await q.reapDeadLetters(consumerId, { minIdleMs: MIN_IDLE_MS, maxAttempts: MAX_ATTEMPTS });
-  for (const { envelope } of deadLettered) {
+  for (const { entryId, envelope } of deadLettered) {
     if (envelope && typeof envelope === "object") {
       const env = envelope as LeafEnvelope;
       try {
         const path = deriveDoneMarkerPath(env.resultRef, env.doneMarkerRef);
         writeDoneMarker(path, { status: "failed", sessionId: env.sessionId, reason: "error", ts: new Date().toISOString() });
       } catch { /* best-effort marker write */ }
+    } else {
+      console.warn(`reaper: entry ${entryId} dead-lettered with unrecoverable envelope`);
     }
   }
   if (deadLettered.length > 0) {
