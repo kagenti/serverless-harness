@@ -13,6 +13,9 @@ export interface WorkQueue {
   ack(entryId: string): Promise<void>;
   touch(entryId: string, consumerId: string): Promise<void>;
   pending(): Promise<number>;
+  deleteConsumer(consumerId: string): Promise<void>;
+  gcIdleConsumers(minIdleMs: number): Promise<number>;
+  reapDeadLetters(consumerId: string, opts: { minIdleMs: number; maxAttempts: number }): Promise<Array<{ entryId: string; envelope: unknown }>>;
   purge(): Promise<void>;
   close(): Promise<void>;
 }
@@ -79,6 +82,47 @@ export class RedisWorkQueue implements WorkQueue {
     await this.ready;
     const summary = await this.client.xPending(this.stream, this.group);
     return summary?.pending ?? 0;
+  }
+
+  async deleteConsumer(consumerId: string): Promise<void> {
+    await this.ready;
+    await this.client.xGroupDelConsumer(this.stream, this.group, consumerId);
+  }
+
+  async gcIdleConsumers(minIdleMs: number): Promise<number> {
+    await this.ready;
+    const info = await this.client.xInfoConsumers(this.stream, this.group);
+    let removed = 0;
+    for (const c of info) {
+      if (c.pending === 0 && c.idle >= minIdleMs) {
+        await this.client.xGroupDelConsumer(this.stream, this.group, c.name);
+        removed++;
+      }
+    }
+    return removed;
+  }
+
+  // Bounded per startup; backlogs > REAP_BATCH drain across successive pod restarts.
+  private static readonly REAP_BATCH = 100;
+
+  async reapDeadLetters(consumerId: string, opts: { minIdleMs: number; maxAttempts: number }): Promise<Array<{ entryId: string; envelope: unknown }>> {
+    await this.ready;
+    const deadLettered: Array<{ entryId: string; envelope: unknown }> = [];
+    const pending = await this.client.xPendingRange(this.stream, this.group, "-", "+", RedisWorkQueue.REAP_BATCH);
+    for (const entry of pending) {
+      if (entry.millisecondsSinceLastDelivery >= opts.minIdleMs && entry.deliveriesCounter > opts.maxAttempts) {
+        const claimed = await this.client.xClaim(this.stream, this.group, consumerId, opts.minIdleMs, [entry.id]);
+        const msg = claimed?.[0];
+        if (!msg) continue; // entry was reclaimed by another consumer between inspect and claim
+        let envelope: unknown = null;
+        try {
+          envelope = msg.message?.envelope ? JSON.parse(msg.message.envelope) : null;
+        } catch { /* malformed — still dead-letter it */ }
+        await this.client.xAck(this.stream, this.group, entry.id);
+        deadLettered.push({ entryId: entry.id, envelope });
+      }
+    }
+    return deadLettered;
   }
 
   async purge(): Promise<void> {
