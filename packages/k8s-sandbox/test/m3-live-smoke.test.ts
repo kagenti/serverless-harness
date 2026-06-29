@@ -43,7 +43,6 @@ describe.skipIf(!LIVE)("M3 live smoke (real kind cluster)", () => {
     let spawnCount = 0;
     const countingSpawn = ((...a: Parameters<typeof nodeSpawn>) => {
       spawnCount += 1;
-      // @ts-expect-error spread of typed-overload args is fine at runtime
       return nodeSpawn(...a);
     }) as typeof nodeSpawn;
 

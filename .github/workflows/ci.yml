@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store/v3
+          key: pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-
+
+      - name: Cache pi-fork node_modules
+        uses: actions/cache@v4
+        with:
+          path: pi-fork/node_modules
+          key: pi-fork-${{ hashFiles('pi-fork/package-lock.json') }}
+          restore-keys: pi-fork-
+
+      - name: Build pi-fork (type declarations)
+        run: cd pi-fork && npm ci && npm run build
+
+      - name: Install workspace
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: |
+          cd harness && pnpm exec tsc --noEmit && cd ..
+          cd packages/k8s-sandbox && pnpm exec tsc --noEmit && cd ../..
+          cd packages/knative-server && pnpm exec tsc --noEmit && cd ../..
+          cd experiments && pnpm exec tsc --noEmit && cd ..
+
+      - name: Test
+        run: pnpm -r test
