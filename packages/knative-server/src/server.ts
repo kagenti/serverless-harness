@@ -182,7 +182,7 @@ export function startServer(port = PORT): ReturnType<typeof createServer> {
   return server;
 }
 
-// Exact entrypoint match (matches cron-dispatch.ts / leaf-job.ts) — avoids a fragile substring
+// Exact entrypoint match (matches cron-dispatch.ts) — avoids a fragile substring
 // match that would misfire for any argv path containing "knative-server".
 const isMainModule = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMainModule) {
