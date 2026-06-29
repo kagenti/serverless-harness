@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import { runTurn, type TurnConfig } from "@sh/harness/run-turn";
 import { runLeaf, type LeafEnvelope } from "@sh/harness/run-leaf";
 import { RedisWorkQueue } from "@sh/work-queue";
@@ -181,9 +182,9 @@ export function startServer(port = PORT): ReturnType<typeof createServer> {
   return server;
 }
 
-const isMainModule =
-  typeof process.argv[1] === "string" &&
-  process.argv[1].includes("knative-server");
+// Exact entrypoint match (matches cron-dispatch.ts / leaf-job.ts) — avoids a fragile substring
+// match that would misfire for any argv path containing "knative-server".
+const isMainModule = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMainModule) {
   startServer();
 }
