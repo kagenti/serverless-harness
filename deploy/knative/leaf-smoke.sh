@@ -47,7 +47,8 @@ dispatch_sid() {
 
 # dispatch <item_id> [model] [inputs_override] -> echoes terminal-status JSON from /run-leaf
 dispatch() {
-  local id="$1" model="${2:-$MODEL}" in="${3:-$INPUTS/$id.json}"
+  local id="$1"
+  local model="${2:-$MODEL}" in="${3:-$INPUTS/$id.json}"
   dispatch_sid "$RUN/$id" "$in" "$RES/$id.json" "$model"
 }
 
