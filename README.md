@@ -254,13 +254,9 @@ gaps are exactly what Phase 2 closes.
 
 ## Status & License
 
-This is a **private research repository** (`kagenti/serverless-harness`). It is an MVP — the
-scale-to-zero, durable-resume, sandbox-isolation, and dispatch features above are built and
-smoke-verified; the zero-trust credential plane is designed but not yet implemented. Interfaces may
-change.
+This is explorative work. It is an MVP — the scale-to-zero, durable-resume, sandbox-isolation, 
+and dispatch features above are built and smoke-verified; the zero-trust credential plane is 
+designed but not yet implemented. Interfaces may change.
 
 Licensed under the [Apache License 2.0](LICENSE).
 
----
-
-*Assisted-By: Claude Code*
