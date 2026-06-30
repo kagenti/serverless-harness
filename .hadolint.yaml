@@ -1,0 +1,2 @@
+ignored:
+  - DL3018  # Alpine package version pinning breaks on minor bumps

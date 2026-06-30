@@ -15,7 +15,9 @@ COPY harness/package.json ./harness/
 COPY pi-fork/ ./pi-fork/
 
 # Install pi-fork deps (provides tsgo, tsx, etc.)
-RUN cd pi-fork && npm ci
+WORKDIR /app/pi-fork
+RUN npm ci
+WORKDIR /app
 
 # Install pnpm workspace deps (links to pi-fork via relative paths)
 RUN pnpm install --frozen-lockfile
@@ -25,10 +27,12 @@ COPY packages/ ./packages/
 COPY harness/ ./harness/
 
 # Build pi-fork (required order per M1 gotcha; uses npm since pi-fork is an npm workspace)
-RUN cd pi-fork && npm run build -w packages/ai && \
+WORKDIR /app/pi-fork
+RUN npm run build -w packages/ai && \
     npm run build -w packages/agent && \
     npm run build -w packages/tui && \
     npm run build -w packages/coding-agent
+WORKDIR /app
 
 # Stage 2: slim runtime
 FROM node:22-alpine
