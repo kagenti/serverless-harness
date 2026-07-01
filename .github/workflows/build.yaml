@@ -31,9 +31,10 @@ jobs:
             file: Dockerfile
           # Pre-baked sandbox image for OpenShift (deploy/knative/setup-ocp.sh).
           # Built the same way as the harness so OCP can pull it from GHCR instead
-          # of building it in-cluster (issue #41).
+          # of building it in-cluster (issue #41). Scoped context — sandbox.Dockerfile
+          # has no COPY, so deploy/knative keeps the build context small.
           - image: ghcr.io/kagenti/serverless-harness-sandbox
-            context: .
+            context: deploy/knative
             file: deploy/knative/sandbox.Dockerfile
     steps:
       - name: Checkout
