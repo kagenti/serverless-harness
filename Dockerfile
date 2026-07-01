@@ -9,6 +9,7 @@ COPY pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages/session-backend/package.json ./packages/session-backend/
 COPY packages/k8s-sandbox/package.json ./packages/k8s-sandbox/
 COPY packages/knative-server/package.json ./packages/knative-server/
+COPY packages/work-queue/package.json ./packages/work-queue/
 COPY harness/package.json ./harness/
 
 # Copy pi-fork (uses npm, not pnpm — has its own package-lock.json)
