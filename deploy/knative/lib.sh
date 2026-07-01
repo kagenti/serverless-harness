@@ -2,6 +2,10 @@
 # deploy/knative/lib.sh
 # Shared helpers for the Knative smoke + experiment drivers.
 # Source this; do not execute. Targets ksvc serverless-harness in namespace default.
+#
+# Kind (default): Kourier port-forward on localhost + a Host header.
+# OpenShift: export KSVC_URL=<https route> (see setup-ocp.sh output) to target the
+#   auto-created Route directly — no port-forward, no Host header, TLS-skip (-k).
 
 NS="${NS:-default}"
 KSVC="${KSVC:-serverless-harness}"
@@ -10,6 +14,18 @@ HOST_HEADER="${HOST_HEADER:-Host: ${KSVC}.${NS}.example.com}"
 BASE="${BASE:-http://localhost:${PORT}}"
 SELECTOR="serving.knative.dev/service=${KSVC}"
 SAMPLE_INTERVAL="${SAMPLE_INTERVAL:-5}"
+
+# OpenShift/Route mode: target the Route URL directly.
+KSVC_URL="${KSVC_URL:-}"
+CURL_OPTS="${CURL_OPTS:-}"
+if [ -n "$KSVC_URL" ]; then
+  BASE="$KSVC_URL"
+  HOST_HEADER=""                       # the Route matches on its own host
+  CURL_OPTS="-k${CURL_OPTS:+ $CURL_OPTS}"  # router serves a self-signed/ingress cert
+fi
+# Optional Host-header curl args (empty in Route mode). Expand guarded for set -u.
+CURL_HDR=()
+[ -n "$HOST_HEADER" ] && CURL_HDR=(-H "$HOST_HEADER")
 
 PASS=0
 FAIL=0
@@ -41,8 +57,9 @@ turn() {
   else
     body=$(jq -nc --arg p "$prompt" '{prompt:$p}')
   fi
-  curl -s --max-time 120 -H "$HOST_HEADER" -H "Content-Type: application/json" \
-    -d "$body" "$BASE/turn"
+  # shellcheck disable=SC2086  # CURL_OPTS is intentionally word-split
+  curl -s $CURL_OPTS --max-time 120 ${CURL_HDR[@]+"${CURL_HDR[@]}"} \
+    -H "Content-Type: application/json" -d "$body" "$BASE/turn"
 }
 
 # Set the ksvc min-scale annotation (creates a new revision) and wait for Ready.
@@ -84,8 +101,11 @@ ensure_secret() {
 }
 
 # Start a kourier port-forward if nothing is listening on $PORT. Echoes the bg pid (or empty).
+# OpenShift/Route mode (KSVC_URL set): target the Route directly, no port-forward.
 ensure_port_forward() {
-  if curl -s -o /dev/null --max-time 2 "$BASE/" 2>/dev/null; then return 0; fi
+  [ -n "${KSVC_URL:-}" ] && return 0
+  # shellcheck disable=SC2086  # CURL_OPTS is intentionally word-split
+  if curl -s $CURL_OPTS -o /dev/null --max-time 2 "$BASE/" 2>/dev/null; then return 0; fi
   kubectl port-forward -n kourier-system svc/kourier "${PORT}:80" >/dev/null 2>&1 &
   local pid=$!
   sleep 3

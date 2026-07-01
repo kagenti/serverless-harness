@@ -13,8 +13,8 @@
 #     `apk add`-as-root pod is blocked by the restricted-v2 SCC).
 #   - Ingress via the auto-created OpenShift Route (no Kourier port-forward).
 #
-# Base bring-up only: KEDA (async leaf) and the optional Redis Enterprise
-# Operator are follow-ups — see --help and issue #41.
+# Base bring-up: KEDA (async leaf) is opt-in via --with-keda; the optional Redis
+# Enterprise Operator is a follow-up — see --help and issue #41.
 #
 # Prerequisites:
 #   - `oc login` to an OpenShift 4.20+ cluster as cluster-admin.
@@ -35,8 +35,9 @@ NAMESPACE="default"
 HARNESS_IMAGE="ghcr.io/kagenti/serverless-harness:latest"
 SANDBOX_IMAGE=""            # computed from namespace unless overridden
 SKIP_SANDBOX_BUILD=false
-SKIP_KEDA=true             # base bring-up: async leaf / KEDA is a follow-up
+SKIP_KEDA=true             # base bring-up: async leaf / KEDA is opt-in (--with-keda)
 SERVERLESS_CHANNEL="stable"
+KEDA_CHANNEL="stable"
 LOG_DIR="${LOG_DIR:-/tmp/serverless-harness-ocp}"
 
 # ----------------------------------------------------------------------------
@@ -72,8 +73,10 @@ Options:
                           in-cluster (implies --skip-sandbox-build)
   --skip-sandbox-build    Do not build the sandbox image (image must already exist)
   --serverless-channel <c> OpenShift Serverless subscription channel (default: ${SERVERLESS_CHANNEL})
-  --skip-keda             Skip KEDA (default; async leaf / KEDA on OCP is a
-                          follow-up — accepted for forward-compatibility)
+  --with-keda             Install KEDA (Red Hat Custom Metrics Autoscaler Operator)
+                          for the async-leaf ScaledJob path (default: off)
+  --keda-channel <c>      Custom Metrics Autoscaler channel (default: ${KEDA_CHANNEL})
+  --skip-keda             Skip KEDA (default; accepted for forward-compatibility)
   --dry-run               Print the commands that would run, without executing
   -h, --help              Show this help
 
@@ -99,6 +102,8 @@ while [[ $# -gt 0 ]]; do
     --sandbox-image)     SANDBOX_IMAGE="$2"; SKIP_SANDBOX_BUILD=true; shift 2 ;;
     --skip-sandbox-build) SKIP_SANDBOX_BUILD=true; shift ;;
     --serverless-channel) SERVERLESS_CHANNEL="$2"; shift 2 ;;
+    --with-keda)         SKIP_KEDA=false; shift ;;
+    --keda-channel)      KEDA_CHANNEL="$2"; shift 2 ;;
     --skip-keda)         SKIP_KEDA=true; shift ;;
     --dry-run)           DRY_RUN=true; shift ;;
     -h|--help)           usage; exit 0 ;;
@@ -263,10 +268,61 @@ if ! $DRY_RUN; then
 fi
 
 # ============================================================================
-# 2. KEDA (deferred in base bring-up)
+# 2. KEDA — Red Hat Custom Metrics Autoscaler Operator (opt-in, async-leaf path)
 # ============================================================================
+echo
 if [ "$SKIP_KEDA" = true ]; then
-  log_info "Skipping KEDA (async leaf / Custom Metrics Autoscaler Operator is a follow-up — issue #41)"
+  log_info "Skipping KEDA (enable the async-leaf ScaledJob path with --with-keda)"
+else
+  if $KUBECTL get kedacontroller keda -n openshift-keda &>/dev/null; then
+    log_success "KedaController already present — skipping CMA operator install"
+  else
+    log_info "Installing Custom Metrics Autoscaler Operator / KEDA (channel: $KEDA_CHANNEL)"
+    apply_stdin <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-keda
+EOF
+    apply_stdin <<EOF
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: openshift-keda
+  namespace: openshift-keda
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: openshift-custom-metrics-autoscaler-operator
+  namespace: openshift-keda
+spec:
+  channel: ${KEDA_CHANNEL}
+  name: openshift-custom-metrics-autoscaler-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+EOF
+    wait_for_crd kedacontrollers.keda.sh 300
+  fi
+  # KedaController CR activates the KEDA operands (operator/metrics-server).
+  log_info "Applying KedaController CR"
+  apply_stdin <<'EOF'
+apiVersion: keda.sh/v1alpha1
+kind: KedaController
+metadata:
+  name: keda
+  namespace: openshift-keda
+spec:
+  watchNamespace: ''
+EOF
+  wait_for_crd scaledjobs.keda.sh 300
+  if ! $DRY_RUN; then
+    $KUBECTL wait --for=condition=Available deployment --all -n openshift-keda --timeout=180s \
+      >"$LOG_DIR/keda-wait.log" 2>&1 \
+      && log_success "KEDA ready" \
+      || log_warn "KEDA deployments not all Available yet (see $LOG_DIR/keda-wait.log)"
+  fi
 fi
 
 # ============================================================================

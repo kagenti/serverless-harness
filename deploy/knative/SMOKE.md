@@ -106,6 +106,21 @@ curl -sk -H 'Content-Type: application/json' \
      https://serverless-harness-default.apps.<cluster-domain>/turn
 ```
 
+## Smoke test on OpenShift
+
+The Kind smoke/experiment drivers run against the Route — export `KSVC_URL`
+(instead of starting a Kourier port-forward):
+
+```bash
+KSVC_URL=$(oc get ksvc serverless-harness -n default -o jsonpath='{.status.url}') \
+  ./deploy/knative/smoke.sh
+```
+
+`lib.sh` then targets the Route directly (no port-forward, no `Host` header, `-k`
+for the router cert). Claims that assert on the **LLM `/turn` response** require the
+harness to reach its configured Anthropic endpoint *from the cluster*; health,
+scale-to-zero/-up, Redis session recall, and the 404 path do not.
+
 ## Notes & caveats
 
 - **Storage / RWX.** `leaf-work` is `ReadWriteOnce`. On block storage (e.g. AWS
@@ -113,9 +128,11 @@ curl -sk -H 'Content-Type: application/json' \
   Concurrent multi-node harness scale-out, or co-mounting with the leaf-orchestrator
   (async leaf), needs a **RWX** StorageClass (e.g. a filesystem provisioner). The
   base bring-up does not deploy the orchestrator.
-- **KEDA / async leaf is deferred.** `--skip-keda` is the default and only behavior
-  in base bring-up; installing the Red Hat Custom Metrics Autoscaler Operator on
-  OpenShift is a follow-up (issue #41).
+- **KEDA / async leaf is opt-in.** Base bring-up skips it (`--skip-keda`, the
+  default). Pass `--with-keda` to install the Red Hat **Custom Metrics Autoscaler
+  Operator** (`openshift-keda` namespace + `KedaController` CR) that the async-leaf
+  ScaledJob (`leaf-scaledjob.yaml`) depends on. Wiring and verifying the async-leaf
+  path itself on OpenShift is a further step.
 - **Redis** is the lightweight in-repo Deployment (`redis:7-alpine`, runs fine under
   `restricted-v2`). The certified Redis Enterprise Operator is an out-of-scope opt-in.
 - **Kustomize load restrictor.** The overlay references the shared base YAMLs one
