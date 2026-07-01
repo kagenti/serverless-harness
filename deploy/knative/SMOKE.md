@@ -76,35 +76,9 @@ For production, use defaults or tune based on cold-start latency tolerance.
 Manifests are shared with Kind via the `deploy/knative/overlays/ocp` kustomize
 overlay (OCP tweaks are patches, not forked YAMLs).
 
-## Prerequisites
-
-- `oc login` to an OpenShift 4.20+ cluster as **cluster-admin** (operator installs
-  + SCC assignment need it).
-- A default **StorageClass** for the `leaf-work` PVC (the script fails fast if none).
-- `ANTHROPIC_API_KEY` (direct) **or** `ANTHROPIC_AUTH_TOKEN` [+ `ANTHROPIC_BASE_URL`] (gateway).
-
-## Usage
-
-```bash
-# Preview everything without touching the cluster
-./deploy/knative/setup-ocp.sh --dry-run
-
-# Base bring-up (default namespace, GHCR image, sandbox built in-cluster)
-export ANTHROPIC_API_KEY=sk-...        # or ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL
-./deploy/knative/setup-ocp.sh
-
-# Dedicated namespace + a pinned image
-./deploy/knative/setup-ocp.sh --namespace serverless-harness \
-  --image ghcr.io/kagenti/serverless-harness:v1.2.3
-```
-
-The script prints the Route URL and a ready-to-run `curl` when it finishes, e.g.:
-
-```bash
-curl -sk -H 'Content-Type: application/json' \
-     -d '{"prompt": "Hello"}' \
-     https://serverless-harness-default.apps.<cluster-domain>/turn
-```
+See **[`README-ocp.md`](README-ocp.md)** for the full install guide — prerequisites,
+`setup-ocp.sh` options, what gets installed, storage/SCC notes, image delivery, and
+troubleshooting.
 
 ## Smoke test on OpenShift
 
@@ -117,27 +91,14 @@ KSVC_URL=$(oc get ksvc serverless-harness -n default -o jsonpath='{.status.url}'
 ```
 
 `lib.sh` then targets the Route directly (no port-forward, no `Host` header, `-k`
-for the router cert). Claims that assert on the **LLM `/turn` response** require the
-harness to reach its configured Anthropic endpoint *from the cluster*; health,
-scale-to-zero/-up, Redis session recall, and the 404 path do not.
+for the router cert; Kind behavior is unchanged). Claims that assert on the **LLM
+`/turn` response** require the harness to reach its configured Anthropic endpoint
+*from the cluster*; health, scale-to-zero/-up, Redis session recall, and the 404
+path do not.
 
-## Notes & caveats
+Observed on OpenShift 4.20 (with private-gateway egress unavailable): **4/6 claims
+pass** — health, scale-to-zero, scale-up-from-zero, 404, plus Redis session recall
+(matching `sessionId` across a cold start). The two failures are the LLM `/turn`
+response text only, not the harness or the setup.
 
-- **Storage / RWX.** `leaf-work` is `ReadWriteOnce`. On block storage (e.g. AWS
-  EBS `gp3-csi`) that binds to a single node — fine for a single harness consumer.
-  Concurrent multi-node harness scale-out, or co-mounting with the leaf-orchestrator
-  (async leaf), needs a **RWX** StorageClass (e.g. a filesystem provisioner). The
-  base bring-up does not deploy the orchestrator.
-- **KEDA / async leaf is opt-in.** Base bring-up skips it (`--skip-keda`, the
-  default). Pass `--with-keda` to install the Red Hat **Custom Metrics Autoscaler
-  Operator** (`openshift-keda` namespace + `KedaController` CR) that the async-leaf
-  ScaledJob (`leaf-scaledjob.yaml`) depends on. Wiring and verifying the async-leaf
-  path itself on OpenShift is a further step.
-- **Redis** is the lightweight in-repo Deployment (`redis:7-alpine`, runs fine under
-  `restricted-v2`). The certified Redis Enterprise Operator is an out-of-scope opt-in.
-- **Kustomize load restrictor.** The overlay references the shared base YAMLs one
-  directory up, so render it with:
-  ```bash
-  oc kustomize --load-restrictor LoadRestrictionsNone deploy/knative/overlays/ocp
-  ```
-  (`setup-ocp.sh` does this for you; plain `oc apply -k` will not work.)
+For storage/SCC, KEDA, Redis and kustomize notes, see [`README-ocp.md`](README-ocp.md).

@@ -27,6 +27,7 @@ rest.
 - [Architecture](#architecture)
 - [Features](#features)
 - [Quick Start](#quick-start)
+- [Deploy on OpenShift](#deploy-on-openshift)
 - [How It Works](#how-it-works)
 - [Dispatch Archetypes](#dispatch-archetypes)
 - [Repository Layout](#repository-layout)
@@ -161,6 +162,24 @@ verified smoke-test claims.
 
 ---
 
+## Deploy on OpenShift
+
+For OpenShift (4.20+), use [`deploy/knative/setup-ocp.sh`](deploy/knative/setup-ocp.sh) — the
+OpenShift-native sibling of `setup-kind.sh`. It installs OpenShift Serverless (Knative + Kourier)
+via the Red Hat operator, deploys Redis, the sandbox, the PVC and the harness Knative Service, and
+exposes it over an auto-created **OpenShift Route** (no port-forward).
+
+```bash
+oc login ...                       # cluster-admin on OpenShift 4.20+
+export ANTHROPIC_API_KEY=sk-...    # or the gateway vars above
+./deploy/knative/setup-ocp.sh      # add --dry-run to preview, --with-keda for async leaf
+```
+
+The full guide — prerequisites, flags, storage/SCC notes, smoke testing over the Route, and
+troubleshooting — is in **[`deploy/knative/README-ocp.md`](deploy/knative/README-ocp.md)**.
+
+---
+
 ## How It Works
 
 1. **An orchestrator POSTs a leaf** to `/runs` (or `/turn` for a single interactive turn).
@@ -245,6 +264,7 @@ gaps are exactly what Phase 2 closes.
 
 ## Documentation
 
+- [Deploy on OpenShift](deploy/knative/README-ocp.md) — `setup-ocp.sh` install guide (OCP 4.20+)
 - [Executive overview — leaf-session backend](docs/executive-overview-leaf-session.md)
 - [Milestone registry](docs/specs/README.md) — authoritative milestone numbering and status
 - [Design specs](docs/specs/) — one dated design doc per milestone
