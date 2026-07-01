@@ -87,6 +87,35 @@ are kustomize patches, not forked YAMLs.
 
 The script is **idempotent** — safe to re-run; it skips operators/CRs that already exist.
 
+## Choosing the model
+
+The harness model is set via the `SH_MODEL` environment variable in
+[`service.yaml`](service.yaml) (line 37). The default is `claude-haiku-4-5`.
+
+To use a different model, edit `service.yaml` before running the setup script:
+
+```yaml
+- name: SH_MODEL
+  value: "claude-sonnet-4-6"   # or claude-opus-4-6, claude-haiku-4-5, etc.
+```
+
+Or patch the running Knative Service after deployment:
+
+```bash
+oc set env ksvc/serverless-harness SH_MODEL=claude-sonnet-4-6
+```
+
+This triggers an automatic revision rollout. Available model IDs:
+
+| Model | ID | Notes |
+|-------|----|-------|
+| Haiku 4.5 | `claude-haiku-4-5` | Default — fast, low cost |
+| Sonnet 4.6 | `claude-sonnet-4-6` | Balanced |
+| Opus 4.6 | `claude-opus-4-6` | Most capable |
+
+When using a gateway (LiteLLM, etc.), the model ID must match what the gateway
+accepts — consult your gateway's model routing configuration.
+
 ## Smoke test
 
 Run the repo's smoke suite against the Route by exporting `KSVC_URL`:
