@@ -16,7 +16,8 @@ done
 claim() { echo ""; echo "--- Claim $1: $2 ---"; }
 
 claim 1 "Health endpoint responds"
-HEALTH=$(curl -s -o /dev/null -w "%{http_code}" -H "$HOST_HEADER" "$BASE/health")
+# shellcheck disable=SC2086  # CURL_OPTS is intentionally word-split
+HEALTH=$(curl -s $CURL_OPTS -o /dev/null -w "%{http_code}" ${CURL_HDR[@]+"${CURL_HDR[@]}"} "$BASE/health")
 [ "$HEALTH" = "200" ] && ok || ko "got HTTP $HEALTH"
 
 claim 2 "POST /turn creates a new session"
@@ -38,7 +39,8 @@ claim 5 "Pod scaled up from zero for claim 4"
 [ "$(harness_running_pods)" -ge 1 ] && ok || ko "expected >=1 running pod"
 
 claim 6 "404 on unknown session"
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 -H "$HOST_HEADER" -H "Content-Type: application/json" \
+# shellcheck disable=SC2086  # CURL_OPTS is intentionally word-split
+HTTP_CODE=$(curl -s $CURL_OPTS -o /dev/null -w "%{http_code}" --max-time 30 ${CURL_HDR[@]+"${CURL_HDR[@]}"} -H "Content-Type: application/json" \
   -d '{"sessionId":"does-not-exist-xyz","prompt":"hello"}' "$BASE/turn")
 [ "$HTTP_CODE" = "404" ] && ok || ko "got HTTP $HTTP_CODE"
 

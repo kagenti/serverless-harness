@@ -56,3 +56,49 @@ For production, use defaults or tune based on cold-start latency tolerance.
 2. **Image tag resolution:** Local Kind images need `dev.local/` prefix + `config-deployment` skip-tag-resolving
 3. **tsx resolution:** `node --import tsx` requires tsx in the CWD's node_modules — fixed by setting `WORKDIR /app/packages/knative-server`
 4. **config-domain:** Must explicitly set `example.com` domain for Kourier routing to work with Host headers
+
+---
+
+# OpenShift (`setup-ocp.sh`)
+
+`setup-ocp.sh` is the OpenShift-native sibling of `setup-kind.sh`. It targets
+**OpenShift 4.20+** and stands up the same stack, but the OpenShift way (issue #41):
+
+| Concern | Kind (`setup-kind.sh`) | OpenShift (`setup-ocp.sh`) |
+|---------|------------------------|-----------------------------|
+| Knative | raw upstream YAML + Kourier | **Red Hat OpenShift Serverless Operator** (OLM Subscription) + `KnativeServing` CR (Kourier bundled) |
+| Config  | `kubectl patch configmap config-*` | feature flags + autoscaler tuning in the `KnativeServing` **CR spec** (the operator reverts ConfigMap patches) |
+| Ingress | Kourier port-forward + Host header | auto-created **OpenShift Route** (`ksvc` `status.url`) |
+| Harness UID | hard-coded `runAsUser/fsGroup: 65532` | kept at 65532; the SA is granted the `nonroot-v2` SCC so that explicit non-root UID is admitted (the GHCR image declares no `USER`, so a UID must be set) |
+| Sandbox | `alpine` + `apk add` as root | **pre-baked** image (`sandbox.Dockerfile`, sets `USER 65532`) built in-cluster, restricted-v2 compatible |
+| Image   | `docker build` + `kind load` | published GHCR image (`--image`); sandbox built to the internal registry |
+
+Manifests are shared with Kind via the `deploy/knative/overlays/ocp` kustomize
+overlay (OCP tweaks are patches, not forked YAMLs).
+
+See **[`README-ocp.md`](README-ocp.md)** for the full install guide — prerequisites,
+`setup-ocp.sh` options, what gets installed, storage/SCC notes, image delivery, and
+troubleshooting.
+
+## Smoke test on OpenShift
+
+The Kind smoke/experiment drivers run against the Route — export `KSVC_URL`
+(instead of starting a Kourier port-forward):
+
+```bash
+KSVC_URL=$(oc get ksvc serverless-harness -n default -o jsonpath='{.status.url}') \
+  ./deploy/knative/smoke.sh
+```
+
+`lib.sh` then targets the Route directly (no port-forward, no `Host` header, `-k`
+for the router cert; Kind behavior is unchanged). Claims that assert on the **LLM
+`/turn` response** require the harness to reach its configured Anthropic endpoint
+*from the cluster*; health, scale-to-zero/-up, Redis session recall, and the 404
+path do not.
+
+Observed on OpenShift 4.20 (with private-gateway egress unavailable): **4/6 claims
+pass** — health, scale-to-zero, scale-up-from-zero, 404, plus Redis session recall
+(matching `sessionId` across a cold start). The two failures are the LLM `/turn`
+response text only, not the harness or the setup.
+
+For storage/SCC, KEDA, Redis and kustomize notes, see [`README-ocp.md`](README-ocp.md).
