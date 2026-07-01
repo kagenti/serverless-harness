@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a Kubernetes `CronJob` "start signal" that, on each fire, dispatches a static, config-defined list of leaf sessions onto the **unchanged** async path (`POST /run-leaf {async:true}`), keyed by a fire identity so retries resume and each fire is a fresh run.
+**Goal:** Add a Kubernetes `CronJob` "start signal" that, on each fire, dispatches a static, config-defined list of leaf sessions onto the **unchanged** async path (`POST /runs {async:true}`), keyed by a fire identity so retries resume and each fire is a fresh run.
 
 **Architecture:** A thin `cron-dispatch` entrypoint (same harness image) reads an item list from a mounted ConfigMap and its own Kubernetes Job name (the *fire id*, via the downward API), substitutes the fire id into each envelope's `sessionId`/`resultRef`, and POSTs each as `{async:true}` to the in-cluster Knative service. Everything downstream (the `leaf-queue`, KEDA `ScaledJob`, `runLeaf`, done-marker) is reused unchanged. A native `CronJob` is the discrete scheduler (KEDA's cron scaler is window-based and the wrong primitive).
 
@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **No change to the async contract, `leaf-queue`, KEDA `ScaledJob`, or `runLeaf`.** This slice is purely a new client of `POST /run-leaf {async:true}`. (spec §1, §2)
+- **No change to the async contract, `leaf-queue`, KEDA `ScaledJob`, or `runLeaf`.** This slice is purely a new client of `POST /runs {async:true}`. (spec §1, §2)
 - **The harness makes no work-selection decisions.** The dispatched list is operator-supplied config; no dynamic ingestion / scanning. (spec §1 charter fit, §8)
 - **Fire identity = the dispatcher pod's Kubernetes Job name**, read via the downward API label `metadata.labels['job-name']` (confirmed present on k8s v1.34). Stable across a Job's pod retries; unique per scheduled fire. (spec §3.2)
 - **`__FIRE__`** is the only template token; the dispatcher replaces **every** occurrence in **every** string field of each envelope with the fire id; non-string / non-matching fields pass through verbatim. (spec §3.1)

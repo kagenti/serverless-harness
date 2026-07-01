@@ -47,7 +47,7 @@ export function loadConfig(path: string): Record<string, unknown>[] {
 function buildPost(): (env: Record<string, unknown>) => Promise<boolean> {
   const base = process.env.SH_SERVICE_URL ?? "http://serverless-harness.default.svc.cluster.local";
   return async (env) => {
-    const res = await fetch(`${base}/run-leaf`, {
+    const res = await fetch(`${base}/runs`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(env),

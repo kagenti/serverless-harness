@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - **Spec:** `docs/specs/2026-06-28-human-gate-design.md` — every task implements part of it.
-- **No change to any existing path:** sync `POST /run-leaf`, async enqueue, cron-dispatch, `leaf-queue`, the KEDA `ScaledJob`, `submit_verdict`, the leaf-job runner loop, and the heartbeat/dead-letter machinery stay behavior-identical. A leaf that never calls `request_approval` behaves exactly as today.
+- **No change to any existing path:** sync `POST /runs`, async enqueue, cron-dispatch, `leaf-queue`, the KEDA `ScaledJob`, `submit_verdict`, the leaf-job runner loop, and the heartbeat/dead-letter machinery stay behavior-identical. A leaf that never calls `request_approval` behaves exactly as today.
 - **Decisions (spec §1 B1–B5):** agent-declared gate, external decision authority + re-invocation (B1); continuation-prompt resume, no tool-result injection (B2); `decisionRef` file transport + re-invoke-by-`sessionId` trigger (B3); no harness-side timeout — park indefinitely (B4); actions `approve`/`reject`/`abort` (B5).
 - **`gateId`** is a per-session monotonic integer = count of prior `gate-request` entries (0, 1, 2, …). A decision applies only when `decision.gateId` matches the pending gate's `gateId`.
 - **Two marker kinds:** the **gate marker** (`awaiting_approval`, non-terminal) is written by **`runLeaf`** to `gateRef` (default `<resultRef>.gate`). The **terminal** marker (`done`/`failed`/`aborted`) is written by the queue runner (async) or conveyed by the HTTP response (sync), at `<resultRef>.status`. They are distinct files.

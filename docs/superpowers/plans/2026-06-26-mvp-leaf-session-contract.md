@@ -2,16 +2,16 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make the harness a leaf-session backend an external orchestrator can call: a `/run-leaf` endpoint that runs a Pi agent to completion in a sandbox, captures a schema-validated verdict via a `submit_verdict` tool, and delivers it through a shared-volume envelope.
+**Goal:** Make the harness a leaf-session backend an external orchestrator can call: a `/runs` endpoint that runs a Pi agent to completion in a sandbox, captures a schema-validated verdict via a `submit_verdict` tool, and delivers it through a shared-volume envelope.
 
-**Architecture:** A new `runLeaf` function (sibling to `runTurn`) reads a candidate from `inputs_ref` on a shared volume, seeds a Pi session whose only required output is a `submit_verdict` tool call, runs it to completion, validates the captured verdict, and writes it to `result_ref`. The Knative server exposes this as `POST /run-leaf`. A minimal bash orchestrator (stand-in for the external orchestrator) fans out N calls, retries failures, and audits coverage. Reuses M2/M3 sandbox, M4 Knative + `runTurn` internals, M6 model selection.
+**Architecture:** A new `runLeaf` function (sibling to `runTurn`) reads a candidate from `inputs_ref` on a shared volume, seeds a Pi session whose only required output is a `submit_verdict` tool call, runs it to completion, validates the captured verdict, and writes it to `result_ref`. The Knative server exposes this as `POST /runs`. A minimal bash orchestrator (stand-in for the external orchestrator) fans out N calls, retries failures, and audits coverage. Reuses M2/M3 sandbox, M4 Knative + `runTurn` internals, M6 model selection.
 
 **Tech Stack:** TypeScript (ESM, `tsx` runtime, `noEmit`), pnpm workspaces, Pi (`@earendil-works/pi-coding-agent`, `@earendil-works/pi-ai`), TypeBox tool schemas, vitest, raw Node `http`, Knative + a shared PVC on Kind.
 
 ## Global Constraints
 
 - **No new spec scope.** Single-tenant, **provider key in env** (no Z3 injector). No per-user identity (Z1), no credentialed egress (Z5), no human-gate, no trigger. (charter)
-- **Re-entrancy-friendly (do not preclude):** `/run-leaf` must NOT assume only an external orchestrator calls it — a leaf session may later call it to spawn a child. Do not bake a caller-identity check. (MVP spec §2.5)
+- **Re-entrancy-friendly (do not preclude):** `/runs` must NOT assume only an external orchestrator calls it — a leaf session may later call it to spawn a child. Do not bake a caller-identity check. (MVP spec §2.5)
 - **Harness does not own the domain store:** the verdict travels via `result_ref` on a volume the caller owns; the HTTP response carries **terminal status only**. (MVP spec §2.1, charter G3)
 - **The harness (trusted code) writes `result_ref`,** after schema validation — never model-authored code; the workspace mount is **read-only** to the agent. (MVP spec §2.3)
 - **Verdict schema:** `{ item_id: string, verdict: "FLAGGED" | "CLEAR", reason: string }`. (MVP spec §2.3)

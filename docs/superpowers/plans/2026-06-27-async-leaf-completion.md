@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add true background (async) execution of leaf sessions — `POST /run-leaf {async:true}` returns `202` immediately, a KEDA-spawned Job runs the leaf to completion via a Redis Streams work queue, writes `result_ref` + a done-marker, and the orchestrator polls.
+**Goal:** Add true background (async) execution of leaf sessions — `POST /runs {async:true}` returns `202` immediately, a KEDA-spawned Job runs the leaf to completion via a Redis Streams work queue, writes `result_ref` + a done-marker, and the orchestrator polls.
 
 **Architecture:** A thin control plane (the Knative Service enqueues to a Redis Stream `leaf-queue` and reports status) + an ephemeral data plane (KEDA `ScaledJob` spawns one Job per pending entry; the Job is a thin wrapper around the **unchanged** `runLeaf`). At-least-once delivery; a crashed leaf re-runs the same `sessionId` → gate-7 resume; scale-to-zero when the queue drains.
 
@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - **No new spec scope.** Single-tenant, **provider key in env**. No authn/identity (Z1), no per-user credentials (Z3/Z5), no per-tenant sandbox/data isolation, no cron/event triggers (C), no human-gate (B). (design §8)
-- **Synchronous `POST /run-leaf` is unchanged.** Async is purely additive (the `async` flag). (design §2)
+- **Synchronous `POST /runs` is unchanged.** Async is purely additive (the `async` flag). (design §2)
 - **`runLeaf` is reused unchanged.** The Job is a queue wrapper around it; all leaf logic (sandbox routing, gateway, gate-7 resume) is inherited. (design §5)
 - **Harness adds NO Job RBAC** — KEDA creates Jobs; the Job pod reuses the existing `serverless-harness` ServiceAccount. (design §2)
 - **Done-marker** path defaults to `<resultRef>.status`; written **last, atomically** (temp + rename). (design §3.3)

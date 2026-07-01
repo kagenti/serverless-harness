@@ -1,7 +1,7 @@
 # deploy/knative/leaf-orchestrator.yaml
 # Stand-in for the external deterministic orchestrator (MVP spec §4 component 4).
 # A plain pod with curl + jq that mounts the shared leaf-work volume at /work. The smoke
-# driver execs into it to seed fixtures, dispatch /run-leaf calls, and audit results.
+# driver execs into it to seed fixtures, dispatch /runs calls, and audit results.
 # It is long-lived so it pins the WaitForFirstConsumer PVC to the node.
 apiVersion: v1
 kind: Pod

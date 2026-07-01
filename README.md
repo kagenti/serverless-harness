@@ -57,7 +57,7 @@ part (the agent process) exists only while a turn is actively running.
 
 ```mermaid
 flowchart LR
-    O[External Orchestrator] -->|POST /run-leaf| K[Knative Service<br/>scale-to-zero]
+    O[External Orchestrator] -->|POST /runs| K[Knative Service<br/>scale-to-zero]
     C[CronJob<br/>cron-dispatch] -->|schedule| K
     K -->|sync| R[runLeaf]
     K -->|async: true| Q[(Redis Streams<br/>queue + session state)]
@@ -91,7 +91,7 @@ flowchart LR
   conversation and state by `sessionId`, surviving pod eviction.
 - **Brain/hands isolation** — the agent never executes tools in its own process; everything runs in a
   separate hardened `sandbox-0` pod via a persistent in-pod channel.
-- **Four dispatch modes** — one `/run-leaf` endpoint serves sync, async-queued, cron-scheduled, and
+- **Four dispatch modes** — one `/runs` endpoint serves sync, async-queued, cron-scheduled, and
   human-gated execution (see [Dispatch Archetypes](#dispatch-archetypes)).
 - **Human-in-the-loop gates** — a leaf can pause mid-run, report `awaiting_approval`, and resume on an
   external approve/reject/abort verdict — scaling to zero while it waits.
@@ -163,7 +163,7 @@ verified smoke-test claims.
 
 ## How It Works
 
-1. **An orchestrator POSTs a leaf** to `/run-leaf` (or `/turn` for a single interactive turn).
+1. **An orchestrator POSTs a leaf** to `/runs` (or `/turn` for a single interactive turn).
 2. The **Knative Service** wakes from zero, and either runs the leaf inline (`sync`) or pushes the
    envelope onto **Redis Streams** and returns `202` (`async: true`), then idles back to zero.
 3. For async work, a **KEDA ScaledJob** scales `leaf-worker` pods up on queue depth and drains items.

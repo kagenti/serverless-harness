@@ -27,7 +27,7 @@ adispatch() {
   local model="${2:-$MODEL}" in="${3:-$INPUTS/$id.json}"
   jq -nc --arg s "$RUN/$id" --arg m "$model" --arg in "$in" --arg out "$RES/$id.json" --arg ws "$SBOX_REPO" \
     '{sessionId:$s, model:$m, inputsRef:$in, resultRef:$out, workspaceRef:$ws, async:true}' \
-  | curl -s --max-time 30 -H "$HOST_HEADER" -H "Content-Type: application/json" -d @- "$BASE/run-leaf"
+  | curl -s --max-time 30 -H "$HOST_HEADER" -H "Content-Type: application/json" -d @- "$BASE/runs"
 }
 
 echo "=== Async leaf smoke (run=$RUN) ==="
