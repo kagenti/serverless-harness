@@ -32,8 +32,9 @@ echo "=== Scheduled leaf dispatch smoke (fire=$FIRE) ==="
 kubectl -n "$NS" wait --for=condition=Ready "pod/$ORCH" --timeout=90s >/dev/null
 kubectl -n "$NS" wait --for=condition=Ready "pod/$SBOX" --timeout=90s >/dev/null
 for _ in $(seq 1 30); do oexec sh -c 'command -v jq >/dev/null' && break; sleep 2; done
-# seed fixtures at the fixed paths the config references
-oexec mkdir -p /work/nightly/inputs
+# seed fixtures at the fixed paths the config references. /work/nightly must be world-writable
+# so the non-root leaf-worker (uid 65532) can create the fire-stamped results dir (issue #39).
+seed_work_dirs /work/nightly /work/nightly/inputs
 kubectl -n "$NS" cp ./fixtures/inputs/. "$ORCH:/work/nightly/inputs"
 kubectl -n "$NS" exec "$SBOX" -- mkdir -p /workspace/nightly/repo
 kubectl -n "$NS" cp ./fixtures/repo/. "$SBOX:/workspace/nightly/repo"

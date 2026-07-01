@@ -35,7 +35,7 @@ ensure_port_forward >/dev/null || true
 kubectl -n "$NS" wait --for=condition=Ready "pod/$ORCH" --timeout=90s >/dev/null
 kubectl -n "$NS" wait --for=condition=Ready "pod/$SBOX" --timeout=90s >/dev/null
 for _ in $(seq 1 30); do oexec sh -c 'command -v jq >/dev/null && command -v curl >/dev/null' && break; sleep 2; done
-oexec mkdir -p "$INPUTS" "$RES"
+seed_work_dirs "$INPUTS" "$RES"   # world-writable for the non-root harness uid 65532 (issue #39)
 # Trailing /. copies the directory CONTENTS into the (pre-created) dest; without it
 # kubectl cp nests the source dir (…/inputs/inputs/i1.json) and runLeaf reads bad_inputs.
 kubectl -n "$NS" cp ./fixtures/inputs/. "$ORCH:$INPUTS"

@@ -59,8 +59,9 @@ ensure_port_forward >/dev/null || true
 kubectl -n "$NS" wait --for=condition=Ready "pod/$ORCH" --timeout=90s >/dev/null
 kubectl -n "$NS" wait --for=condition=Ready "pod/$SBOX" --timeout=90s >/dev/null
 for _ in $(seq 1 30); do oexec sh -c 'command -v jq >/dev/null && command -v curl >/dev/null' && break; sleep 2; done
-# inputs + results dir on the harness PVC (via the orchestrator)
-oexec mkdir -p "$INPUTS" "$RES"
+# inputs + results dir on the harness PVC (via the orchestrator), world-writable so the
+# non-root harness (uid 65532) can write result_ref — see seed_work_dirs / issue #39.
+seed_work_dirs "$INPUTS" "$RES"
 kubectl -n "$NS" cp ./fixtures/inputs/. "$ORCH:$INPUTS"
 # repo ONLY into the sandbox pod — never onto /work
 sexec mkdir -p "$SBOX_REPO"
@@ -78,8 +79,12 @@ SAMPLE_OUT="$(mktemp)"; SAMPLER_PID="$(start_sampler "$SAMPLE_OUT")"
 # --- Claim 1: parallel fan-out ---
 claim 1 "Parallel fan-out: $ITEMS dispatched concurrently"
 tmpdir="$(mktemp -d)"
-for id in $ITEMS; do ( dispatch "$id" > "$tmpdir/$id.json" 2>&1 ) & done
-wait
+# Collect the dispatch PIDs and wait ONLY on those. A bare `wait` also blocks on the
+# background port-forward started by ensure_port_forward (and the sampler), which never
+# exit — so on a clean session (no pre-existing port-forward) the smoke would hang here.
+fanout_pids=""
+for id in $ITEMS; do ( dispatch "$id" > "$tmpdir/$id.json" 2>&1 ) & fanout_pids="$fanout_pids $!"; done
+wait $fanout_pids
 fanout_ok=1
 for id in $ITEMS; do
   st=$(jq -r '.status // "none"' < "$tmpdir/$id.json" 2>/dev/null || echo parse_err)

@@ -61,6 +61,18 @@ force_kill_pod() {
   kubectl delete pod -n "$NS" -l "$SELECTOR" --force --grace-period=0 >/dev/null 2>&1 || true
 }
 
+# Create run dirs on the shared leaf-work PVC via the orchestrator pod, world-writable.
+# The orchestrator runs as root, so a plain `mkdir -p` leaves these 0755 root:root; the
+# non-root harness (uid 65532, readOnlyRootFilesystem) then cannot create result subdirs
+# or write result_ref and hits EACCES (issue #39). `chmod 777` lets the harness UID write.
+# On Kind the ksvc's fsGroup:65532 is NOT applied to these orchestrator-created dirs
+# (local-path/hostPath PVC), so an explicit chmod — not fsGroup — is the reliable fix.
+# Usage: seed_work_dirs <dir> [dir...]   (uses $ORCH, default leaf-orchestrator, and $NS)
+seed_work_dirs() {
+  kubectl -n "$NS" exec "${ORCH:-leaf-orchestrator}" -- \
+    sh -c 'mkdir -p "$@" && chmod 777 "$@"' _ "$@"
+}
+
 # Create the llm-credentials secret from the operator's env if absent. Fails if env unset.
 ensure_secret() {
   if kubectl get secret llm-credentials -n "$NS" >/dev/null 2>&1; then return 0; fi
