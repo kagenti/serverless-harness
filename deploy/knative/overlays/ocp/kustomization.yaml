@@ -1,0 +1,47 @@
+# deploy/knative/overlays/ocp/kustomization.yaml
+# OpenShift overlay for the serverless-harness data plane (issue #41).
+#
+# Divergences from the Kind base, all expressed as patches/transformers so the
+# base YAMLs stay shared:
+#   - Harness image: pull the published multi-arch image from GHCR instead of the
+#     Kind-local dev.local tag. Override with `kustomize edit set image` /
+#     setup-ocp.sh --image.
+#   - Sandbox image: the pre-baked image built in-cluster (sandbox.Dockerfile),
+#     referenced by its internal-registry pullspec. Default assumes namespace
+#     `default`; setup-ocp.sh rewrites this for --namespace.
+#   - Sandbox pod: no root apk-add at start-up (tools are pre-baked), plus
+#     restricted-v2-compatible securityContext and a writable /workspace emptyDir
+#     (patch-sandbox.yaml).
+#
+# The harness Service keeps the base runAsUser/fsGroup 65532: the published GHCR
+# image declares no USER (defaults to root), so a non-root UID must be set
+# explicitly — the SCC does not reliably inject one. setup-ocp.sh grants the
+# harness ServiceAccount the `nonroot-v2` SCC so that explicit non-root UID is
+# admitted (issue #41 item #4, approach b). The pre-baked sandbox image, by
+# contrast, sets USER 65532 itself, so its pod needs no SCC grant.
+#
+# The leaf-work PVC keeps ReadWriteOnce (the only mode AWS EBS / gp3-csi offers);
+# see SMOKE.md for the RWX caveat.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../redis.yaml
+  - ../../sandbox.yaml
+  - ../../leaf-pvc.yaml
+  - ../../service.yaml
+
+images:
+  - name: dev.local/serverless-harness
+    newName: ghcr.io/kagenti/serverless-harness
+    newTag: latest
+  - name: alpine
+    newName: image-registry.openshift-image-registry.svc:5000/default/serverless-harness-sandbox
+    newTag: latest
+
+patches:
+  - path: patch-sandbox.yaml
+    target:
+      version: v1
+      kind: Pod
+      name: sandbox-0

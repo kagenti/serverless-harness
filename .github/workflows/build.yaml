@@ -16,12 +16,25 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ghcr.io/kagenti/serverless-harness
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Main harness image.
+          - image: ghcr.io/kagenti/serverless-harness
+            context: .
+            file: Dockerfile
+          # Pre-baked sandbox image for OpenShift (deploy/knative/setup-ocp.sh).
+          # Built the same way as the harness so OCP can pull it from GHCR instead
+          # of building it in-cluster (issue #41).
+          - image: ghcr.io/kagenti/serverless-harness-sandbox
+            context: .
+            file: deploy/knative/sandbox.Dockerfile
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -45,7 +58,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9  # v6
         with:
-          images: ${{ env.IMAGE_NAME }}
+          images: ${{ matrix.image }}
           tags: |
             type=sha,prefix=main-,enable={{is_default_branch}}
             type=raw,value=latest,enable={{is_default_branch}}
@@ -54,7 +67,8 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
         with:
-          context: .
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
