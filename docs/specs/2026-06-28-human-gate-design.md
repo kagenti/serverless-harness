@@ -10,7 +10,7 @@ preserving full context across one or more gates before reaching a verdict. This
 charter [§8.3](2026-06-26-leaf-session-backend-capability-charter.md)).
 Realizes: [Archetypes & Requirements §7.6](2026-06-26-pipeline-archetypes-requirements.md) (gate primitive; gate-while-idle) + [Capability Charter](2026-06-26-leaf-session-backend-capability-charter.md) G8 ("promote post-MVP: human-gate"). Single-tenant, key-in-env.
 Builds on (reuse, no redesign): the leaf-session contract + `runLeaf` (MVP/PR #10), gate-7 durable
-resume (PR #11), async leaf completion (`POST /run-leaf {async:true}` + `leaf-queue` + KEDA
+resume (PR #11), async leaf completion (`POST /runs {async:true}` + `leaf-queue` + KEDA
 `ScaledJob`, [async design](2026-06-27-async-leaf-completion-design.md)), M2/M3 sandbox, M4 Knative
 scale-to-zero, M5 checkpoint/resume, M6 model selection.
 Defers (per charter): auto-approve mode (§1, non-precluding); harness-side timeout/TTL (§5);
@@ -55,7 +55,7 @@ multi-tenancy & per-user identity (Z1), credential plane (Z3/Z5), event-driven g
   the safety-precondition surface now is unneeded for the first slice. **Non-precluding, not built.**
 - **Harness-side timeout / TTL** on a parked gate — the orchestrator owns deadlines (§5, Q4).
 - Multi-tenancy, per-user identity (Z1), credential plane (Z3/Z5), event-driven gates (C).
-- Any change to the synchronous `POST /run-leaf`, async enqueue, cron-dispatch, `leaf-queue`, the
+- Any change to the synchronous `POST /runs`, async enqueue, cron-dispatch, `leaf-queue`, the
   KEDA `ScaledJob`, or `submit_verdict` — all **unchanged**. A leaf that never calls
   `request_approval` behaves exactly as today.
 
@@ -65,7 +65,7 @@ multi-tenancy & per-user identity (Z1), credential plane (Z3/Z5), event-driven g
 |---|----------|--------|-----------|
 | B1 | Who decides **where** a gate happens | **Agent-declared** via a tool; **decision + resume external** (charter-aligned "Option C") | Builds the novel single-session pause/resume primitive while decision authority and re-invocation stay external (G1/G2). |
 | B2 | How the agent **continues** after a decision | **Continuation prompt** (not tool-result injection) | Turn ends well-formed (no dangling tool call); reuses the proven seed-prompt + M5 resume path; survives mid-park crashes; no Pi-internals dependency. |
-| B3 | **Decision transport** + resume trigger | **`decisionRef` file** on the volume; resume = **re-invoke `POST /run-leaf` by `sessionId`** (sync or `async:true`) | Symmetric with `inputsRef`/`resultRef`; keeps decision content off the HTTP channel (G3); no harness-side watcher (preserves scale-to-zero + G1/G2). |
+| B3 | **Decision transport** + resume trigger | **`decisionRef` file** on the volume; resume = **re-invoke `POST /runs` by `sessionId`** (sync or `async:true`) | Symmetric with `inputsRef`/`resultRef`; keeps decision content off the HTTP channel (G3); no harness-side watcher (preserves scale-to-zero + G1/G2). |
 | B4 | **Timeout** of a parked gate | **None in the harness**; park indefinitely | Charter §8.3 ("sleep indefinitely"); a timer/sweeper would reintroduce an always-on component. Deadlines are the orchestrator's concern (re-invoke with `abort`). |
 | B5 | **Decision actions** | `approve` \| `reject` \| `abort` | Matches archetype B's approve / reject→loop / abort. |
 
@@ -138,11 +138,11 @@ No other field changes. `async`, `doneMarkerRef`, `tenant`, `model`, `maxTurns`,
 
 ### 2.5 Resume trigger
 
-Resume is an **ordinary re-invocation** of `POST /run-leaf` with the **same `sessionId`** plus
+Resume is an **ordinary re-invocation** of `POST /runs` with the **same `sessionId`** plus
 `decisionRef` (and `async` honored as usual):
 
 ```
-POST /run-leaf { sessionId: "<same>", inputsRef, resultRef, decisionRef, workspaceRef?, model?, async? }
+POST /runs { sessionId: "<same>", inputsRef, resultRef, decisionRef, workspaceRef?, model?, async? }
   → sync:  200 { status: "done" | "paused" | "aborted" | "failed", … }
   → async: 202 { status: "accepted", sessionId, resultRef, doneMarker }
 ```
@@ -268,7 +268,7 @@ async enqueue with the same `sessionId` + `decisionRef`. On the async path it `X
 → KEDA spawns a leaf-job → `runLeaf` resumes from the log, applies the decision, continues.
 **Nothing** in the `WorkQueue`, `ScaledJob`, heartbeat, or dead-letter machinery changes.
 
-> **Status endpoint visibility.** `GET /run-leaf/status` is extended so that, when no terminal
+> **Status endpoint visibility.** `GET /runs/status` is extended so that, when no terminal
 > marker is present, it also checks the sibling gate marker and reports `awaiting_approval` (with
 > `gateId`) instead of defaulting to `queued`. The **primary** completion signal stays the
 > orchestrator polling the gate / terminal markers on its own volume (G3); the endpoint is the
@@ -374,7 +374,7 @@ On the Kind `sh-knative` cluster (async path already deployed: KEDA + `ScaledJob
 - **Tool-result injection** resume style (B2 chose continuation-prompt).
 - **Harness-side decision watcher / auto-resume** — resume is an external re-invocation (B3).
 - Multi-tenancy, per-user identity (Z1), credential plane (Z3/Z5), event-driven gates (C).
-- Any change to sync `POST /run-leaf`, async enqueue, cron-dispatch, `leaf-queue`, the KEDA
+- Any change to sync `POST /runs`, async enqueue, cron-dispatch, `leaf-queue`, the KEDA
   `ScaledJob`, `submit_verdict`, or the heartbeat/dead-letter machinery — all **unchanged**.
 - A new container image — the gate reuses the harness image and existing entrypoints.
 

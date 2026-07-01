@@ -56,7 +56,7 @@ The orchestrator invokes one leaf session per work item (HTTP request to the har
 endpoint):
 
 ```
-POST /run-leaf
+POST /runs
 {
   "session_id":   "<run_id>/<item_id>",   // unique; idempotency key
   "model":        "<provider/model>",     // per-call tier (M6)
@@ -106,7 +106,7 @@ overwrites — so **retry = re-invoke**. The harness writes `result_ref` fresh e
 
 ### 2.5 Re-entrancy (design property, not MVP scope)
 
-The contract must be designed so a **leaf session can itself invoke `/run-leaf`** to dispatch a
+The contract must be designed so a **leaf session can itself invoke `/runs`** to dispatch a
 **child** leaf session. This is *not built or tested in the MVP* (the MVP is single-level:
 orchestrator → leaf), but the contract must **not preclude** it, because it is how the one genuine
 near-term subagent need is met: a leaf agent that wants a fresh-context subtask (see
@@ -123,7 +123,7 @@ it) so re-entrancy is a later increment, not a redesign. The Z6 *extras* — par
 
 ```
 external orchestrator driver (deterministic; brings its own logic)
-  │  for each of N items: POST /run-leaf {session_id, model, inputs_ref, result_ref, workspace_ref}
+  │  for each of N items: POST /runs {session_id, model, inputs_ref, result_ref, workspace_ref}
   ▼  (N concurrent requests)
 Knative harness service  ── scales out to N pods, scales to zero when idle (M4)
   │  job-mode: seed prompt → run agent to completion (M6 model) 
@@ -143,7 +143,7 @@ orchestrator: read all result_refs → retry any failed/missing (re-invoke) → 
 
 | # | Component | New / reuse |
 |---|---|---|
-| 1 | **Invocation contract + `/run-leaf` endpoint** | ⭐ new (the core) |
+| 1 | **Invocation contract + `/runs` endpoint** | ⭐ new (the core) |
 | 2 | **Job-mode completion loop** (autonomous run to verdict) | ⭐ new (wraps `runTurn`) |
 | 3 | **`submit_verdict` tool + schema validation + result_ref write** | ⭐ new |
 | 4 | **Minimal orchestrator driver** (fan-out / collect / retry / coverage audit) | ⭐ new (test stand-in) |
@@ -208,7 +208,7 @@ PVC + the fixture repo:
 ## 8. What this buys / honest notes
 
 - It establishes the **reusable seam**: any external orchestrator (the real pipeline's, a state
-  machine, a cron driver) can target `/run-leaf`. The real analysis stages plug into the same
+  machine, a cron driver) can target `/runs`. The real analysis stages plug into the same
   contract by changing only the seed prompt + schema + sandbox tooling.
 - **Honest:** for the bare slice, the harness's edge over running workers as plain K8s Jobs is
   incremental (turn-level durability, the brain/hands split, the on-ramp to later hardening). The

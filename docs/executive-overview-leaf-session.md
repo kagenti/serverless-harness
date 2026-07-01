@@ -8,7 +8,7 @@
 
 ## 1. The Three Archetypes
 
-The leaf-session backend supports three dispatch patterns for running AI agent "leaves" — isolated units of work invoked by an external orchestrator via a shared volume-envelope contract (`POST /run-leaf`).
+The leaf-session backend supports three dispatch patterns for running AI agent "leaves" — isolated units of work invoked by an external orchestrator via a shared volume-envelope contract (`POST /runs`; the pre-rename `POST /run-leaf` remains as a deprecated alias).
 
 ### Archetype A — Async Fan-Out (PR #12)
 
@@ -24,7 +24,7 @@ The leaf-session backend supports three dispatch patterns for running AI agent "
 
 ### Archetype C — Scheduled Dispatch (PR #13)
 
-**Pattern:** K8s CronJob fires on schedule → `cron-dispatch` pod reads a static config list (ConfigMap) → posts each item as `{async: true}` to `/run-leaf` → items flow through the async queue.
+**Pattern:** K8s CronJob fires on schedule → `cron-dispatch` pod reads a static config list (ConfigMap) → posts each item as `{async: true}` to `/runs` → items flow through the async queue.
 
 **Use case:** Periodic batch jobs (e.g. "summarize yesterday's tickets at 02:00 daily"). Fire-ID = Job name ensures idempotency across retry storms.
 
@@ -35,7 +35,7 @@ The leaf-session backend supports three dispatch patterns for running AI agent "
 ```
 ┌─────────────────────┐         ┌──────────────────────────┐
 │  External           │  POST   │  Knative Service         │
-│  Orchestrator       │────────▶│  /run-leaf               │
+│  Orchestrator       │────────▶│  /runs                   │
 │  (leaf-orchestrator)│         │  (serverless-harness)    │
 └─────────────────────┘         │  scale 0-5, concurrency=1│
         │                       └───────────┬──────────────┘
@@ -65,7 +65,7 @@ The leaf-session backend supports three dispatch patterns for running AI agent "
 
 | Component | Role |
 |-----------|------|
-| **Knative Service** | Scale-to-zero HTTP endpoint; handles sync `/run-leaf` and enqueues async work |
+| **Knative Service** | Scale-to-zero HTTP endpoint; handles sync `/runs` and enqueues async work |
 | **Redis** | Session persistence (durable resume by `sessionId`), work queue (Streams), gate state |
 | **KEDA ScaledJob** | Autoscales worker pods 0→10 based on `lagCount` + `pendingEntriesCount` |
 | **sandbox-0** | Isolated execution pod; harness routes tool calls here via `kubectl exec` (brain/hands split) |
@@ -79,7 +79,7 @@ The Knative Service and leaf-worker are the **same container image** (`serverles
 | | Knative Service | leaf-worker (KEDA ScaledJob) |
 |---|---|---|
 | **Entry point** | `server.ts` — HTTP server | `leaf-job.ts` — queue drain loop |
-| **Triggered by** | HTTP request (`POST /run-leaf`) | Redis Streams queue depth |
+| **Triggered by** | HTTP request (`POST /runs`) | Redis Streams queue depth |
 | **Calls** | `runLeaf()` inline (sync) or enqueues to Redis (async) | `processOne()` → `runLeaf()` |
 | **kubectl exec → sandbox-0** | Yes | Yes |
 
@@ -90,9 +90,12 @@ Both paths converge on `runLeaf()`, which uses `K8sSandboxClient` to route all t
 Same endpoint, one flag flips the mode:
 
 ```
-POST /run-leaf { sessionId, inputsRef, resultRef }               → sync  (200 with result)
-POST /run-leaf { sessionId, inputsRef, resultRef, async: true }   → async (202 Accepted)
+POST /runs { sessionId, inputsRef, resultRef }               → sync  (200 with result)
+POST /runs { sessionId, inputsRef, resultRef, async: true }   → async (202 Accepted)
 ```
+
+> The pre-rename paths `POST /run-leaf` and `GET /run-leaf/status` remain as **deprecated aliases**
+> (they log a deprecation warning and will be removed in a later release).
 
 - **Sync** — the Knative pod calls `runLeaf()` itself, waits for completion, returns the result. Pod stays alive for the duration.
 - **Async** — the Knative pod pushes the envelope onto Redis Streams, returns 202 immediately, goes idle (scales to zero). A leaf-worker pod later drains the queue.

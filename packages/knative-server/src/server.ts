@@ -131,18 +131,40 @@ function handleLeafStatus(url: URL, res: ServerResponse): void {
   res.writeHead(200, JSON_HEADERS).end(JSON.stringify({ status: "queued" }));
 }
 
+// Pre-rename wire paths kept as aliases (issue #37). The public execution route is now the
+// industry-standard "run" noun (`/runs`); the internal `runLeaf`/`LeafEnvelope` vocabulary is
+// unchanged. Aliases warn once per path and are removed in a later release.
+const DEPRECATED_ROUTE_ALIASES: Record<string, string> = {
+  "/run-leaf": "/runs",
+  "/run-leaf/status": "/runs/status",
+};
+const warnedDeprecatedRoutes = new Set<string>();
+function warnDeprecatedRoute(oldPath: string): void {
+  if (warnedDeprecatedRoutes.has(oldPath)) return;
+  warnedDeprecatedRoutes.add(oldPath);
+  console.warn(
+    `[deprecation] ${oldPath} is deprecated and will be removed in a future release; use ${DEPRECATED_ROUTE_ALIASES[oldPath]} instead`,
+  );
+}
+
 function handler(req: IncomingMessage, res: ServerResponse): void {
-  if (req.method === "GET" && req.url === "/health") {
+  const url = req.url ?? "";
+
+  if (req.method === "GET" && url === "/health") {
     res.writeHead(200).end("ok");
     return;
   }
 
-  if (req.method === "GET" && req.url?.startsWith("/run-leaf/status")) {
-    handleLeafStatus(new URL(req.url, "http://localhost"), res);
+  // Run-status endpoint: canonical `/runs/status`, plus the deprecated `/run-leaf/status` alias.
+  if (req.method === "GET" && (url.startsWith("/runs/status") || url.startsWith("/run-leaf/status"))) {
+    if (url.startsWith("/run-leaf/status")) warnDeprecatedRoute("/run-leaf/status");
+    handleLeafStatus(new URL(url, "http://localhost"), res);
     return;
   }
 
-  if (req.method === "POST" && req.url === "/run-leaf") {
+  // Run endpoint: canonical `POST /runs`, plus the deprecated `POST /run-leaf` alias.
+  if (req.method === "POST" && (url === "/runs" || url === "/run-leaf")) {
+    if (url === "/run-leaf") warnDeprecatedRoute("/run-leaf");
     const route = async () => {
       const raw = await readBody(req);
       let parsed: any = {};

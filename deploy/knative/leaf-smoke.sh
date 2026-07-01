@@ -12,7 +12,7 @@
 #     a correct verdict is only possible if the agent read the file in the sandbox.
 #
 # Prereq: setup-kind.sh done (incl. the PVC feature flags + sandbox-0); harness image rebuilt
-#   with the /run-leaf route + sandbox-routed runLeaf; leaf-pvc.yaml + leaf-orchestrator.yaml
+#   with the /runs route + sandbox-routed runLeaf; leaf-pvc.yaml + leaf-orchestrator.yaml
 #   applied; service.yaml redeployed with the /work mount.
 # Usage: LEAF_LIVE_SMOKE=1 bash deploy/knative/leaf-smoke.sh
 set -euo pipefail
@@ -42,10 +42,10 @@ dispatch_sid() {
   local body
   body=$(jq -nc --arg s "$sid" --arg m "$model" --arg in "$in" --arg out "$out" --arg ws "$SBOX_REPO" \
     '{sessionId:$s, model:$m, inputsRef:$in, resultRef:$out, workspaceRef:$ws}')
-  curl -s --max-time 240 -H "$HOST_HEADER" -H "Content-Type: application/json" -d "$body" "$BASE/run-leaf"
+  curl -s --max-time 240 -H "$HOST_HEADER" -H "Content-Type: application/json" -d "$body" "$BASE/runs"
 }
 
-# dispatch <item_id> [model] [inputs_override] -> echoes terminal-status JSON from /run-leaf
+# dispatch <item_id> [model] [inputs_override] -> echoes terminal-status JSON from /runs
 dispatch() {
   local id="$1"
   local model="${2:-$MODEL}" in="${3:-$INPUTS/$id.json}"

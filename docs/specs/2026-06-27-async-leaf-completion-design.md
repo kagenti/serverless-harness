@@ -12,13 +12,13 @@ Substrate: **KEDA `ScaledJob` consuming a Redis Streams work queue.** Single-ten
 > **What this slice is NOT.** Not multi-tenancy (Z1 identity, Z3/Z5 per-user credentials, per-tenant
 > sandbox/data isolation are all deferred — see §8). Not the cron/event trigger on-ramp (Archetype C)
 > nor the human-gate (Archetype B); the substrate is designed not to preclude them (§7), but they are
-> not built here. The synchronous `POST /run-leaf` is unchanged.
+> not built here. The synchronous `POST /runs` is unchanged.
 
 ---
 
 ## 1. Goal & motivation
 
-The MVP `POST /run-leaf` **blocks** until the leaf reaches a terminal state. That is fine for the
+The MVP `POST /runs` **blocks** until the leaf reaches a terminal state. That is fine for the
 short stub task, but real Archetype-A validation leaves (builds, proofs) run for minutes, and an
 orchestrator fanning out tens–hundreds of them cannot hold that many long-lived connections. Async
 completion decouples the orchestrator from task duration:
@@ -48,13 +48,13 @@ justified by the A-now / B-and-C-future fit.
 
 ## 2. Architecture & request path
 
-The async path is **additive**: synchronous `POST /run-leaf` is unchanged. Async splits the harness
+The async path is **additive**: synchronous `POST /runs` is unchanged. Async splits the harness
 into a thin **control plane** (the Knative Service) and an ephemeral **data plane** (KEDA-spawned
 Jobs).
 
 ```
 orchestrator
-  │  POST /run-leaf  { ...envelope, async: true }
+  │  POST /runs  { ...envelope, async: true }
   ▼
 Knative Service (control plane)
   │  validate envelope → XADD leaf-queue (Redis Stream) → 202 { accepted, sessionId, resultRef, doneMarker }
@@ -68,7 +68,7 @@ leaf-job  (same image, job-mode entrypoint)
   ▼
 shared /work PVC:  results/<item>.json  +  <result_ref>.status (done-marker)
   ▲
-orchestrator polls the done-marker on its own volume   (or GET /run-leaf/status?sessionId=… for queue visibility)
+orchestrator polls the done-marker on its own volume   (or GET /runs/status?sessionId=… for queue visibility)
 ```
 
 **Components** (each independently testable):
@@ -108,10 +108,10 @@ ServiceAccount (sandbox `pods/exec`).
 - `tenant?: string` — namespaces the queue stream and the session id (non-precluding; see §7).
   Default: the single shared queue.
 
-### 3.2 Enqueue — `POST /run-leaf` with `async: true`
+### 3.2 Enqueue — `POST /runs` with `async: true`
 
 ```
-POST /run-leaf  { sessionId, model?, inputsRef, resultRef, workspaceRef?, maxTurns?, async: true }
+POST /runs  { sessionId, model?, inputsRef, resultRef, workspaceRef?, maxTurns?, async: true }
 → 202 { status: "accepted", sessionId, resultRef, doneMarker }     // XADD'd to leaf-queue
 → 400 { error: "envelope_invalid" }                                 // not enqueued
 ```
@@ -134,7 +134,7 @@ none, and a result mid-write looks "present").
 
 - **Primary (canonical):** the orchestrator polls the **done-marker on its own volume**; the harness
   is not on the completion critical path.
-- **Secondary (convenience):** `GET /run-leaf/status?sessionId=…` → `{ status: queued | running |
+- **Secondary (convenience):** `GET /runs/status?sessionId=…` → `{ status: queued | running |
   done | failed, reason? }`, where `done|failed` come from the marker and `queued|running` from the
   queue/consumer-group state.
 
@@ -307,7 +307,7 @@ stream-per-tenant + `ScaledJob`-per-tenant wiring is **not** built.
 - Human-gate for Archetype B (the substrate enables gate-while-idle — noted, not built).
 - Priority / fairness classes (the external orchestrator's concern, per Archetype A).
 - A separate dead-letter queue stream (dead-letter = `failed` marker + ack).
-- Changes to synchronous `POST /run-leaf` (unchanged).
+- Changes to synchronous `POST /runs` (unchanged).
 
 **Substrate-agnostic seam:** the async *contract* (enqueue envelope → background execution →
 `result_ref` + done-marker + status) depends only on the `WorkQueue` interface + `leaf-job-runner`,

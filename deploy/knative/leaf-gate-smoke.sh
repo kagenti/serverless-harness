@@ -42,7 +42,7 @@ dispatch() { # $1=extra-json (defaults to {}); avoid ${1:-{}} which bash mis-par
   jq -nc --arg s "$RUN/i1" --arg m "$MODEL" --arg in "$INPUTS/i1.json" --arg out "$RES/i1.json" --arg ws "$SBOX_REPO" \
     --argjson extra "$extra" \
     '{sessionId:$s, model:$m, inputsRef:$in, resultRef:$out, workspaceRef:$ws, async:true} + $extra' \
-  | curl -s --max-time 30 -H "$HOST_HEADER" -H "Content-Type: application/json" -d @- "$BASE/run-leaf"
+  | curl -s --max-time 30 -H "$HOST_HEADER" -H "Content-Type: application/json" -d @- "$BASE/runs"
 }
 # write_decision GATEID ACTION [FEEDBACK]
 write_decision() { # $1=gateId $2=action $3=feedback?

@@ -6,7 +6,7 @@ Scope: The **cron trigger on-ramp** for Archetype C (scheduled ingestion): a Kub
 becomes the **start signal** that dispatches a static, config-defined list of leaf sessions onto the
 existing async path. Purely additive; the async contract, work queue, KEDA `ScaledJob`, and `runLeaf`
 are all **unchanged**.
-Builds on (reuse, no redesign): async leaf completion (`POST /run-leaf {async:true}` + `leaf-queue` +
+Builds on (reuse, no redesign): async leaf completion (`POST /runs {async:true}` + `leaf-queue` +
 KEDA `ScaledJob`, [async design](2026-06-27-async-leaf-completion-design.md)), the leaf-session
 contract + `runLeaf` (MVP/PR #10), gate-7 resume (PR #11).
 
@@ -14,7 +14,7 @@ contract + `runLeaf` (MVP/PR #10), gate-7 resume (PR #11).
 > that batch-selection is the external orchestrator's job, charter G1/G2; deferred). Not event
 > triggers (cron only). Not the KEDA `cron` scaler (wrong primitive — it is window-based, not a
 > discrete fire-once-at-time-T scheduler; see §4). No multi-tenant schedules, no missed-fire
-> backfill. The synchronous and manual-async `POST /run-leaf` paths are unchanged.
+> backfill. The synchronous and manual-async `POST /runs` paths are unchanged.
 
 ---
 
@@ -23,7 +23,7 @@ contract + `runLeaf` (MVP/PR #10), gate-7 resume (PR #11).
 Archetypes A (parallel fan-out) and B (iterative loop) start from an *invocation* — an external
 orchestrator dispatches work. **Archetype C — scheduled ingestion** starts from a *clock*: "every
 night at 02:00, process the standing batch." The harness already accepts background work via
-`POST /run-leaf {async:true}`; this slice adds the missing **start signal** so a schedule — with no
+`POST /runs {async:true}`; this slice adds the missing **start signal** so a schedule — with no
 external orchestrator process running — can dispatch that work.
 
 The capability catalog ([archetypes §7.1](2026-06-26-pipeline-archetypes-requirements.md)) lists
@@ -43,7 +43,7 @@ and is explicitly out of scope (§8).
 
 ## 2. Architecture & request path
 
-Additive. The CronJob is an in-cluster client of `POST /run-leaf {async:true}`; everything
+Additive. The CronJob is an in-cluster client of `POST /runs {async:true}`; everything
 downstream of the enqueue is the async path, unchanged.
 
 ```
@@ -170,7 +170,7 @@ The dispatcher POSTs to the Knative service over cluster-internal networking:
 ### 6.1 Unit (vitest, pure — injected `fetch`, no cluster)
 
 `cron-dispatch`:
-- each config item is POSTed exactly once to `/run-leaf` with `async:true`;
+- each config item is POSTed exactly once to `/runs` with `async:true`;
 - `__FIRE__` is substituted with the fire id in `sessionId` **and** `resultRef` (and any other field
   containing it); non-templated fields pass through verbatim;
 - all `202` → exit code 0; any non-`202`/error → non-zero exit (and remaining items still attempted);
