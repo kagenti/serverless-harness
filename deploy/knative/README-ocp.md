@@ -189,6 +189,10 @@ and verifying the async-leaf path itself on OpenShift is a further step.
 oc delete ksvc serverless-harness -n default
 oc delete -k <(oc kustomize --load-restrictor LoadRestrictionsNone deploy/knative/overlays/ocp) 2>/dev/null || true
 oc delete sandbox sandbox-0 deployment/redis svc/redis secret/llm-credentials -n default
+# The durable /workspace PVC is provisioned StatefulSet-style from the Sandbox CR's
+# volumeClaimTemplates and is NOT garbage-collected when the CR is deleted — remove it
+# explicitly to reclaim the backing EBS volume:
+oc delete pvc workspace-sandbox-0 -n default
 # Operators (optional): oc delete knativeserving knative-serving -n knative-serving; oc delete subscription serverless-operator -n openshift-serverless
 ```
 
