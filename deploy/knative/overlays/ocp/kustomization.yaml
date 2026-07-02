@@ -6,42 +6,36 @@
 #   - Harness image: pull the published multi-arch image from GHCR instead of the
 #     Kind-local dev.local tag. Override with `kustomize edit set image` /
 #     setup-ocp.sh --image.
-#   - Sandbox image: the pre-baked image built in-cluster (sandbox.Dockerfile),
-#     referenced by its internal-registry pullspec. Default assumes namespace
-#     `default`; setup-ocp.sh rewrites this for --namespace.
-#   - Sandbox pod: no root apk-add at start-up (tools are pre-baked), plus
-#     restricted-v2-compatible securityContext and a writable /workspace emptyDir
-#     (patch-sandbox.yaml).
+#   - Sandbox image + pod: the pre-baked image (sandbox.Dockerfile) and the
+#     non-root securityContext are set via a JSON6902 patch onto the Sandbox CR
+#     (patch-sandbox.yaml): runAsUser/fsGroup 65532, seccomp RuntimeDefault,
+#     drop ALL caps, and serviceAccountName serverless-harness-sandbox. The
+#     command is `sleep infinity` (no root apk-add).
 #
-# The harness Service keeps the base runAsUser/fsGroup 65532: the published GHCR
-# image declares no USER (defaults to root), so a non-root UID must be set
-# explicitly — the SCC does not reliably inject one. setup-ocp.sh grants the
-# harness ServiceAccount the `nonroot-v2` SCC so that explicit non-root UID is
-# admitted (issue #41 item #4, approach b). The pre-baked sandbox image, by
-# contrast, sets USER 65532 itself, so its pod needs no SCC grant.
+# Both tiers run non-root: setup-ocp.sh grants nonroot-v2 to the harness SA
+# (serverless-harness) AND the sandbox SA (serverless-harness-sandbox), since the
+# GHCR harness image declares no USER and the SCC does not reliably inject a UID.
 #
-# The leaf-work PVC keeps ReadWriteOnce (the only mode AWS EBS / gp3-csi offers);
-# see SMOKE.md for the RWX caveat.
+# The sandbox's /workspace is backed by the Sandbox CR's durable RWO PVC
+# (volumeClaimTemplates) — the only mode AWS EBS / gp3-csi offers. RWX is a P2
+# concern on the sandbox tier, never the harness. There is no leaf-work PVC after P1.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
   - ../../redis.yaml
   - ../../sandbox.yaml
-  - ../../leaf-pvc.yaml
   - ../../service.yaml
 
 images:
   - name: dev.local/serverless-harness
     newName: ghcr.io/kagenti/serverless-harness
     newTag: latest
-  - name: alpine
-    newName: image-registry.openshift-image-registry.svc:5000/default/serverless-harness-sandbox
-    newTag: latest
 
 patches:
   - path: patch-sandbox.yaml
     target:
-      version: v1
-      kind: Pod
+      group: agents.x-k8s.io
+      version: v1beta1
+      kind: Sandbox
       name: sandbox-0
