@@ -6,6 +6,21 @@ vi.mock("@sh/harness/run-turn", () => ({
   runTurn: vi.fn(),
 }));
 
+// Keep the result store hermetic — no live Redis in unit tests.
+vi.mock("@sh/harness/leaf-result-store", async (orig) => {
+  const actual = await orig<typeof import("@sh/harness/leaf-result-store")>();
+  const mem = new Map<string, string>();
+  class FakeStore { async set(k: string, v: string) { mem.set(k, v); } async get(k: string) { return mem.get(k) ?? null; } async close() {} }
+  return { ...actual, RedisResultStore: FakeStore };
+});
+
+const runLeaf = vi.fn();
+vi.mock("@sh/harness/run-leaf", () => ({
+  runLeaf: (...a: any[]) => runLeaf(...a),
+  validateItem: (o: any) => (o && typeof o.item_id === "string" && typeof o.file === "string" && typeof o.pattern === "string" ? o : null),
+  leafSessionId: (env: any) => (env.sessionId ?? "leaf").replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "") || "leaf",
+}));
+
 import { startServer } from "../src/server.js";
 import { runTurn } from "@sh/harness/run-turn";
 
@@ -37,6 +52,13 @@ function request(
     }
     req.end();
   });
+}
+
+async function post(path: string, body: unknown): Promise<{ status: number; json: any }> {
+  const res = await fetch(baseUrl + path, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+  return { status: res.status, json: await res.json().catch(() => ({})) };
 }
 
 beforeAll(async () => {
@@ -144,6 +166,19 @@ describe("POST /turn", () => {
     const res = await request("POST", "/turn", { prompt: "hello" });
     expect(res.status).toBe(500);
     expect(JSON.parse(res.body).error).toBe("LLM timeout");
+  });
+});
+
+describe("GET /runs/status", () => {
+  it("GET /runs/status returns queued when no record exists", async () => {
+    const r = await (await fetch(`${baseUrl}/runs/status?sessionId=run/none`)).json();
+    expect(r).toEqual({ status: "queued" });
+  });
+  it("GET /runs/status returns the record after a sync run", async () => {
+    runLeaf.mockResolvedValue({ status: "done", verdict: { item_id: "i1", verdict: "FLAGGED", reason: "x" } });
+    await post("/runs", { sessionId: "run/i1", item: { item_id: "i1", file: "f", pattern: "p" } });
+    const r = await (await fetch(`${baseUrl}/runs/status?sessionId=run/i1`)).json();
+    expect(r).toMatchObject({ status: "done", verdict: { item_id: "i1", verdict: "FLAGGED" } });
   });
 });
 

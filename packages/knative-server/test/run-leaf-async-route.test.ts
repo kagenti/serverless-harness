@@ -1,27 +1,30 @@
 // packages/knative-server/test/run-leaf-async-route.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+// Keep the result store hermetic — no live Redis in unit tests.
+vi.mock("@sh/harness/leaf-result-store", async (orig) => {
+  const actual = await orig<typeof import("@sh/harness/leaf-result-store")>();
+  const mem = new Map<string, string>();
+  class FakeStore { async set(k: string, v: string) { mem.set(k, v); } async get(k: string) { return mem.get(k) ?? null; } async close() {} }
+  return { ...actual, RedisResultStore: FakeStore };
+});
+
 const enqueue = vi.fn(async () => "1-0");
 const ensureGroup = vi.fn(async () => {});
 vi.mock("@sh/work-queue", () => ({
   RedisWorkQueue: class { ensureGroup = ensureGroup; enqueue = enqueue; close = async () => {}; },
 }));
-const readDoneMarker = vi.fn();
-vi.mock("@sh/harness/done-marker", () => ({
-  readDoneMarker: (...a: any[]) => readDoneMarker(...a),
-  deriveDoneMarkerPath: (r: string, o?: string) => o ?? `${r}.status`,
+
+vi.mock("@sh/harness/run-leaf", () => ({
+  runLeaf: vi.fn(),
+  validateItem: (o: any) => (o && typeof o.item_id === "string" && typeof o.file === "string" && typeof o.pattern === "string" ? o : null),
+  leafSessionId: (env: any) => (env.sessionId ?? "leaf").replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "") || "leaf",
 }));
-vi.mock("@sh/harness/gate-marker", () => ({
-  readGateMarker: vi.fn(),
-  deriveGateRef: (r: string, o?: string) => o ?? `${r}.gate`,
-}));
-import { readGateMarker } from "@sh/harness/gate-marker";
-const mockedReadGate = vi.mocked(readGateMarker);
 
 import { startServer } from "../src/server";
 
 let base: string; let server: any;
-beforeEach(() => { enqueue.mockClear(); readDoneMarker.mockReset(); });
+beforeEach(() => { enqueue.mockClear(); });
 async function req(method: string, path: string, body?: unknown) {
   const res = await fetch(base + path, { method, headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
   return { status: res.status, json: await res.json().catch(() => ({})) };
@@ -31,9 +34,11 @@ describe("async /runs", () => {
   beforeEach(() => { server = startServer(0); base = `http://127.0.0.1:${server.address().port}`; });
 
   it("202 + enqueues on async:true with a valid envelope", async () => {
-    const r = await req("POST", "/runs", { sessionId: "run/i1", inputsRef: "/in", resultRef: "/out", async: true });
+    const r = await req("POST", "/runs", { sessionId: "run/i1", item: { item_id: "i1", file: "f", pattern: "p" }, async: true });
     expect(r.status).toBe(202);
-    expect(r.json).toMatchObject({ status: "accepted", sessionId: "run/i1", doneMarker: "/out.status" });
+    expect(r.json).toMatchObject({ status: "accepted", sessionId: "run/i1" });
+    expect(r.json).not.toHaveProperty("doneMarker");
+    expect(r.json).not.toHaveProperty("resultRef");
     expect(enqueue).toHaveBeenCalledOnce();
     server.close();
   });
@@ -45,52 +50,17 @@ describe("async /runs", () => {
     server.close();
   });
 
-  it("status returns done from the marker", async () => {
-    readDoneMarker.mockReturnValue({ status: "done", sessionId: "run/i1", reason: null, ts: "t" });
-    const r = await req("GET", "/runs/status?doneMarker=/work/out.status&sessionId=run/i1");
+  it("status returns queued when no record exists", async () => {
+    const r = await req("GET", "/runs/status?sessionId=run/none");
     expect(r.status).toBe(200);
-    expect(r.json).toMatchObject({ status: "done" });
-    server.close();
-  });
-
-  it("status returns queued when no marker yet", async () => {
-    readDoneMarker.mockReturnValue(null);
-    const r = await req("GET", "/runs/status?doneMarker=/work/out.status&sessionId=run/i1");
     expect(r.json).toMatchObject({ status: "queued" });
     server.close();
   });
 
-  it("status rejects a doneMarker outside the work root (path traversal)", async () => {
-    const r = await req("GET", "/runs/status?doneMarker=/etc/passwd");
-    expect(r.status).toBe(403);
-    expect(readDoneMarker).not.toHaveBeenCalled();
-    server.close();
-  });
-
-  it("status returns awaiting_approval from the gate marker when no terminal marker yet", async () => {
-    readDoneMarker.mockReturnValue(null);
-    mockedReadGate.mockReturnValue({
-      status: "awaiting_approval", sessionId: "run/i1", gateId: 0,
-      gate: { summary: "s", proposed_action: "a" }, ts: "t",
-    });
-    const r = await req("GET", "/runs/status?doneMarker=/work/out.status&gateMarker=/work/out.json.gate");
-    expect(r.status).toBe(200);
-    expect(r.json).toMatchObject({ status: "awaiting_approval", gateId: 0 });
-    server.close();
-  });
-
-  it("status rejects a gateMarker outside the work root (path traversal)", async () => {
-    readDoneMarker.mockReturnValue(null);
-    const r = await req("GET", "/runs/status?doneMarker=/work/out.status&gateMarker=/etc/shadow");
-    expect(r.status).toBe(403);
-    server.close();
-  });
-
-  it("status still returns queued when neither terminal nor gate marker is present", async () => {
-    readDoneMarker.mockReturnValue(null);
-    mockedReadGate.mockReturnValue(null);
-    const r = await req("GET", "/runs/status?doneMarker=/work/out.status&gateMarker=/work/out.json.gate");
-    expect(r.json).toMatchObject({ status: "queued" });
+  it("status returns 400 when sessionId is missing", async () => {
+    const r = await req("GET", "/runs/status");
+    expect(r.status).toBe(400);
+    expect(r.json).toMatchObject({ error: "sessionId_required" });
     server.close();
   });
 });
@@ -101,7 +71,7 @@ describe("deprecated /run-leaf aliases", () => {
 
   it("POST /run-leaf still enqueues async work and warns about deprecation", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const r = await req("POST", "/run-leaf", { sessionId: "run/i1", inputsRef: "/in", resultRef: "/out", async: true });
+    const r = await req("POST", "/run-leaf", { sessionId: "run/i1", item: { item_id: "i1", file: "f", pattern: "p" }, async: true });
     expect(r.status).toBe(202);
     expect(r.json).toMatchObject({ status: "accepted", sessionId: "run/i1" });
     expect(enqueue).toHaveBeenCalledOnce();
@@ -111,12 +81,11 @@ describe("deprecated /run-leaf aliases", () => {
     server.close();
   });
 
-  it("GET /run-leaf/status still reports status and warns about deprecation", async () => {
+  it("GET /run-leaf/status warns about deprecation and returns queued for unknown session", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    readDoneMarker.mockReturnValue({ status: "done", sessionId: "run/i1", reason: null, ts: "t" });
-    const r = await req("GET", "/run-leaf/status?doneMarker=/work/out.status&sessionId=run/i1");
+    const r = await req("GET", "/run-leaf/status?sessionId=run/i1");
     expect(r.status).toBe(200);
-    expect(r.json).toMatchObject({ status: "done" });
+    expect(r.json).toMatchObject({ status: "queued" });
     expect(warn).toHaveBeenCalled();
     expect(warn.mock.calls.map((c) => String(c[0])).join("\n")).toContain("/run-leaf/status");
     warn.mockRestore();
