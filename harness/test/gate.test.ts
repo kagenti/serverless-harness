@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
-  validateDecision, readDecision,
+  validateDecision,
   isGateRequestEntry, isGateDecisionEntry, gateRequestFromEntry, gateDecisionFromEntry,
   GATE_REQUEST_ENTRY_TYPE, GATE_DECISION_ENTRY_TYPE,
 } from "../src/gate";
@@ -26,19 +26,6 @@ describe("validateDecision", () => {
     expect(validateDecision({ gateId: 0, action: "maybe" }).ok).toBe(false);
     expect(validateDecision({ action: "approve" }).ok).toBe(false);
     expect(validateDecision(null).ok).toBe(false);
-  });
-});
-
-describe("readDecision", () => {
-  it("reads and validates a decision file; null on missing/garbled/invalid", () => {
-    const p = join(dir, "d.json");
-    writeFileSync(p, JSON.stringify({ gateId: 0, action: "approve" }));
-    expect(readDecision(p)).toEqual({ gateId: 0, action: "approve", feedback: undefined });
-    expect(readDecision(join(dir, "nope.json"))).toBeNull();
-    writeFileSync(p, "{not json");
-    expect(readDecision(p)).toBeNull();
-    writeFileSync(p, JSON.stringify({ gateId: 0, action: "nope" }));
-    expect(readDecision(p)).toBeNull();
   });
 });
 

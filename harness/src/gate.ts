@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-
 export type GateAction = "approve" | "reject" | "abort";
 
 export interface GateRequest {
@@ -35,16 +33,6 @@ export function validateDecision(
     return { ok: false, error: "feedback must be a string when present" };
   }
   return { ok: true, value: { gateId: o.gateId, action: o.action, feedback: o.feedback as string | undefined } };
-}
-
-/** Read + validate the orchestrator-written decision file. Null on missing/garbled/invalid. */
-export function readDecision(decisionRef: string): Decision | null {
-  try {
-    const r = validateDecision(JSON.parse(readFileSync(decisionRef, "utf8")));
-    return r.ok ? r.value : null;
-  } catch {
-    return null;
-  }
 }
 
 type CustomEntry = { type?: string; customType?: string; data?: unknown };
