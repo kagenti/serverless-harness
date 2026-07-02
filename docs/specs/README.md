@@ -65,6 +65,27 @@ built. Hardening hygiene across these is tracked in
 
 ---
 
+## Two-tier Rearchitecture (`P`-prefix)
+
+The [two-tier FS-free harness epic](https://github.com/kagenti/serverless-harness/issues/49): split
+the fleet into an FS-free **harness** (agent brain — credentials, model loop, network I/O only) and a
+durable **sandbox** (sole filesystem/syscall surface). Started as "run Archetype-A on OpenShift"; the
+OCP RWX pain turned out to be a *symptom* of harness filesystem I/O, not the problem. Distinct from
+the `M`-numbered built harness (Phase 1) and the `Z`-numbered credential plane (Phase 2): this is an
+**architecture** track, dependency-ordered `P1 → P2 → P0′ → P3`.
+
+| ID | Title | Status | Spec / issue |
+|----|-------|--------|--------------|
+| **P1** | **FS-free harness** — leaf envelope + human-gate off the filesystem (inline + Redis); sandbox working set `emptyDir` → agent-sandbox `Sandbox` CR durable PVC | **design ✅** | [`2026-07-02-p1-fs-free-harness-design.md`](2026-07-02-p1-fs-free-harness-design.md) (#45) |
+| **P2** | Shared sandbox pool + routing (`SandboxWarmPool` / `SandboxClaim`, N:M, RWX relocates here) | planned | #46 |
+| **P0′** | OpenShift deployment (threads through P1/P2) | planned | #47 |
+| **P3** | Kata isolation + ratio experiments (deferred) | planned | #48 |
+
+> **Supersedes** the local un-pushed `docs/archetype-a-ocp-support` branch (NFS-RWX-for-harness):
+> after P1 the harness mounts nothing, so the harness never co-mounts `/work`. Reference only.
+
+---
+
 ## Phase 2 — Zero-Trust Credential Plane (`Z`-prefix)
 
 > **Roadmap anchor:** [Leaf-Session Backend Capability Charter](2026-06-26-leaf-session-backend-capability-charter.md) (evidence base: [Pipeline Archetypes & Requirements](2026-06-26-pipeline-archetypes-requirements.md)) tests the design against three independent agentic-pipeline archetypes and **reprioritizes** this track: the harness's core role is a **leaf-session backend for external orchestrators**. **Z1 (per-user identity) defers** until multi-tenant hosting; **Z6 _extras_ defer** — the core clean-context-subagent need (one archetype plans it) is met by a **re-entrant leaf-session contract**, not new machinery. Z3/Z5 stay "keep-light."

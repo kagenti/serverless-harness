@@ -11,6 +11,12 @@ Realizes: [Capability Charter](2026-06-26-leaf-session-backend-capability-charte
 Builds on (reuse, no new design): M2/M3 (sandbox), M4 (Knative scale-to-zero), M5 (checkpoint/resume), M6 (runtime model selection).
 Defers (per charter): Z1 identity, Z3 injector, Z5 egress, Z6 *extras* (the core clean-context-subagent need is met by a **re-entrant contract**, §2.5); human-gates; triggers; real candidate-generation and PoC/exploit stages.
 
+> **Superseded in part by P1 (July 2, 2026).** The **volume envelope** (file-based `inputsRef` /
+> `resultRef` on the `/work` PVC) is replaced by an inline-inputs + inline/Redis-verdict contract in
+> [`2026-07-02-p1-fs-free-harness-design.md`](2026-07-02-p1-fs-free-harness-design.md) §3–§4, so the
+> harness performs no filesystem I/O. The invocation semantics (parameterized, run-to-completion,
+> structured output, workspace isolation, re-entrant resume) are unchanged — only the transport.
+
 > **What this slice is NOT.** It is not the real analysis pipeline. The agentic task is a
 > representative **stub** (flag a pattern in a file) so the slice measures *the contract and the
 > integration seam*, not domain logic. The real candidate-generation and validation stages plug into

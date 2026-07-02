@@ -7,14 +7,13 @@ import { applyFire, dispatchAll, loadConfig, exitCodeFor } from "../src/cron-dis
 describe("applyFire", () => {
   it("substitutes every __FIRE__ occurrence in string fields and passes others through", () => {
     const out = applyFire(
-      { sessionId: "nightly/__FIRE__/i1", resultRef: "/work/nightly/__FIRE__/results/i1.json", inputsRef: "/work/nightly/inputs/i1.json", model: "claude-haiku-4-5" },
+      { sessionId: "nightly/__FIRE__/i1", model: "claude-haiku-4-5", item: { item_id: "i1", file: "risky.py", pattern: "eval(" } },
       "fire-42",
     );
     expect(out).toEqual({
       sessionId: "nightly/fire-42/i1",
-      resultRef: "/work/nightly/fire-42/results/i1.json",
-      inputsRef: "/work/nightly/inputs/i1.json",
       model: "claude-haiku-4-5",
+      item: { item_id: "i1", file: "risky.py", pattern: "eval(" },
     });
   });
   it("does not mutate the input object", () => {
@@ -26,8 +25,8 @@ describe("applyFire", () => {
 
 describe("dispatchAll", () => {
   const ITEMS = [
-    { sessionId: "n/__FIRE__/i1", resultRef: "/work/n/__FIRE__/i1.json" },
-    { sessionId: "n/__FIRE__/i2", resultRef: "/work/n/__FIRE__/i2.json" },
+    { sessionId: "n/__FIRE__/i1", item: { item_id: "i1", file: "risky.py", pattern: "eval(" } },
+    { sessionId: "n/__FIRE__/i2", item: { item_id: "i2", file: "safe.py", pattern: "eval(" } },
   ];
 
   it("posts every item once with async:true and __FIRE__ substituted; all accepted", async () => {
@@ -36,7 +35,7 @@ describe("dispatchAll", () => {
     const r = await dispatchAll(ITEMS, "fire-1", post);
     expect(r).toEqual({ total: 2, accepted: 2, failed: 0 });
     expect(post).toHaveBeenCalledTimes(2);
-    expect(seen[0]).toMatchObject({ sessionId: "n/fire-1/i1", resultRef: "/work/n/fire-1/i1.json", async: true });
+    expect(seen[0]).toMatchObject({ sessionId: "n/fire-1/i1", item: { item_id: "i1", file: "risky.py" }, async: true });
     expect(seen[1]).toMatchObject({ sessionId: "n/fire-1/i2", async: true });
   });
 

@@ -10,7 +10,7 @@ import { getModel, getModels, getProviders, type AssistantMessage } from "@earen
 import { RedisSessionBackend } from "@sh/session-backend";
 import { BufferedRedisBackend } from "./buffered-redis-backend.js";
 import { flushExtension } from "./flush-extension.js";
-import { k8sSandboxExtension } from "@sh/k8s-sandbox";
+import { k8sSandboxExtension, resolveSandboxConfig } from "@sh/k8s-sandbox";
 import { checkpointExtension } from "./checkpoint-extension.js";
 import { budgetVoterExtension, branchSpend } from "./budget-voter.js";
 
@@ -146,9 +146,10 @@ export async function runTurn(
 
   const budgetLimit = Number(process.env.SH_BUDGET_TOKENS);
   const budgetMargin = Number(process.env.SH_BUDGET_MARGIN);
+  const sandboxConfig = await resolveSandboxConfig(process.env, cwd);
   const extensionFactories = [
     flushExtension(backend),
-    k8sSandboxExtension(),
+    k8sSandboxExtension({ config: sandboxConfig }),
     checkpointExtension(store, sessionManager),
   ];
   if (Number.isFinite(budgetLimit) && budgetLimit > 0) {

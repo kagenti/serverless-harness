@@ -38,8 +38,10 @@ spec:
                 value: "redis://redis.default.svc:6379"
               - name: SH_MODEL
                 value: "claude-haiku-4-5"
-              - name: KAGENTI_SANDBOX_POD
+              - name: KAGENTI_SANDBOX_NAME
                 value: "sandbox-0"
+              - name: LEAF_RESULT_TTL_SECONDS
+                value: "86400"
               - name: ANTHROPIC_API_KEY
                 valueFrom: { secretKeyRef: { name: llm-credentials, key: api-key } }
               - name: ANTHROPIC_BASE_URL
@@ -47,14 +49,9 @@ spec:
               - name: ANTHROPIC_AUTH_TOKEN
                 valueFrom: { secretKeyRef: { name: llm-credentials, key: auth-token, optional: true } }
             volumeMounts:
-              - name: work
-                mountPath: /work
               - name: tmp
                 mountPath: /tmp
         volumes:
-          - name: work
-            persistentVolumeClaim:
-              claimName: leaf-work
           - name: tmp
             emptyDir: {}
   pollingInterval: 5

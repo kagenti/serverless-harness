@@ -78,6 +78,9 @@ force_kill_pod() {
   kubectl delete pod -n "$NS" -l "$SELECTOR" --force --grace-period=0 >/dev/null 2>&1 || true
 }
 
+# LEGACY HELPER — retained for leaf-gate-smoke.sh and leaf-cron-smoke.sh (the /work-based
+# gate/cron smokes). The P1 FS-free harness path (leaf-smoke.sh, leaf-async-smoke.sh) no
+# longer calls this; the inline-item envelope needs no /work PVC.
 # Create run dirs on the shared leaf-work PVC via the orchestrator pod, world-writable.
 # The orchestrator runs as root, so a plain `mkdir -p` leaves these 0755 root:root; the
 # non-root harness (uid 65532, readOnlyRootFilesystem) then cannot create result subdirs

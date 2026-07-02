@@ -99,12 +99,29 @@ echo "--- Deploying Redis ---"
 kubectl apply -f "$SCRIPT_DIR/redis.yaml"
 kubectl wait --for=condition=Available deployment/redis -n default --timeout=60s
 
-# 5. Deploy sandbox pod
-echo "--- Deploying sandbox pod ---"
-kubectl apply -f "$SCRIPT_DIR/sandbox.yaml"
-kubectl wait --for=condition=Ready pod/sandbox-0 -n default --timeout=60s
+# 5. Install agent-sandbox controller + CRDs (kubernetes-sigs/agent-sandbox v0.5.0)
+echo "--- Installing agent-sandbox controller ---"
+kubectl apply --server-side -f "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.5.0/manifest.yaml"
+kubectl -n agent-sandbox-system rollout status deploy/agent-sandbox-controller --timeout=180s
+kubectl wait --for=condition=Established crd/sandboxes.agents.x-k8s.io --timeout=120s
 
-# 6. Build and load harness image
+# 6. Deploy durable Sandbox CR
+echo "--- Deploying Sandbox CR ---"
+kubectl apply -f "$SCRIPT_DIR/sandbox.yaml"
+# Wait for the Sandbox controller to publish .status.selector, then wait for the pod
+SEL=""
+for _ in $(seq 1 60); do
+  SEL=$(kubectl -n default get sandbox sandbox-0 -o jsonpath='{.status.selector}' 2>/dev/null || true)
+  [ -n "$SEL" ] && break
+  sleep 2
+done
+[ -n "$SEL" ] && kubectl -n default wait --for=condition=Ready pod -l "$SEL" --timeout=180s || {
+  echo "sandbox pod not ready (selector='$SEL')"
+  kubectl -n default get sandbox sandbox-0 -o yaml | head -40
+  exit 1
+}
+
+# 7. Build and load harness image
 if [ "$SKIP_BUILD" != "true" ]; then
   echo "--- Building serverless-harness image ---"
   docker build --load -t dev.local/serverless-harness:local "$REPO_ROOT"
@@ -112,7 +129,7 @@ if [ "$SKIP_BUILD" != "true" ]; then
   kind load docker-image dev.local/serverless-harness:local --name "$CLUSTER_NAME"
 fi
 
-# 7. Create LLM credentials secret (supports direct API key or gateway bridge)
+# 8. Create LLM credentials secret (supports direct API key or gateway bridge)
 if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
   echo "ERROR: Set ANTHROPIC_API_KEY (direct) or ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL (gateway)"
   exit 1
@@ -123,15 +140,24 @@ SECRET_ARGS=(--from-literal=api-key="${ANTHROPIC_API_KEY:-${ANTHROPIC_AUTH_TOKEN
 kubectl create secret generic llm-credentials "${SECRET_ARGS[@]}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-# 8. Deploy Knative Service
+# 9. Deploy Knative Service
 echo "--- Deploying serverless-harness Knative Service ---"
 kubectl apply -f "$SCRIPT_DIR/service.yaml"
 
-# 9. Wait for service to become ready
+# The image tag (dev.local/serverless-harness:local) is mutable, so re-applying an unchanged
+# service spec does NOT roll a new Revision — Knative would keep serving the previous Revision
+# (pinned to the OLD image digest) and a freshly built image would never be deployed. Force a new
+# Revision by stamping a build marker into the template so the rebuilt image is always picked up.
+if [ "$SKIP_BUILD" != "true" ]; then
+  kubectl -n default patch ksvc serverless-harness --type merge \
+    -p "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"deploy.sh/build-ts\":\"$(date +%s)\"}}}}}"
+fi
+
+# 10. Wait for service to become ready
 echo "--- Waiting for Knative Service to be ready ---"
 kubectl wait ksvc/serverless-harness --for=condition=Ready --timeout=120s
 
-# 10. Print access info
+# 11. Print access info
 KOURIER_IP=$(kubectl get svc kourier -n kourier-system -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "pending")
 echo ""
 echo "=== Setup complete ==="

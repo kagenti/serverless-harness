@@ -5,15 +5,14 @@
 # enforcement, retry/idempotency, coverage audit, scale-to-zero — AND that agent tool
 # execution happens in the SANDBOX pod, not the credentialed harness pod (spec §3).
 #
-# Volume model (spec §5, brain/hands split):
-#   - inputs_ref / result_ref live on the harness-mounted /work PVC (trusted Node fs I/O).
-#   - workspace_ref (the repo) lives ONLY in sandbox-0 at /workspace/<run>/repo; the agent's
-#     read/grep/bash route there via k8sSandboxExtension. The repo is never placed on /work, so
-#     a correct verdict is only possible if the agent read the file in the sandbox.
+# FS-free contract (P1 rearchitecture): inputs and results are exchanged inline via the
+# HTTP request/response body (POST /runs returns verdict JSON directly). No /work PVC is
+# required for the harness or envelope path. The repo still lives ONLY in sandbox-0 at
+# /workspace/<run>/repo; a correct verdict is only possible if the agent read the file
+# in the sandbox.
 #
-# Prereq: setup-kind.sh done (incl. the PVC feature flags + sandbox-0); harness image rebuilt
-#   with the /runs route + sandbox-routed runLeaf; leaf-pvc.yaml + leaf-orchestrator.yaml
-#   applied; service.yaml redeployed with the /work mount.
+# Prereq: setup-kind.sh done (incl. sandbox-0); harness image rebuilt with the /runs
+#   inline-item route + sandbox-routed runLeaf; service.yaml deployed (no /work mount).
 # Usage: LEAF_LIVE_SMOKE=1 bash deploy/knative/leaf-smoke.sh
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -21,63 +20,72 @@ source ./lib.sh   # NS, BASE, HOST_HEADER, ok/ko, wait_for_zero_pods, harness_ru
 
 [ "${LEAF_LIVE_SMOKE:-0}" = "1" ] || { echo "SKIP (set LEAF_LIVE_SMOKE=1)"; exit 0; }
 
-ORCH=leaf-orchestrator
 SBOX="${KAGENTI_SANDBOX_POD:-sandbox-0}"
 RUN="run-$$"
-INPUTS="/work/$RUN/inputs"        # harness PVC (read by harness Node fs)
-RES="/work/$RUN/results"          # harness PVC (written by harness Node fs)
 SBOX_REPO="/workspace/$RUN/repo"  # sandbox-0 only (read by sandbox tools)
 ITEMS="i1 i2 i3"
 MODEL="${SH_MODEL:-claude-haiku-4-5}"
 # expected verdicts given the fixtures (i1=risky.py/eval(→FLAGGED, i2=safe.py/eval(→CLEAR, i3=risky.py/subprocess→CLEAR)
 declare -A EXPECT=( [i1]=FLAGGED [i2]=CLEAR [i3]=CLEAR )
+# item definitions: file + pattern per item_id
+declare -A ITEM_FILE=( [i1]=risky.py  [i2]=safe.py   [i3]=risky.py )
+declare -A ITEM_PAT=(  [i1]="eval("   [i2]="eval("   [i3]="subprocess" )
 
 claim() { echo ""; echo "--- Claim $1: $2 ---"; }
-oexec() { kubectl -n "$NS" exec "$ORCH" -- "$@"; }
 sexec() { kubectl -n "$NS" exec "$SBOX" -- "$@"; }
 
-# dispatch_sid <sessionId> <inputsRef> <resultRef> [model] -> echoes terminal-status JSON
-dispatch_sid() {
-  local sid="$1" in="$2" out="$3" model="${4:-$MODEL}"
+# dispatch_item <sessionId> <item_id> <file> <pattern> [model] -> echoes terminal JSON from /runs
+dispatch_item() {
+  local sid="$1" id="$2" file="$3" pat="$4" model="${5:-$MODEL}"
   local body
-  body=$(jq -nc --arg s "$sid" --arg m "$model" --arg in "$in" --arg out "$out" --arg ws "$SBOX_REPO" \
-    '{sessionId:$s, model:$m, inputsRef:$in, resultRef:$out, workspaceRef:$ws}')
+  body=$(jq -nc --arg s "$sid" --arg m "$model" --arg id "$id" --arg f "$file" --arg p "$pat" --arg ws "$SBOX_REPO" \
+    '{sessionId:$s, model:$m, workspaceRef:$ws, item:{item_id:$id, file:$f, pattern:$p}}')
   curl -s --max-time 240 -H "$HOST_HEADER" -H "Content-Type: application/json" -d "$body" "$BASE/runs"
 }
 
-# dispatch <item_id> [model] [inputs_override] -> echoes terminal-status JSON from /runs
+# dispatch <item_id> [model] -> echoes terminal JSON from /runs
 dispatch() {
-  local id="$1"
-  local model="${2:-$MODEL}" in="${3:-$INPUTS/$id.json}"
-  dispatch_sid "$RUN/$id" "$in" "$RES/$id.json" "$model"
+  local id="$1" model="${2:-$MODEL}"
+  dispatch_item "$RUN/$id" "$id" "${ITEM_FILE[$id]}" "${ITEM_PAT[$id]}" "$model"
+}
+
+# dispatch_sid_item <sessionId> <item_id> [model] -> echoes terminal JSON from /runs (used for resume claim)
+dispatch_sid_item() {
+  local sid="$1" id="$2" model="${3:-$MODEL}"
+  dispatch_item "$sid" "$id" "${ITEM_FILE[$id]}" "${ITEM_PAT[$id]}" "$model"
 }
 
 echo "=== Leaf smoke (run=$RUN, model=$MODEL, sandbox=$SBOX) ==="
 
+# --- Static Claim 0: harness envelope path is FS-free ---
+claim 0 "harness is FS-free (no /work mount, no fs writes in the envelope path)"
+_REPO_ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null || echo "$(dirname "$0")/../..")"
+if grep -rqE 'mountPath:\s*/work|claimName:\s*leaf-work' \
+    "$_REPO_ROOT/deploy/knative/service.yaml" "$_REPO_ROOT/deploy/knative/leaf-scaledjob.yaml"; then
+  echo "FAIL: a /work mount remains in the harness/worker manifests"; exit 1
+fi
+if grep -rqE 'writeFileSync|readFileSync|mkdirSync' \
+    "$_REPO_ROOT/harness/src/run-leaf.ts" "$_REPO_ROOT/harness/src/leaf-job-runner.ts"; then
+  echo "FAIL: filesystem I/O remains in the leaf envelope path"; exit 1
+fi
+ok "no /work mount, no fs I/O in the envelope path"
+
 # --- Setup ---
 ensure_port_forward >/dev/null || true
-kubectl -n "$NS" wait --for=condition=Ready "pod/$ORCH" --timeout=90s >/dev/null
 kubectl -n "$NS" wait --for=condition=Ready "pod/$SBOX" --timeout=90s >/dev/null
-for _ in $(seq 1 30); do oexec sh -c 'command -v jq >/dev/null && command -v curl >/dev/null' && break; sleep 2; done
-# inputs + results dir on the harness PVC (via the orchestrator), world-writable so the
-# non-root harness (uid 65532) can write result_ref — see seed_work_dirs / issue #39.
-seed_work_dirs "$INPUTS" "$RES"
-kubectl -n "$NS" cp ./fixtures/inputs/. "$ORCH:$INPUTS"
 # repo ONLY into the sandbox pod — never onto /work
 sexec mkdir -p "$SBOX_REPO"
 kubectl -n "$NS" cp ./fixtures/repo/. "$SBOX:$SBOX_REPO"
 
-# --- Claim 0: workspace isolation — repo present in sandbox, absent on the harness PVC ---
-claim 0 "Workspace lives in the sandbox, not on the harness volume"
+# --- Claim 1: workspace isolation — repo present in sandbox only ---
+claim 1 "Workspace lives in the sandbox only (FS-free: no /work PVC needed)"
 in_sbox=1; sexec test -f "$SBOX_REPO/risky.py" || in_sbox=0
-on_work=0; oexec test -f "$SBOX_REPO/risky.py" 2>/dev/null && on_work=1   # /work has no /workspace tree
-oexec test -f "/work/$RUN/repo/risky.py" 2>/dev/null && on_work=1
-if [ "$in_sbox" = 1 ] && [ "$on_work" = 0 ]; then ok "repo only in $SBOX:$SBOX_REPO"; else ko "in_sbox=$in_sbox on_work=$on_work"; fi
+if [ "$in_sbox" = 1 ]; then ok "repo present in $SBOX:$SBOX_REPO"; else ko "repo missing from sandbox"; fi
 
 SAMPLE_OUT="$(mktemp)"; SAMPLER_PID="$(start_sampler "$SAMPLE_OUT")"
 
-# --- Claim 1: parallel fan-out ---
-claim 1 "Parallel fan-out: $ITEMS dispatched concurrently"
+# --- Claim 2: parallel fan-out ---
+claim 2 "Parallel fan-out: $ITEMS dispatched concurrently"
 tmpdir="$(mktemp -d)"
 # Collect the dispatch PIDs and wait ONLY on those. A bare `wait` also blocks on the
 # background port-forward started by ensure_port_forward (and the sampler), which never
@@ -95,42 +103,47 @@ MAXPODS=$(sort -n "$SAMPLE_OUT" 2>/dev/null | tail -1); MAXPODS="${MAXPODS:-0}"
 [ "${MAXPODS:-0}" -ge 2 ] && ok "scaled out to $MAXPODS concurrent pods" \
   || echo "  NOTE: observed max $MAXPODS concurrent pods"
 
-# --- Claim 2: structured output + sandbox execution proof (verdicts present, valid, CORRECT) ---
-claim 2 "Verdicts schema-valid AND correct (only possible by reading the sandbox file)"
+# --- Claim 3: structured output + sandbox execution proof (verdicts present, valid, CORRECT) ---
+claim 3 "Verdicts schema-valid AND correct (only possible by reading the sandbox file)"
 verdicts_ok=1
 for id in $ITEMS; do
-  if oexec sh -c "jq -e '.item_id and (.verdict==\"FLAGGED\" or .verdict==\"CLEAR\") and .reason' $RES/$id.json >/dev/null 2>&1"; then
-    v=$(oexec sh -c "jq -r .verdict $RES/$id.json")
+  resp=$(cat "$tmpdir/$id.json" 2>/dev/null || echo "{}")
+  v=$(echo "$resp" | jq -r '.verdict.verdict // empty' 2>/dev/null || echo "")
+  if echo "$resp" | jq -e '.verdict.item_id and (.verdict.verdict=="FLAGGED" or .verdict.verdict=="CLEAR") and .verdict.reason' >/dev/null 2>&1; then
     if [ "$v" = "${EXPECT[$id]}" ]; then echo "    $id verdict=$v (expected ${EXPECT[$id]})"; else echo "    $id verdict=$v WRONG (expected ${EXPECT[$id]})"; verdicts_ok=0; fi
   else
-    verdicts_ok=0; echo "    $id MISSING/invalid verdict"
+    verdicts_ok=0; echo "    $id MISSING/invalid verdict (resp: $(echo "$resp" | jq -c '.verdict // .status // .' 2>/dev/null))"
   fi
 done
 [ "$verdicts_ok" = 1 ] && ok "all verdicts present, schema-valid, and correct" || ko "missing/invalid/incorrect verdicts"
 
-# --- Claim 3: per-call model param drives resolution ---
-claim 3 "Per-call model param drives resolution"
+# --- Claim 4: per-call model param drives resolution ---
+claim 4 "Per-call model param drives resolution"
 bogus=$(dispatch i2 "model-does-not-exist-xyz" | jq -r '.status // "none"')
 good=$(dispatch i2 "$MODEL" | jq -r '.status // "none"')
 if [ "$bogus" = "failed" ] && [ "$good" = "done" ]; then ok "bogus model -> failed, valid model -> done"; else ko "bogus=$bogus good=$good"; fi
 
-# --- Claim 4: failure path returns terminal failed + writes no invalid result_ref ---
-claim 4 "Failure path returns terminal failed + writes no invalid result_ref"
-neg=$(dispatch ineg "$MODEL" "$INPUTS/does-not-exist.json")
-neg_status=$(echo "$neg" | jq -r '.status // "none"'); neg_reason=$(echo "$neg" | jq -r '.reason // "none"')
-if [ "$neg_status" = "failed" ] && ! oexec test -f "$RES/ineg.json"; then ok "failed (reason=$neg_reason), no result_ref written"; else ko "status=$neg_status reason=$neg_reason"; fi
+# --- Claim 5: input-validation path — a malformed envelope (missing item) is rejected with 400 ---
+# In the inline contract an item is self-contained, so a well-formed item always runs (the
+# terminal "failed" path is covered by Claim 4's bogus-model case). The bad-input rejection here
+# is the server's isLeafEnvelope/validateItem guard: a body with no `item` must return HTTP 400.
+claim 5 "Malformed envelope (missing item) is rejected with HTTP 400"
+neg_body=$(jq -nc --arg s "$RUN/ineg" '{sessionId:$s}')
+neg_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -H "$HOST_HEADER" -H "Content-Type: application/json" -d "$neg_body" "$BASE/runs")
+if [ "$neg_code" = "400" ]; then ok "malformed envelope rejected (HTTP 400)"; else ko "expected HTTP 400, got $neg_code"; fi
 
-# --- Claim 5: idempotent re-invoke overwrites result_ref ---
-claim 5 "Idempotent re-invoke overwrites result_ref"
-re=$(dispatch i1 "$MODEL" | jq -r '.status // "none"')
-if [ "$re" = "done" ] && oexec sh -c "jq -e '.verdict' $RES/i1.json >/dev/null 2>&1"; then ok "re-invoke of i1 succeeded and rewrote a valid verdict"; else ko "re-invoke status=$re"; fi
+# --- Claim 6: idempotent re-invoke returns a valid verdict ---
+claim 6 "Idempotent re-invoke returns a valid verdict"
+re_resp=$(dispatch i1 "$MODEL")
+re=$(echo "$re_resp" | jq -r '.status // "none"')
+re_v=$(echo "$re_resp" | jq -r '.verdict.verdict // empty' 2>/dev/null || echo "")
+if [ "$re" = "done" ] && [ -n "$re_v" ]; then ok "re-invoke of i1 succeeded, verdict=$re_v"; else ko "re-invoke status=$re verdict=$re_v"; fi
 
-# --- Claim 6: crash mid-run, resume via M5 durable session, still produce the verdict (§7 gate 7) ---
-claim 6 "Killed mid-run, the session resumes and still produces its verdict"
-RSID="$RUN/i1-resume"; RRES="$RES/i1-resume.json"
-oexec rm -f "$RRES" 2>/dev/null || true
+# --- Claim 7: crash mid-run, resume via M5 durable session, still produce the verdict ---
+claim 7 "Killed mid-run, the session resumes and still produces its verdict"
+RSID="$RUN/i1-resume"
 # dispatch in the background, then kill the harness pod while the request is in flight
-( dispatch_sid "$RSID" "$INPUTS/i1.json" "$RRES" >/dev/null 2>&1 ) & bgpid=$!
+( dispatch_sid_item "$RSID" "i1" >/dev/null 2>&1 ) & bgpid=$!
 sleep 12
 # the harness sanitizes the envelope id (slash -> dash) into the Pi/Redis session id; match it
 RSID_KEY=$(printf '%s' "$RSID" | sed -E 's#[^A-Za-z0-9._-]#-#g; s#^[^A-Za-z0-9]+|[^A-Za-z0-9]+$##g')
@@ -139,16 +152,17 @@ kubectl -n "$NS" exec deploy/redis -- redis-cli EXISTS "session:$RSID_KEY" 2>/de
 force_kill_pod                       # crash the harness pod mid-run
 wait "$bgpid" 2>/dev/null || true    # the in-flight request dies with the pod
 # re-invoke the same sessionId — runLeaf resumes from the durable Redis log
-re_status=$(dispatch_sid "$RSID" "$INPUTS/i1.json" "$RRES" | jq -r '.status // "none"')
-if [ "$re_status" = "done" ] && [ "$sid_persisted" = 1 ] \
-   && oexec sh -c "jq -e '.verdict' $RRES >/dev/null 2>&1"; then
-  ok "persisted mid-run (redis), pod killed, resumed → verdict produced"
+re_resp=$(dispatch_sid_item "$RSID" "i1")
+re_status=$(echo "$re_resp" | jq -r '.status // "none"')
+re_v=$(echo "$re_resp" | jq -r '.verdict.verdict // empty' 2>/dev/null || echo "")
+if [ "$re_status" = "done" ] && [ "$sid_persisted" = 1 ] && [ -n "$re_v" ]; then
+  ok "persisted mid-run (redis), pod killed, resumed → verdict=$re_v produced"
 else
-  ko "resume failed: status=$re_status persisted_in_redis=$sid_persisted"
+  ko "resume failed: status=$re_status persisted_in_redis=$sid_persisted verdict=$re_v"
 fi
 
-# --- Claim 7: scale-to-zero after idle ---
-claim 7 "Service scales to zero when idle"
+# --- Claim 8: scale-to-zero after idle ---
+claim 8 "Service scales to zero when idle"
 stop_sampler "$SAMPLER_PID"
 wait_for_zero_pods 150 && ok "scaled to zero" || ko "did not scale to zero within 150s"
 

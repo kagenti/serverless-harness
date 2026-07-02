@@ -43,7 +43,12 @@ export function loadConfig(path: string): Record<string, unknown>[] {
   return parsed.items as Record<string, unknown>[];
 }
 
-/** Build the real POST function: fetch the in-cluster Knative service; accepted == 202 + {status:"accepted"}. */
+/**
+ * Build the real POST function: fetch the in-cluster Knative service; accepted == 202 + {status:"accepted"}.
+ * Items now carry an inline `item` object (e.g. { item_id, file, pattern }) rather than
+ * `inputsRef`/`resultRef` file-system references. `dispatchAll` is shape-agnostic and
+ * passes whatever the config provides through unchanged (after __FIRE__ substitution).
+ */
 function buildPost(): (env: Record<string, unknown>) => Promise<boolean> {
   const base = process.env.SH_SERVICE_URL ?? "http://serverless-harness.default.svc.cluster.local";
   return async (env) => {

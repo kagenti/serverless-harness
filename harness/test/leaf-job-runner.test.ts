@@ -2,7 +2,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { processOne, type LeafJobDeps } from "../src/leaf-job-runner";
 import type { ClaimedEntry, WorkQueue } from "@sh/work-queue";
-import type { LeafEnvelope, LeafResult } from "../src/run-leaf";
+import type { LeafEnvelope } from "../src/run-leaf";
+import type { RedisLike, LeafResultRecord } from "../src/leaf-result-store";
 
 function fakeQueue(claimed: ClaimedEntry | null): WorkQueue & { acked: string[]; touched: string[] } {
   const acked: string[] = []; const touched: string[] = [];
@@ -19,13 +20,22 @@ function fakeQueue(claimed: ClaimedEntry | null): WorkQueue & { acked: string[];
   };
 }
 
-const ENV: LeafEnvelope = { sessionId: "run/i1", inputsRef: "/in", resultRef: "/out" };
+function fakeStore() {
+  const m = new Map<string, string>();
+  const store: RedisLike = { async set(k, v) { m.set(k, v); }, async get(k) { return m.get(k) ?? null; } };
+  return { store, get: (id: string) => { const r = m.get(`leaf:result:${id}`); return r ? JSON.parse(r) as LeafResultRecord : null; } };
+}
+
+// Inline envelope shape: sessionId "run/i1" → leafSessionId sanitizes slash→dash → "run-i1"
+const ENV: LeafEnvelope = { sessionId: "run/i1", item: { item_id: "i1", file: "f", pattern: "p" } };
+
 function baseDeps(over: Partial<LeafJobDeps>): LeafJobDeps {
-  const markers: Array<{ path: string; status: string; reason: string | null }> = [];
+  const { store } = fakeStore();
   return {
     queue: fakeQueue(null),
-    runLeaf: async () => ({ status: "done", resultRef: "/out" }),
-    writeMarker: (path, m) => { markers.push({ path, status: m.status, reason: m.reason }); (baseDeps as any)._m = markers; },
+    runLeaf: async () => ({ status: "done", verdict: { item_id: "i1", verdict: "CLEAR", reason: "ok" } }),
+    resultStore: store,
+    ttlSeconds: 3600,
     consumerId: "w1",
     now: () => "t",
     setHeartbeat: () => 0,
@@ -42,59 +52,67 @@ describe("processOne", () => {
     expect(q.acked).toEqual([]);
   });
 
-  it("dead-letters (failed marker + ack, runLeaf NOT called) past maxAttempts", async () => {
+  it("dead-letters (failed record + ack, runLeaf NOT called) past maxAttempts", async () => {
     const q = fakeQueue({ entryId: "9-0", envelope: ENV, deliveryCount: 4 });
     const runLeaf = vi.fn();
-    const markers: any[] = [];
-    const r = await processOne(baseDeps({ queue: q, runLeaf: runLeaf as any, maxAttempts: 3, writeMarker: (p, m) => markers.push(m) }));
+    const { store, get } = fakeStore();
+    const r = await processOne(baseDeps({ queue: q, runLeaf: runLeaf as any, maxAttempts: 3, resultStore: store }));
     expect(r).toBe("deadletter");
     expect(runLeaf).not.toHaveBeenCalled();
-    expect(markers[0]).toMatchObject({ status: "failed", reason: "error" });
+    expect(get("run-i1")).toMatchObject({ status: "failed", reason: "error" });
     expect(q.acked).toEqual(["9-0"]);
   });
 
-  it("done → writes done marker and acks", async () => {
+  it("writes a done record and acks", async () => {
     const q = fakeQueue({ entryId: "1-0", envelope: ENV, deliveryCount: 1 });
-    const markers: any[] = [];
-    const r = await processOne(baseDeps({ queue: q, runLeaf: async () => ({ status: "done", resultRef: "/out" }), writeMarker: (p, m) => markers.push(m) }));
-    expect(r).toBe("done");
-    expect(markers[0]).toMatchObject({ status: "done", reason: null });
+    const { store, get } = fakeStore();
+    const outcome = await processOne(baseDeps({
+      queue: q,
+      resultStore: store,
+      runLeaf: async () => ({ status: "done", verdict: { item_id: "i1", verdict: "FLAGGED", reason: "x" } }),
+    }));
+    expect(outcome).toBe("done");
+    expect(get("run-i1")).toMatchObject({ status: "done", sessionId: "run/i1" });
     expect(q.acked).toEqual(["1-0"]);
   });
 
-  it("deterministic failure → failed marker + ack", async () => {
+  it("deterministic failure → failed record + ack", async () => {
     const q = fakeQueue({ entryId: "1-0", envelope: ENV, deliveryCount: 1 });
-    const markers: any[] = [];
-    const r = await processOne(baseDeps({ queue: q, runLeaf: async () => ({ status: "failed", reason: "bad_inputs" }), writeMarker: (p, m) => markers.push(m) }));
+    const { store, get } = fakeStore();
+    const r = await processOne(baseDeps({ queue: q, resultStore: store, runLeaf: async () => ({ status: "failed", reason: "bad_inputs" }) }));
     expect(r).toBe("failed");
-    expect(markers[0]).toMatchObject({ status: "failed", reason: "bad_inputs" });
+    expect(get("run-i1")).toMatchObject({ status: "failed", reason: "bad_inputs" });
     expect(q.acked).toEqual(["1-0"]);
   });
 
-  it("paused → acks, writes no terminal marker, returns paused", async () => {
+  it("paused → acks, writes paused record, returns paused", async () => {
     const q = fakeQueue({ entryId: "1-0", envelope: ENV, deliveryCount: 1 });
-    const markers: any[] = [];
-    const r = await processOne(baseDeps({ queue: q, runLeaf: async () => ({ status: "paused", gateRef: "/out.gate", gateId: 0 }), writeMarker: (p, m) => markers.push(m) }));
+    const { store, get } = fakeStore();
+    const r = await processOne(baseDeps({ queue: q, resultStore: store, runLeaf: async () => ({ status: "paused", gateId: 0, gate: { summary: "s", proposed_action: "a" } }) }));
     expect(r).toBe("paused");
-    expect(markers).toEqual([]); // gate marker is written by runLeaf, not the runner
+    expect(get("run-i1")).toMatchObject({ status: "paused" });
     expect(q.acked).toEqual(["1-0"]);
   });
 
-  it("aborted → writes aborted marker + ack, returns aborted", async () => {
+  it("aborted → writes aborted record + ack, returns aborted", async () => {
     const q = fakeQueue({ entryId: "1-0", envelope: ENV, deliveryCount: 1 });
-    const markers: any[] = [];
-    const r = await processOne(baseDeps({ queue: q, runLeaf: async () => ({ status: "aborted" }), writeMarker: (p, m) => markers.push(m) }));
+    const { store, get } = fakeStore();
+    const r = await processOne(baseDeps({ queue: q, resultStore: store, runLeaf: async () => ({ status: "aborted" }) }));
     expect(r).toBe("aborted");
-    expect(markers[0]).toMatchObject({ status: "aborted", reason: null });
+    expect(get("run-i1")).toMatchObject({ status: "aborted" });
     expect(q.acked).toEqual(["1-0"]);
   });
 
-  it("retryable error → no ack, no marker, returns retry", async () => {
+  it("does not write a record and does not ack on transient error (retry)", async () => {
     const q = fakeQueue({ entryId: "1-0", envelope: ENV, deliveryCount: 1 });
-    const markers: any[] = [];
-    const r = await processOne(baseDeps({ queue: q, runLeaf: async () => ({ status: "failed", reason: "error", message: "x" }), writeMarker: (p, m) => markers.push(m) }));
-    expect(r).toBe("retry");
-    expect(markers).toEqual([]);
+    const { store, get } = fakeStore();
+    const outcome = await processOne(baseDeps({
+      queue: q,
+      resultStore: store,
+      runLeaf: async () => ({ status: "failed", reason: "error" }),
+    }));
+    expect(outcome).toBe("retry");
+    expect(get("run-i1")).toBeNull();
     expect(q.acked).toEqual([]);
   });
 

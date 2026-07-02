@@ -1,17 +1,13 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runTurn, type TurnConfig } from "@sh/harness/run-turn";
-import { runLeaf, type LeafEnvelope } from "@sh/harness/run-leaf";
+import { runLeaf, leafSessionId, validateItem, type LeafEnvelope } from "@sh/harness/run-leaf";
 import { RedisWorkQueue } from "@sh/work-queue";
-import { readDoneMarker, deriveDoneMarkerPath } from "@sh/harness/done-marker";
-import { readGateMarker } from "@sh/harness/gate-marker";
+import { RedisResultStore, toResultRecord, writeResult, readResult } from "@sh/harness/leaf-result-store";
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
-// Status markers live under the orchestrator-owned work root; the status endpoint refuses
-// to read anything outside it (path-traversal guard on the untrusted doneMarker query param).
-const WORK_ROOT = process.env.LEAF_WORK_DIR ?? "/work";
 const JSON_HEADERS = { "Content-Type": "application/json" };
+const RESULT_TTL_SECONDS = parseInt(process.env.LEAF_RESULT_TTL_SECONDS ?? "86400", 10);
 
 function buildConfig(): TurnConfig {
   return {
@@ -70,7 +66,7 @@ async function handleTurn(req: IncomingMessage, res: ServerResponse): Promise<vo
 }
 
 function isLeafEnvelope(o: any): o is LeafEnvelope {
-  return o && typeof o.sessionId === "string" && typeof o.inputsRef === "string" && typeof o.resultRef === "string";
+  return o && typeof o.sessionId === "string" && validateItem(o.item) !== null;
 }
 
 let queue: RedisWorkQueue | undefined;
@@ -79,56 +75,37 @@ function getQueue(): RedisWorkQueue {
   return queue;
 }
 
+let resultStore: RedisResultStore | undefined;
+function getResultStore(): RedisResultStore {
+  if (!resultStore) resultStore = new RedisResultStore(process.env.REDIS_URL);
+  return resultStore;
+}
+
 async function handleEnqueueLeafParsed(body: any, res: ServerResponse): Promise<void> {
   if (!isLeafEnvelope(body)) { res.writeHead(400, JSON_HEADERS).end(JSON.stringify({ error: "envelope_invalid" })); return; }
   const q = getQueue();
   await q.ensureGroup();
   await q.enqueue(body);
-  res.writeHead(202, JSON_HEADERS).end(JSON.stringify({
-    status: "accepted", sessionId: body.sessionId, resultRef: body.resultRef,
-    doneMarker: deriveDoneMarkerPath(body.resultRef, body.doneMarkerRef),
-  }));
+  res.writeHead(202, JSON_HEADERS).end(JSON.stringify({ status: "accepted", sessionId: body.sessionId }));
 }
 
 async function handleRunLeafParsed(body: any, _raw: string, res: ServerResponse): Promise<void> {
   if (!isLeafEnvelope(body)) { res.writeHead(400, JSON_HEADERS).end(JSON.stringify({ error: "envelope_invalid" })); return; }
   const result = await runLeaf(body, buildConfig());
+  await writeResult(getResultStore(), leafSessionId(body), toResultRecord(result, body.sessionId, new Date().toISOString()), RESULT_TTL_SECONDS);
   res.writeHead(200, JSON_HEADERS).end(JSON.stringify(result));
 }
 
-// Confine an untrusted marker path to the work root (path-traversal guard). Returns null if outside.
-function confineToWorkRoot(p: string): string | null {
-  const resolved = resolvePath(p);
-  if (resolved !== WORK_ROOT && !resolved.startsWith(`${WORK_ROOT}/`)) return null;
-  return resolved;
-}
-
-function handleLeafStatus(url: URL, res: ServerResponse): void {
-  const doneMarker = url.searchParams.get("doneMarker");
-  if (!doneMarker) { res.writeHead(400, JSON_HEADERS).end(JSON.stringify({ error: "doneMarker_required" })); return; }
-  const resolved = confineToWorkRoot(doneMarker);
-  if (!resolved) { res.writeHead(403, JSON_HEADERS).end(JSON.stringify({ error: "doneMarker_forbidden" })); return; }
-
-  const marker = readDoneMarker(resolved);
-  if (marker) {
-    res.writeHead(200, JSON_HEADERS).end(JSON.stringify({ status: marker.status, reason: marker.reason ?? undefined }));
-    return;
-  }
-
-  // No terminal marker yet — if a gate marker path is supplied, report awaiting_approval.
-  const gateMarker = url.searchParams.get("gateMarker");
-  if (gateMarker) {
-    const g = confineToWorkRoot(gateMarker);
-    if (!g) { res.writeHead(403, JSON_HEADERS).end(JSON.stringify({ error: "gateMarker_forbidden" })); return; }
-    const gm = readGateMarker(g);
-    if (gm) {
-      res.writeHead(200, JSON_HEADERS).end(JSON.stringify({ status: gm.status, gateId: gm.gateId }));
-      return;
-    }
-  }
-
-  // Best-effort non-terminal state for visibility.
-  res.writeHead(200, JSON_HEADERS).end(JSON.stringify({ status: "queued" }));
+async function handleLeafStatus(url: URL, res: ServerResponse): Promise<void> {
+  const sessionId = url.searchParams.get("sessionId");
+  if (!sessionId) { res.writeHead(400, JSON_HEADERS).end(JSON.stringify({ error: "sessionId_required" })); return; }
+  const tenant = url.searchParams.get("tenant") ?? undefined;
+  const record = await readResult(getResultStore(), leafSessionId({ sessionId, tenant }));
+  if (!record) { res.writeHead(200, JSON_HEADERS).end(JSON.stringify({ status: "queued" })); return; }
+  if (record.status === "done") { res.writeHead(200, JSON_HEADERS).end(JSON.stringify({ status: "done", verdict: record.verdict })); return; }
+  if (record.status === "paused") { res.writeHead(200, JSON_HEADERS).end(JSON.stringify({ status: "paused", gateId: record.gate?.gateId, gate: record.gate })); return; }
+  if (record.status === "failed") { res.writeHead(200, JSON_HEADERS).end(JSON.stringify({ status: "failed", reason: record.reason ?? undefined })); return; }
+  res.writeHead(200, JSON_HEADERS).end(JSON.stringify({ status: record.status }));
 }
 
 // Pre-rename wire paths kept as aliases (issue #37). The public execution route is now the
@@ -158,7 +135,9 @@ function handler(req: IncomingMessage, res: ServerResponse): void {
   // Run-status endpoint: canonical `/runs/status`, plus the deprecated `/run-leaf/status` alias.
   if (req.method === "GET" && (url.startsWith("/runs/status") || url.startsWith("/run-leaf/status"))) {
     if (url.startsWith("/run-leaf/status")) warnDeprecatedRoute("/run-leaf/status");
-    handleLeafStatus(new URL(url, "http://localhost"), res);
+    handleLeafStatus(new URL(url, "http://localhost"), res).catch((err) => {
+      if (!res.headersSent) res.writeHead(500, JSON_HEADERS).end(JSON.stringify({ error: String(err) }));
+    });
     return;
   }
 
