@@ -36,8 +36,10 @@ spec:
               value: "redis://redis.default.svc:6379"
             - name: SH_MODEL
               value: "claude-haiku-4-5"
-            - name: KAGENTI_SANDBOX_POD
+            - name: KAGENTI_SANDBOX_NAME
               value: "sandbox-0"
+            - name: LEAF_RESULT_TTL_SECONDS
+              value: "86400"
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -68,20 +70,10 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "500m"
-          # Shared leaf-session work volume (MVP spec §5). The harness reads inputs_ref /
-          # workspace_ref and writes result_ref under /work. Requires the Knative feature
-          # flags kubernetes.podspec-persistent-volume-claim and
-          # kubernetes.podspec-persistent-volume-write (enabled in config-features).
           volumeMounts:
-            - name: work
-              mountPath: /work
             - name: tmp
               mountPath: /tmp
       volumes:
-        - name: work
-          persistentVolumeClaim:
-            claimName: leaf-work
-            readOnly: false
         - name: tmp
           emptyDir: {}
 ---
@@ -103,6 +95,9 @@ rules:
   - apiGroups: [""]
     resources: ["pods/exec"]
     verbs: ["create"]
+  - apiGroups: ["agents.x-k8s.io"]
+    resources: ["sandboxes"]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
