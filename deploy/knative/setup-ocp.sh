@@ -7,7 +7,7 @@
 #     (OLM Subscription + KnativeServing CR) — not raw upstream manifests.
 #   - Autoscaler tuning + PVC/securityContext feature flags set in the
 #     KnativeServing CR spec (the operator reverts direct ConfigMap patches).
-#   - Redis, sandbox, leaf-work PVC, LLM secret and the harness Knative Service
+#   - Redis, sandbox, LLM secret and the harness Knative Service
 #     via the deploy/knative/overlays/ocp kustomize overlay.
 #   - Sandbox image pre-baked in-cluster against the internal registry (the Kind
 #     `apk add`-as-root pod is blocked by the restricted-v2 SCC).
@@ -63,7 +63,7 @@ usage() {
 Usage: $0 [OPTIONS]
 
 Stand up the serverless-harness stack on OpenShift (4.20+): OpenShift Serverless
-(Knative + Kourier), Redis, the sandbox pod, the leaf-work PVC, the LLM secret,
+(Knative + Kourier), Redis, the sandbox pod, the LLM secret,
 and the harness Knative Service — reachable over its auto-created Route.
 
 Options:
@@ -149,14 +149,15 @@ else
   DOMAIN=""
 fi
 
-# StorageClass preflight — the leaf-work PVC needs a (default) StorageClass to bind.
+# StorageClass preflight — the sandbox's durable /workspace PVC (Sandbox CR
+# volumeClaimTemplates, ReadWriteOnce) needs a (default) StorageClass to bind.
 DEFAULT_SC="$($KUBECTL get storageclass -o jsonpath='{range .items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")]}{.metadata.name}{end}' 2>/dev/null || echo "")"
 if [ -n "$DEFAULT_SC" ]; then
-  log_success "Default StorageClass: $DEFAULT_SC (leaf-work PVC uses ReadWriteOnce; see SMOKE.md for the RWX caveat)"
+  log_success "Default StorageClass: $DEFAULT_SC (sandbox /workspace PVC is ReadWriteOnce)"
 elif [ "$($KUBECTL get storageclass --no-headers 2>/dev/null | wc -l | tr -d ' ')" != "0" ]; then
-  log_warn "No default StorageClass; leaf-work PVC may stay Pending unless one is set."
+  log_warn "No default StorageClass; the sandbox /workspace PVC may stay Pending unless one is set."
 else
-  log_error "No StorageClass found — the leaf-work PVC cannot bind. Install a storage provisioner first."
+  log_error "No StorageClass found — the sandbox /workspace PVC cannot bind. Install a storage provisioner first."
   $DRY_RUN || exit 1
 fi
 
@@ -356,10 +357,6 @@ fi
 # 4. LLM credentials secret
 # ============================================================================
 echo
-if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
-  log_error "Set ANTHROPIC_API_KEY (direct) or ANTHROPIC_AUTH_TOKEN [+ ANTHROPIC_BASE_URL] (gateway)"
-  exit 1
-fi
 create_secret() {
   local args=(--from-literal=api-key="${ANTHROPIC_API_KEY:-${ANTHROPIC_AUTH_TOKEN:-}}")
   [ -n "${ANTHROPIC_BASE_URL:-}" ]   && args+=(--from-literal=base-url="$ANTHROPIC_BASE_URL")
@@ -367,11 +364,19 @@ create_secret() {
   $KUBECTL create secret generic llm-credentials -n "$NAMESPACE" "${args[@]}" \
     --dry-run=client -o yaml | $KUBECTL apply -f -
 }
-if $DRY_RUN; then
-  log_info "[dry-run] would create/update secret llm-credentials in $NAMESPACE (values redacted)"
+if [ -n "${ANTHROPIC_API_KEY:-}" ] || [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
+  if $DRY_RUN; then
+    log_info "[dry-run] would create/update secret llm-credentials in $NAMESPACE (values redacted)"
+  else
+    create_secret >/dev/null
+    log_success "Secret llm-credentials ready (from environment)"
+  fi
+elif $KUBECTL get secret llm-credentials -n "$NAMESPACE" &>/dev/null; then
+  log_success "Secret llm-credentials already present in $NAMESPACE — using it"
 else
-  create_secret >/dev/null
-  log_success "Secret llm-credentials ready"
+  log_error "No ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN in env and no llm-credentials secret in $NAMESPACE."
+  log_error "Provide one, or pre-create: oc create secret generic llm-credentials -n $NAMESPACE --from-literal=api-key=..."
+  $DRY_RUN || exit 1
 fi
 
 # ============================================================================
@@ -389,6 +394,36 @@ if [ "$KUBECTL" = "oc" ]; then
   run_cmd oc adm policy add-scc-to-user nonroot-v2 -z serverless-harness -n "$NAMESPACE"
 else
   log_warn "kubectl in use — cannot grant SCC; run: oc adm policy add-scc-to-user nonroot-v2 -z serverless-harness -n $NAMESPACE"
+fi
+log_info "Ensuring sandbox ServiceAccount + nonroot-v2 SCC (serverless-harness-sandbox) in $NAMESPACE"
+$KUBECTL create serviceaccount serverless-harness-sandbox -n "$NAMESPACE" \
+  --dry-run=client -o yaml | apply_stdin >/dev/null
+if [ "$KUBECTL" = "oc" ]; then
+  run_cmd oc adm policy add-scc-to-user nonroot-v2 -z serverless-harness-sandbox -n "$NAMESPACE"
+else
+  log_warn "kubectl in use — cannot grant SCC; run: oc adm policy add-scc-to-user nonroot-v2 -z serverless-harness-sandbox -n $NAMESPACE"
+fi
+
+# ============================================================================
+# 5b. agent-sandbox controller (Sandbox CRD) — kubernetes-sigs v0.5.0
+# ============================================================================
+# The harness resolves + execs into the sandbox pod; the pod is created by this
+# controller from the Sandbox CR (applied via the overlay below). Mirrors
+# setup-kind.sh step 5.
+echo
+if $KUBECTL get crd sandboxes.agents.x-k8s.io &>/dev/null; then
+  log_success "agent-sandbox CRD already present — skipping controller install"
+else
+  log_info "Installing agent-sandbox controller (kubernetes-sigs v0.5.0)"
+  run_cmd $KUBECTL apply --server-side -f \
+    "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.5.0/manifest.yaml"
+  wait_for_crd sandboxes.agents.x-k8s.io 180
+fi
+if ! $DRY_RUN; then
+  $KUBECTL -n agent-sandbox-system rollout status deploy/agent-sandbox-controller --timeout=180s \
+    >"$LOG_DIR/agent-sandbox-rollout.log" 2>&1 \
+    && log_success "agent-sandbox controller ready" \
+    || log_warn "agent-sandbox controller not ready yet (see $LOG_DIR/agent-sandbox-rollout.log)"
 fi
 
 # ============================================================================
@@ -417,6 +452,30 @@ else
   render_overlay | $KUBECTL apply -f - >"$LOG_DIR/overlay-apply.log" 2>&1 \
     && log_success "Overlay applied (log: $LOG_DIR/overlay-apply.log)" \
     || { log_error "Overlay apply failed — see $LOG_DIR/overlay-apply.log"; cat "$LOG_DIR/overlay-apply.log"; exit 1; }
+fi
+
+# ============================================================================
+# 6b. Wait for the Sandbox pod (controller publishes .status.selector first)
+# ============================================================================
+echo
+if ! $DRY_RUN; then
+  log_info "Waiting for Sandbox sandbox-0 .status.selector, then pod Ready (up to ~2m)..."
+  SEL=""
+  for _ in $(seq 1 60); do
+    SEL="$($KUBECTL -n "$NAMESPACE" get sandbox sandbox-0 -o jsonpath='{.status.selector}' 2>/dev/null || true)"
+    [ -n "$SEL" ] && break
+    sleep 2
+  done
+  if [ -n "$SEL" ]; then
+    $KUBECTL -n "$NAMESPACE" wait --for=condition=Ready pod -l "$SEL" --timeout=180s \
+      >"$LOG_DIR/sandbox-wait.log" 2>&1 \
+      && log_success "Sandbox pod Ready" \
+      || { log_error "Sandbox pod not Ready (see $LOG_DIR/sandbox-wait.log)"; \
+           $KUBECTL -n "$NAMESPACE" get pod sandbox-0 -o wide 2>/dev/null || true; exit 1; }
+  else
+    log_error "Sandbox sandbox-0 never published .status.selector — is the controller running?"
+    exit 1
+  fi
 fi
 
 # ============================================================================
