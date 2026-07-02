@@ -221,9 +221,18 @@ the pod from a **label selector**, authoritatively, from the CR's own status:
 - Resolution: read `Sandbox/<name>` `.status.selector` (the CRD documents it as *"the label selector
   for pods"*), then `kubectl get pod -l <selector> -o jsonpath='{.items[0].metadata.name}'` → pod
   name → the existing `kubectl exec` path is otherwise unchanged.
-- The resolved name is **cached** and **invalidated on exec failure**, so a sandbox pod restart (new
-  pod, same selector) is picked up transparently. This is the same resolve-N-from-a-selector shape
-  P2's pool needs, built once here.
+- **When** it resolves: once **per leaf-session**, at extension init. The k8s-sandbox extension
+  factory is synchronous, so the pod name is resolved in the async `runLeaf`/`runTurn` setup and the
+  concrete name is handed to the extension (`k8sSandboxExtension({ config })`). A leaf's exec calls
+  reuse that resolved name for the session's lifetime. A sandbox pod restart is picked up on the
+  **next invocation/retry** (a leaf whose sandbox dies mid-run fails and is retried, re-resolving) —
+  sufficient at P1's single-sandbox granularity, since the durable PVC means the restarted pod holds
+  the same working set. This avoids parsing kubectl errors to distinguish a stale-pod failure from a
+  normal non-zero command exit. It is the same resolve-from-a-selector shape P2's pool will reuse.
+- `.status.selector` is assumed to be a **string** label selector (the k8s scale-subresource
+  convention, matching the CRD's "label selector for pods" wording). If the deployed CRD serializes
+  it as a `LabelSelector` object, only the one jsonpath needs adjusting — the live Kind smoke
+  verifies the real shape.
 
 ### 6.3 Carried scope decisions
 
