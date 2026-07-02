@@ -1,32 +1,23 @@
 import { describe, it, expect } from "vitest";
 import { classifyOutcome } from "../src/classify-outcome";
+import type { LeafResult } from "../src/run-leaf";
 
 describe("classifyOutcome", () => {
-  it("done → ack + done marker", () => {
-    expect(classifyOutcome({ status: "done", resultRef: "/out" })).toEqual({
-      ack: true, marker: { status: "done", reason: null }, retryable: false,
-    });
+  it("acks a done result (non-retryable)", () => {
+    expect(classifyOutcome({ status: "done", verdict: { item_id: "i", verdict: "CLEAR", reason: "r" } }))
+      .toEqual({ ack: true, retryable: false });
   });
-  for (const reason of ["bad_inputs", "no_verdict", "invalid_verdict"] as const) {
-    it(`failed:${reason} → ack + failed marker (deterministic)`, () => {
-      expect(classifyOutcome({ status: "failed", reason })).toEqual({
-        ack: true, marker: { status: "failed", reason }, retryable: false,
-      });
-    });
-  }
-  it("failed:error → no ack, retryable, no marker (yet)", () => {
-    expect(classifyOutcome({ status: "failed", reason: "error", message: "boom" })).toEqual({
-      ack: false, marker: null, retryable: true,
-    });
+  it("acks a paused result (resume is a fresh invocation)", () => {
+    expect(classifyOutcome({ status: "paused", gateId: 1, gate: { summary: "s", proposed_action: "a" } }))
+      .toEqual({ ack: true, retryable: false });
   });
-  it("paused → ack, no terminal marker (runLeaf wrote the gate marker)", () => {
-    expect(classifyOutcome({ status: "paused", gateRef: "/out.gate", gateId: 0 })).toEqual({
-      ack: true, marker: null, retryable: false,
-    });
+  it("acks an aborted result", () => {
+    expect(classifyOutcome({ status: "aborted" })).toEqual({ ack: true, retryable: false });
   });
-  it("aborted → ack + aborted terminal marker", () => {
-    expect(classifyOutcome({ status: "aborted" })).toEqual({
-      ack: true, marker: { status: "aborted", reason: null }, retryable: false,
-    });
+  it("acks a deterministic failure", () => {
+    expect(classifyOutcome({ status: "failed", reason: "no_verdict" })).toEqual({ ack: true, retryable: false });
+  });
+  it("retries a transient error without acking", () => {
+    expect(classifyOutcome({ status: "failed", reason: "error" })).toEqual({ ack: false, retryable: true });
   });
 });

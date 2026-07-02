@@ -1,13 +1,14 @@
 // harness/src/leaf-job-runner.ts
 import type { WorkQueue } from "@sh/work-queue";
 import { classifyOutcome } from "./classify-outcome.js";
-import { deriveDoneMarkerPath, writeDoneMarker, type DoneMarker } from "./done-marker.js";
-import type { LeafEnvelope, LeafResult } from "./run-leaf.js";
+import { leafSessionId, type LeafEnvelope, type LeafResult } from "./run-leaf.js";
+import { toResultRecord, writeResult, type RedisLike } from "./leaf-result-store.js";
 
 export interface LeafJobDeps {
   queue: WorkQueue;
   runLeaf: (env: LeafEnvelope) => Promise<LeafResult>;
-  writeMarker?: (path: string, m: DoneMarker) => void;
+  resultStore: RedisLike;
+  ttlSeconds: number;
   consumerId: string;
   maxAttempts?: number;
   minIdleMs?: number;
@@ -19,12 +20,12 @@ export interface LeafJobDeps {
 }
 
 /**
- * Claim and process at most one queue entry. Returns a label describing the outcome.
+ * Claim and process at most one queue entry.
  * - "idle": nothing to claim.
- * - "deadletter": delivery count exceeded → failed marker + ack, runLeaf not run.
- * - "done"/"failed"/"paused"/"aborted": runLeaf reached this terminal/parked state → ack (a
- *   terminal marker for done/failed/aborted; the gate marker for paused is written by runLeaf).
- * - "retry": transient error → NOT acked (entry stays pending for reclaim).
+ * - "deadletter": delivery count exceeded → failed result record + ack, runLeaf not run.
+ * - "done"/"failed"/"paused"/"aborted": runLeaf reached this terminal/parked state → write the
+ *   result record + ack.
+ * - "retry": transient error → NO record, NOT acked (entry stays pending for reclaim).
  */
 export async function processOne(
   deps: LeafJobDeps,
@@ -33,7 +34,6 @@ export async function processOne(
   const minIdleMs = deps.minIdleMs ?? 90_000;
   const blockMs = deps.blockMs ?? 5_000;
   const heartbeatMs = deps.heartbeatMs ?? 30_000;
-  const writeMarker = deps.writeMarker ?? writeDoneMarker;
   const now = deps.now ?? (() => new Date().toISOString());
   const setHb = deps.setHeartbeat ?? ((fn, ms) => setInterval(fn, ms));
   const clearHb = deps.clearHeartbeat ?? ((h) => clearInterval(h as ReturnType<typeof setInterval>));
@@ -42,10 +42,11 @@ export async function processOne(
   if (!claimed) return "idle";
 
   const env = claimed.envelope as LeafEnvelope;
-  const markerPath = deriveDoneMarkerPath(env.resultRef, env.doneMarkerRef);
+  const sid = leafSessionId(env);
 
   if (claimed.deliveryCount > maxAttempts) {
-    writeMarker(markerPath, { status: "failed", sessionId: env.sessionId, reason: "error", ts: now() });
+    await writeResult(deps.resultStore, sid,
+      toResultRecord({ status: "failed", reason: "error" }, env.sessionId, now()), deps.ttlSeconds);
     await deps.queue.ack(claimed.entryId);
     return "deadletter";
   }
@@ -59,12 +60,12 @@ export async function processOne(
   }
 
   const outcome = classifyOutcome(result);
-  if (outcome.marker) {
-    writeMarker(markerPath, { status: outcome.marker.status, sessionId: env.sessionId, reason: outcome.marker.reason, ts: now() });
-  }
+  if (outcome.retryable) return "retry";
+
+  await writeResult(deps.resultStore, sid, toResultRecord(result, env.sessionId, now()), deps.ttlSeconds);
   if (outcome.ack) {
     await deps.queue.ack(claimed.entryId);
-    return result.status; // done | failed | paused | aborted — accurate label for log/metrics
+    return result.status;
   }
   return "retry";
 }
