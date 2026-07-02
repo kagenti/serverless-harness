@@ -48,6 +48,9 @@ importers:
       '@sh/work-queue':
         specifier: workspace:*
         version: link:../packages/work-queue
+      redis:
+        specifier: ^6.0.0
+        version: 6.0.0
     devDependencies:
       tsx:
         specifier: ^4.19.0

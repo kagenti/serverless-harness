@@ -20,7 +20,8 @@
     "@sh/k8s-sandbox": "workspace:*",
     "@sh/work-queue": "workspace:*",
     "@earendil-works/pi-ai": "link:../pi-fork/packages/ai",
-    "@earendil-works/pi-coding-agent": "link:../pi-fork/packages/coding-agent"
+    "@earendil-works/pi-coding-agent": "link:../pi-fork/packages/coding-agent",
+    "redis": "^6.0.0"
   },
   "devDependencies": {
     "tsx": "^4.19.0",
