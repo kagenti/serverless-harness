@@ -106,8 +106,9 @@ export type ProduceVerdict = (
 ) => Promise<void>;
 
 export function validateItem(o: unknown): LeafItem | null {
-  const x = o as Record<string, unknown> | null;
-  if (x && typeof x.item_id === "string" && typeof x.file === "string" && typeof x.pattern === "string") {
+  if (typeof o !== "object" || o === null) return null;
+  const x = o as Record<string, unknown>;
+  if (typeof x.item_id === "string" && typeof x.file === "string" && typeof x.pattern === "string") {
     return { item_id: x.item_id, file: x.file, pattern: x.pattern, require_approval: x.require_approval === true };
   }
   return null;

@@ -56,7 +56,7 @@ describe("runLeaf", () => {
 
   it("fails with invalid_verdict when the captured verdict is off-shape", async () => {
     const env = { sessionId: "run/i1", item: { item_id: "i1", file: "f", pattern: "p" } };
-    const r = await runLeaf(env, undefined, { produceVerdict: async (_i, _e, _c, cap) => { cap.verdict = { item_id: "" } as any; } });
+    const r = await runLeaf(env, undefined, { produceVerdict: async (_i, _e, _c, cap) => { cap.verdict = { item_id: "i1", verdict: "MAYBE", reason: "x" } as any; } });
     expect(r.status).toBe("failed");
     if (r.status === "failed") expect(r.reason).toBe("invalid_verdict");
   });
