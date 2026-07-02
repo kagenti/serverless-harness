@@ -14,6 +14,13 @@ Substrate: **KEDA `ScaledJob` consuming a Redis Streams work queue.** Single-ten
 > nor the human-gate (Archetype B); the substrate is designed not to preclude them (§7), but they are
 > not built here. The synchronous `POST /runs` is unchanged.
 
+> **Superseded in part by P1 (July 2, 2026).** The **done-marker + `result_ref` file** on the shared
+> `/work` PVC is replaced by a single **Redis result record** (`leaf:result:<sessionId>`) read via
+> `GET /runs/status?sessionId=…`, in
+> [`2026-07-02-p1-fs-free-harness-design.md`](2026-07-02-p1-fs-free-harness-design.md) §3.4–§4. The
+> KEDA `ScaledJob` + Redis Streams queue and the claim/ack/retry/dead-letter mechanics are unchanged;
+> only the verdict/marker transport moves off the filesystem.
+
 ---
 
 ## 1. Goal & motivation
