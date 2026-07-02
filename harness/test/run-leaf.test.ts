@@ -1,19 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, readFileSync as rf, readFileSync, rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { runLeaf, buildLeafPrompt, leafSessionId, type LeafEnvelope } from "../src/run-leaf";
+import { describe, it, expect } from "vitest";
+import { runLeaf, buildLeafPrompt, leafSessionId, validateItem } from "../src/run-leaf";
 
-let dir: string;
-beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "leaf-")); });
-afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
-
-function envelope(): LeafEnvelope {
-  const inputsRef = join(dir, "in.json");
-  const resultRef = join(dir, "out.json");
-  writeFileSync(inputsRef, JSON.stringify({ item_id: "i1", file: "a.py", pattern: "eval(" }));
-  return { sessionId: "run/i1", inputsRef, resultRef };
-}
+describe("validateItem", () => {
+  it("accepts a well-formed item", () => {
+    expect(validateItem({ item_id: "i", file: "f", pattern: "p" })).toEqual({ item_id: "i", file: "f", pattern: "p", require_approval: false });
+  });
+  it("rejects a missing field and non-objects", () => {
+    expect(validateItem({ item_id: "i", file: "f" })).toBeNull();
+    expect(validateItem(null)).toBeNull();
+  });
+});
 
 describe("buildLeafPrompt", () => {
   it("includes the file, pattern, and submit_verdict instruction", () => {
@@ -25,50 +21,52 @@ describe("buildLeafPrompt", () => {
 });
 
 describe("runLeaf", () => {
-  it("writes the validated verdict to result_ref and returns done", async () => {
-    const env = envelope();
-    const produceVerdict = async (_i, _e, _c, capture) => {
-      capture.verdict = { item_id: "i1", verdict: "FLAGGED", reason: "found eval" };
-    };
-    const res = await runLeaf(env, undefined, { produceVerdict });
-    expect(res).toEqual({ status: "done", resultRef: env.resultRef });
-    expect(JSON.parse(readFileSync(env.resultRef, "utf8"))).toEqual({
-      item_id: "i1", verdict: "FLAGGED", reason: "found eval",
+  it("fails with bad_inputs when item is missing", async () => {
+    const r = await runLeaf({ sessionId: "s" } as any, undefined, { produceVerdict: async () => {} });
+    expect(r).toEqual({ status: "failed", reason: "bad_inputs" });
+  });
+
+  it("returns the verdict inline on success", async () => {
+    const env = { sessionId: "run/i1", item: { item_id: "i1", file: "f", pattern: "p" } };
+    const r = await runLeaf(env, undefined, {
+      produceVerdict: async (_i, _e, _c, cap) => { cap.verdict = { item_id: "i1", verdict: "FLAGGED", reason: "x" }; },
     });
+    expect(r).toEqual({ status: "done", verdict: { item_id: "i1", verdict: "FLAGGED", reason: "x" } });
   });
 
-  it("returns failed:no_verdict and writes nothing when the agent submits none", async () => {
-    const env = envelope();
-    const produceVerdict = async () => { /* never captures */ };
-    const res = await runLeaf(env, undefined, { produceVerdict });
-    expect(res).toEqual({ status: "failed", reason: "no_verdict" });
-    expect(existsSync(env.resultRef)).toBe(false);
+  it("returns the gate inline when paused", async () => {
+    const env = { sessionId: "run/i1", item: { item_id: "i1", file: "f", pattern: "p", require_approval: true } };
+    const r = await runLeaf(env, undefined, {
+      produceVerdict: async (_i, _e, _c, cap) => { cap.gate = { gateId: 2, summary: "s", proposed_action: "a" }; },
+    });
+    expect(r).toEqual({ status: "paused", gateId: 2, gate: { summary: "s", proposed_action: "a" } });
   });
 
-  it("returns failed:bad_inputs when inputs_ref is missing/invalid", async () => {
-    const env = { ...envelope(), inputsRef: join(dir, "nope.json") };
-    const res = await runLeaf(env, undefined, { produceVerdict: async () => {} });
-    expect(res.status).toBe("failed");
-    if (res.status === "failed") expect(res.reason).toBe("bad_inputs");
+  it("returns aborted when the capture is aborted", async () => {
+    const env = { sessionId: "run/i1", item: { item_id: "i1", file: "f", pattern: "p" } };
+    const r = await runLeaf(env, undefined, { produceVerdict: async (_i, _e, _c, cap) => { cap.aborted = true; } });
+    expect(r).toEqual({ status: "aborted" });
   });
 
-  it("returns failed:invalid_verdict and writes nothing when verdict label is off-schema", async () => {
-    const env = envelope();
-    const produceVerdict = async (_i, _e, _c, capture) => {
-      capture.verdict = { item_id: "i1", verdict: "MAYBE", reason: "x" };
-    };
-    const res = await runLeaf(env, undefined, { produceVerdict });
-    expect(res).toMatchObject({ status: "failed", reason: "invalid_verdict" });
-    expect(existsSync(env.resultRef)).toBe(false);
+  it("fails with no_verdict when nothing is captured", async () => {
+    const env = { sessionId: "run/i1", item: { item_id: "i1", file: "f", pattern: "p" } };
+    const r = await runLeaf(env, undefined, { produceVerdict: async () => {} });
+    expect(r).toEqual({ status: "failed", reason: "no_verdict" });
   });
 
-  it("returns failed:error and writes nothing when produceVerdict throws", async () => {
-    const env = envelope();
+  it("fails with invalid_verdict when the captured verdict is off-shape", async () => {
+    const env = { sessionId: "run/i1", item: { item_id: "i1", file: "f", pattern: "p" } };
+    const r = await runLeaf(env, undefined, { produceVerdict: async (_i, _e, _c, cap) => { cap.verdict = { item_id: "" } as any; } });
+    expect(r.status).toBe("failed");
+    if (r.status === "failed") expect(r.reason).toBe("invalid_verdict");
+  });
+
+  it("returns failed:error when produceVerdict throws", async () => {
+    const env = { sessionId: "run/i1", item: { item_id: "i1", file: "f", pattern: "p" } };
     const produceVerdict = async () => { throw new Error("boom"); };
-    const res = await runLeaf(env, undefined, { produceVerdict });
-    expect(res.status).toBe("failed");
-    if (res.status === "failed") expect(res.reason).toBe("error");
-    expect(existsSync(env.resultRef)).toBe(false);
+    const r = await runLeaf(env, undefined, { produceVerdict });
+    expect(r.status).toBe("failed");
+    if (r.status === "failed") expect(r.reason).toBe("error");
   });
 });
 
@@ -81,47 +79,12 @@ describe("leafSessionId", () => {
   });
 });
 
-describe("runLeaf gate outcomes", () => {
-  it("capture.gate → writes the awaiting_approval gate marker and returns paused", async () => {
-    const env = envelope();
-    const produceVerdict = async (_i, _e, _c, capture) => {
-      capture.gate = { gateId: 0, summary: "did X", proposed_action: "do Y" };
-    };
-    const res = await runLeaf(env, undefined, { produceVerdict });
-    expect(res).toEqual({ status: "paused", gateRef: `${env.resultRef}.gate`, gateId: 0 });
-    expect(existsSync(env.resultRef)).toBe(false); // no verdict written
-    const m = JSON.parse(rf(`${env.resultRef}.gate`, "utf8"));
-    expect(m).toMatchObject({ status: "awaiting_approval", gateId: 0, gate: { summary: "did X", proposed_action: "do Y" } });
-  });
-
-  it("capture.aborted → returns aborted, writes no verdict and no gate marker", async () => {
-    const env = envelope();
-    const produceVerdict = async (_i, _e, _c, capture) => { capture.aborted = true; };
-    const res = await runLeaf(env, undefined, { produceVerdict });
-    expect(res).toEqual({ status: "aborted" });
-    expect(existsSync(env.resultRef)).toBe(false);
-    expect(existsSync(`${env.resultRef}.gate`)).toBe(false);
-  });
-
-  it("honors an explicit gateRef override", async () => {
-    const env = { ...envelope(), gateRef: join(dir, "custom.gate") };
-    const produceVerdict = async (_i, _e, _c, capture) => {
-      capture.gate = { gateId: 1, summary: "s", proposed_action: "a" };
-    };
-    const res = await runLeaf(env, undefined, { produceVerdict });
-    expect(res).toEqual({ status: "paused", gateRef: env.gateRef, gateId: 1 });
-    expect(existsSync(env.gateRef)).toBe(true);
-  });
-});
-
 describe("buildLeafPrompt with require_approval", () => {
   it("adds a request_approval instruction when the item requires approval", () => {
     const p = buildLeafPrompt({ item_id: "i1", file: "a.py", pattern: "eval(", require_approval: true });
     expect(p).toContain("request_approval");
   });
   it("withholds the submit_verdict instruction in the gated turn (verdict comes after approval)", () => {
-    // Steering the agent to request_approval ONLY; leaving the submit_verdict instruction in would
-    // let the model skip the gate and submit a verdict directly.
     const p = buildLeafPrompt({ item_id: "i1", file: "a.py", pattern: "eval(", require_approval: true });
     expect(p).not.toContain("submit_verdict");
   });

@@ -1,5 +1,3 @@
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -16,9 +14,8 @@ import { flushExtension } from "./flush-extension.js";
 import { checkpointExtension } from "./checkpoint-extension.js";
 import { submitVerdictExtension, VERDICT_ENTRY_TYPE, type VerdictCapture } from "./submit-verdict-tool.js";
 import { validateVerdict, type Verdict } from "./verdict.js";
-import { deriveGateRef, writeGateMarker } from "./gate-marker.js";
 import type { GateCapture } from "./request-approval-tool.js";
-import { computeGateState, decideSeed, readDecision, GATE_DECISION_ENTRY_TYPE } from "./gate.js";
+import { computeGateState, decideSeed, validateDecision, type Decision, GATE_DECISION_ENTRY_TYPE } from "./gate.js";
 import { requestApprovalExtension } from "./request-approval-tool.js";
 
 /**
@@ -49,17 +46,14 @@ export interface LeafItem { item_id: string; file: string; pattern: string; requ
 
 export interface LeafEnvelope {
   sessionId: string;
+  item: LeafItem;             // inputs inline (was inputsRef)
+  decision?: Decision;        // resume/approve only (was decisionRef)
   model?: string;
   provider?: string;
-  inputsRef: string;
-  resultRef: string;
-  workspaceRef?: string;
+  workspaceRef?: string;      // absolute path INSIDE the sandbox pod (harness never opens it)
   maxTurns?: number;
   async?: boolean;            // when true, the HTTP layer enqueues instead of running inline
-  doneMarkerRef?: string;     // overrides the derived <resultRef>.status
-  tenant?: string;            // namespaces the session id (non-precluding; design §7)
-  gateRef?: string;           // overrides the derived <resultRef>.gate marker path (design §2.4)
-  decisionRef?: string;       // present on a resume invocation; the decision file to apply (design §2.3)
+  tenant?: string;            // namespaces the session id
 }
 
 /** The Pi/Redis session id for a leaf: tenant-prefixed (if any), then sanitized. */
@@ -68,8 +62,8 @@ export function leafSessionId(env: { sessionId: string; tenant?: string }): stri
 }
 
 export type LeafResult =
-  | { status: "done"; resultRef: string }
-  | { status: "paused"; gateRef: string; gateId: number }
+  | { status: "done"; verdict: Verdict }
+  | { status: "paused"; gateId: number; gate: { summary: string; proposed_action: string } }
   | { status: "aborted" }
   | { status: "failed"; reason: "no_verdict" | "invalid_verdict" | "bad_inputs" | "error"; message?: string };
 
@@ -111,16 +105,12 @@ export type ProduceVerdict = (
   capture: LeafCapture,
 ) => Promise<void>;
 
-function readItem(inputsRef: string): LeafItem | null {
-  try {
-    const o = JSON.parse(readFileSync(inputsRef, "utf8"));
-    if (o && typeof o.item_id === "string" && typeof o.file === "string" && typeof o.pattern === "string") {
-      return { item_id: o.item_id, file: o.file, pattern: o.pattern, require_approval: o.require_approval === true };
-    }
-    return null;
-  } catch {
-    return null;
+export function validateItem(o: unknown): LeafItem | null {
+  const x = o as Record<string, unknown> | null;
+  if (x && typeof x.item_id === "string" && typeof x.file === "string" && typeof x.pattern === "string") {
+    return { item_id: x.item_id, file: x.file, pattern: x.pattern, require_approval: x.require_approval === true };
   }
+  return null;
 }
 
 export async function runLeaf(
@@ -128,7 +118,7 @@ export async function runLeaf(
   config?: TurnConfig,
   deps?: { produceVerdict?: ProduceVerdict },
 ): Promise<LeafResult> {
-  const item = readItem(env.inputsRef);
+  const item = validateItem(env.item);
   if (!item) return { status: "failed", reason: "bad_inputs" };
 
   const capture: LeafCapture = {};
@@ -142,24 +132,17 @@ export async function runLeaf(
   // Gate outcomes take precedence over verdict handling.
   if (capture.aborted) return { status: "aborted" };
   if (capture.gate) {
-    const gateRef = deriveGateRef(env.resultRef, env.gateRef);
-    writeGateMarker(gateRef, {
-      status: "awaiting_approval",
-      sessionId: env.sessionId,
+    return {
+      status: "paused",
       gateId: capture.gate.gateId,
       gate: { summary: capture.gate.summary, proposed_action: capture.gate.proposed_action },
-      ts: new Date().toISOString(),
-    });
-    return { status: "paused", gateRef, gateId: capture.gate.gateId };
+    };
   }
 
   if (!capture.verdict) return { status: "failed", reason: "no_verdict" };
   const v = validateVerdict(capture.verdict);
   if (!v.ok) return { status: "failed", reason: "invalid_verdict", message: v.error };
-
-  mkdirSync(dirname(env.resultRef), { recursive: true }); // ensure the (possibly fire-stamped) parent dir exists
-  writeFileSync(env.resultRef, JSON.stringify(v.value));
-  return { status: "done", resultRef: env.resultRef };
+  return { status: "done", verdict: v.value };
 }
 
 // Real Pi session runner — mirrors harness/src/run-turn.ts session setup, made resumable
@@ -212,7 +195,8 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
 
   // Gate front-end (design §3): decide whether to pause, abort, or seed a prompt.
   const gateState = computeGateState(prior.map((p) => p.entry));
-  const decision = env.decisionRef ? readDecision(env.decisionRef) : null;
+  const dv = env.decision ? validateDecision(env.decision) : null;
+  const decision = dv && dv.ok ? dv.value : null;
   const seed = decideSeed(gateState, decision, buildLeafPrompt(item, env.workspaceRef));
 
   if (seed.kind === "abort") {
