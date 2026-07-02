@@ -42,7 +42,7 @@ adispatch() {
 poll_status() {
   local sid="$1" i=0 resp status
   while [ "$i" -lt 60 ]; do
-    resp=$(curl -s -H "$HOST_HEADER" "$BASE/runs/status?sessionId=$(jq -rn --arg s "$sid" '$s|@uri')")
+    resp=$(curl -s --max-time 10 -H "$HOST_HEADER" "$BASE/runs/status?sessionId=$(jq -rn --arg s "$sid" '$s|@uri')")
     status=$(echo "$resp" | jq -r '.status')
     case "$status" in done|failed|aborted) echo "$resp"; return 0;; esac
     i=$((i+1)); sleep 2
@@ -56,11 +56,14 @@ kubectl -n "$NS" wait --for=condition=Ready "pod/$SBOX" --timeout=90s >/dev/null
 kubectl -n "$NS" exec "$SBOX" -- mkdir -p "$SBOX_REPO"
 kubectl -n "$NS" cp ./fixtures/repo/. "$SBOX:$SBOX_REPO"
 
-# Claim 1: async accept (fast 202)
+# Claim 1: async accept (fast 202); capture sessionIds for Claim 3 polling
 claim 1 "Async accept: 202 + handle, returns fast"
 acc_ok=1
+declare -A ASYNC_SID=()
 for id in $ITEMS; do
-  st=$(adispatch "$id" | jq -r '.status // "none"'); echo "    $id -> $st"
+  resp1=$(adispatch "$id")
+  st=$(echo "$resp1" | jq -r '.status // "none"'); echo "    $id -> $st"
+  ASYNC_SID[$id]=$(echo "$resp1" | jq -r '.sessionId // empty')
   [ "$st" = "accepted" ] || acc_ok=0
 done
 [ "$acc_ok" = 1 ] && ok "all accepted" || ko "not all accepted"
@@ -71,12 +74,11 @@ maxp=0
 for _ in $(seq 1 24); do p=$(leaf_job_pods); [ "$p" -gt "$maxp" ] && maxp=$p; [ "$p" -ge 2 ] && break; sleep 5; done
 [ "$maxp" -ge 2 ] && ok "observed $maxp concurrent leaf-job pods" || echo "  NOTE: observed max $maxp (cap/scheduling may serialize)"
 
-# Claim 3: completion via Redis status poll + correct verdicts
+# Claim 3: completion via Redis status poll + correct verdicts (polls Claim 1 sessions)
 claim 3 "Completion via /runs/status poll; verdicts correct"
 cov_ok=1
 for id in $ITEMS; do
-  sid=$(adispatch "$id" | jq -r '.sessionId // empty')
-  final=$(poll_status "${sid:-$RUN/$id}")
+  final=$(poll_status "${ASYNC_SID[$id]:-$RUN/$id}")
   got=$(echo "$final" | jq -r '.status // "none"')
   v=$(echo "$final" | jq -r '.verdict.verdict // empty' 2>/dev/null || echo "")
   if [ "$got" = "done" ] && [ "$v" = "${EXPECT[$id]}" ]; then echo "    $id done verdict=$v"; else echo "    $id status=$got verdict=$v (want ${EXPECT[$id]})"; cov_ok=0; fi
@@ -116,7 +118,7 @@ for _ in $(seq 1 36); do [ "$(leaf_job_pods)" = "0" ] && { zero=1; break; }; sle
 claim 6 "Bad item_id → failed status, no verdict"
 neg_accept=$(adispatch_item "$RUN/ineg" "ineg" "does-not-exist.py" "eval(")
 neg_sid=$(echo "$neg_accept" | jq -r '.sessionId // empty')
-neg_final=$(poll_status "${neg_sid:-$RUN/ineg}" || echo "$resp")
+neg_final=$(poll_status "${neg_sid:-$RUN/ineg}" || true)
 neg_status=$(echo "$neg_final" | jq -r '.status // "none"')
 neg_reason=$(echo "$neg_final" | jq -r '.reason // "none"')
 if [ "$neg_status" = "failed" ]; then ok "failed (reason=$neg_reason), no verdict"; else ko "status=$neg_status reason=$neg_reason"; fi
