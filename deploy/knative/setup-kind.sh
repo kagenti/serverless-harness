@@ -110,7 +110,7 @@ echo "--- Deploying Sandbox CR ---"
 kubectl apply -f "$SCRIPT_DIR/sandbox.yaml"
 # Wait for the Sandbox controller to publish .status.selector, then wait for the pod
 SEL=""
-for i in $(seq 1 60); do
+for _ in $(seq 1 60); do
   SEL=$(kubectl -n default get sandbox sandbox-0 -o jsonpath='{.status.selector}' 2>/dev/null || true)
   [ -n "$SEL" ] && break
   sleep 2
