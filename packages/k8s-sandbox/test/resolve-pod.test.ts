@@ -4,10 +4,13 @@ import { buildSelectorArgs, buildPodNameArgs, resolveSandboxConfig } from "../sr
 describe("arg builders", () => {
   it("builds selector args with jsonpath and optional context", () => {
     expect(buildSelectorArgs("sandbox-0", "default")).toEqual(["get", "sandbox", "sandbox-0", "-n", "default", "-o", "jsonpath={.status.selector}"]);
-    expect(buildSelectorArgs("s", "ns", "kind-x")).toContain("--context");
+    expect(buildSelectorArgs("s", "ns", "kind-x")).toEqual(["get", "sandbox", "s", "-n", "ns", "--context", "kind-x", "-o", "jsonpath={.status.selector}"]);
   });
   it("builds pod-name args filtered to Running", () => {
     expect(buildPodNameArgs("app=sandbox", "default")).toEqual(["get", "pod", "-n", "default", "-l", "app=sandbox", "--field-selector=status.phase=Running", "-o", "jsonpath={.items[0].metadata.name}"]);
+  });
+  it("builds pod-name args with context", () => {
+    expect(buildPodNameArgs("app=sandbox", "ns", "kind-x")).toEqual(["get", "pod", "-n", "ns", "-l", "app=sandbox", "--field-selector=status.phase=Running", "--context", "kind-x", "-o", "jsonpath={.items[0].metadata.name}"]);
   });
 });
 
@@ -31,5 +34,9 @@ describe("resolveSandboxConfig", () => {
   });
   it("throws when the Sandbox has no selector yet", async () => {
     await expect(resolveSandboxConfig({ KAGENTI_SANDBOX_NAME: "s" }, "/head", async () => "")).rejects.toThrow(/selector/);
+  });
+  it("throws when no Running pod matches the selector", async () => {
+    const run = async (args: string[]) => (args[1] === "sandbox" ? "app=sandbox" : "");
+    await expect(resolveSandboxConfig({ KAGENTI_SANDBOX_NAME: "s" }, "/head", run)).rejects.toThrow(/no Running pod/);
   });
 });
