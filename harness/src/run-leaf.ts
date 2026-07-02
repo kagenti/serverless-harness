@@ -7,7 +7,7 @@ import {
   type FileEntry,
 } from "@earendil-works/pi-coding-agent";
 import { RedisSessionBackend } from "@sh/session-backend";
-import { k8sSandboxExtension } from "@sh/k8s-sandbox";
+import { k8sSandboxExtension, resolveSandboxConfig } from "@sh/k8s-sandbox";
 import { resolveModelSelection, requireModel, applyModelGateway, type TurnConfig } from "./run-turn.js";
 import { BufferedRedisBackend } from "./buffered-redis-backend.js";
 import { flushExtension } from "./flush-extension.js";
@@ -224,6 +224,7 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
 
   const agentDir = getAgentDir();
   const settingsManager = SettingsManager.create(cwd, agentDir);
+  const sandboxConfig = await resolveSandboxConfig(process.env, cwd);
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir,
@@ -231,7 +232,7 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
     extensionFactories: [
       ...(allowVerdict ? [submitVerdictExtension(capture, sessionManager)] : []),
       requestApprovalExtension(capture, sessionManager, gateState.nextGateId),
-      k8sSandboxExtension(),
+      k8sSandboxExtension({ config: sandboxConfig }),
       flushExtension(backend),
       checkpointExtension(store, sessionManager),
     ],
