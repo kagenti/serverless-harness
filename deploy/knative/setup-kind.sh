@@ -144,6 +144,15 @@ kubectl create secret generic llm-credentials "${SECRET_ARGS[@]}" \
 echo "--- Deploying serverless-harness Knative Service ---"
 kubectl apply -f "$SCRIPT_DIR/service.yaml"
 
+# The image tag (dev.local/serverless-harness:local) is mutable, so re-applying an unchanged
+# service spec does NOT roll a new Revision — Knative would keep serving the previous Revision
+# (pinned to the OLD image digest) and a freshly built image would never be deployed. Force a new
+# Revision by stamping a build marker into the template so the rebuilt image is always picked up.
+if [ "$SKIP_BUILD" != "true" ]; then
+  kubectl -n default patch ksvc serverless-harness --type merge \
+    -p "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"deploy.sh/build-ts\":\"$(date +%s)\"}}}}}"
+fi
+
 # 10. Wait for service to become ready
 echo "--- Waiting for Knative Service to be ready ---"
 kubectl wait ksvc/serverless-harness --for=condition=Ready --timeout=120s

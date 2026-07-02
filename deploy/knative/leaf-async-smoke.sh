@@ -114,14 +114,14 @@ zero=0
 for _ in $(seq 1 36); do [ "$(leaf_job_pods)" = "0" ] && { zero=1; break; }; sleep 5; done
 [ "$zero" = 1 ] && ok "leaf-worker scaled to zero" || ko "leaf-job pods still running"
 
-# Claim 6: deterministic failure → failed status, no verdict
-claim 6 "Bad item_id → failed status, no verdict"
-neg_accept=$(adispatch_item "$RUN/ineg" "ineg" "does-not-exist.py" "eval(")
-neg_sid=$(echo "$neg_accept" | jq -r '.sessionId // empty')
-neg_final=$(poll_status "${neg_sid:-$RUN/ineg}" || true)
-neg_status=$(echo "$neg_final" | jq -r '.status // "none"')
-neg_reason=$(echo "$neg_final" | jq -r '.reason // "none"')
-if [ "$neg_status" = "failed" ]; then ok "failed (reason=$neg_reason), no verdict"; else ko "status=$neg_status reason=$neg_reason"; fi
+# Claim 6: input-validation path — a malformed async envelope (missing item) is rejected with 400.
+# In the inline contract a well-formed item always runs, so the async enqueue endpoint's
+# isLeafEnvelope/validateItem guard is the bad-input surface: no `item` must return HTTP 400
+# (not a 202 accept). The terminal "failed" verdict path itself is covered by the sync smoke.
+claim 6 "Malformed async envelope (missing item) is rejected with HTTP 400"
+neg_body=$(jq -nc --arg s "$RUN/ineg" '{sessionId:$s, async:true}')
+neg_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -H "$HOST_HEADER" -H "Content-Type: application/json" -d "$neg_body" "$BASE/runs")
+if [ "$neg_code" = "400" ]; then ok "malformed async envelope rejected (HTTP 400)"; else ko "expected HTTP 400, got $neg_code"; fi
 
 echo ""; echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ "$FAIL" -gt 0 ]; then echo "ASYNC SMOKE FAIL"; exit 1; else echo "ASYNC SMOKE PASS"; exit 0; fi

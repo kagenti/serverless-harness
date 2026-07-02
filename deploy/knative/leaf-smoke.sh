@@ -123,11 +123,14 @@ bogus=$(dispatch i2 "model-does-not-exist-xyz" | jq -r '.status // "none"')
 good=$(dispatch i2 "$MODEL" | jq -r '.status // "none"')
 if [ "$bogus" = "failed" ] && [ "$good" = "done" ]; then ok "bogus model -> failed, valid model -> done"; else ko "bogus=$bogus good=$good"; fi
 
-# --- Claim 5: failure path — bad item (unknown item_id) returns terminal failed ---
-claim 5 "Failure path returns terminal failed for an unrecognised item_id"
-neg=$(dispatch_item "$RUN/ineg" "ineg" "does-not-exist.py" "eval(" "$MODEL")
-neg_status=$(echo "$neg" | jq -r '.status // "none"'); neg_reason=$(echo "$neg" | jq -r '.reason // "none"')
-if [ "$neg_status" = "failed" ]; then ok "failed (reason=$neg_reason)"; else ko "status=$neg_status reason=$neg_reason"; fi
+# --- Claim 5: input-validation path — a malformed envelope (missing item) is rejected with 400 ---
+# In the inline contract an item is self-contained, so a well-formed item always runs (the
+# terminal "failed" path is covered by Claim 4's bogus-model case). The bad-input rejection here
+# is the server's isLeafEnvelope/validateItem guard: a body with no `item` must return HTTP 400.
+claim 5 "Malformed envelope (missing item) is rejected with HTTP 400"
+neg_body=$(jq -nc --arg s "$RUN/ineg" '{sessionId:$s}')
+neg_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -H "$HOST_HEADER" -H "Content-Type: application/json" -d "$neg_body" "$BASE/runs")
+if [ "$neg_code" = "400" ]; then ok "malformed envelope rejected (HTTP 400)"; else ko "expected HTTP 400, got $neg_code"; fi
 
 # --- Claim 6: idempotent re-invoke returns a valid verdict ---
 claim 6 "Idempotent re-invoke returns a valid verdict"
