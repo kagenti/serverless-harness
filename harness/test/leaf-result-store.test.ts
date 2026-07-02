@@ -1,0 +1,59 @@
+import { describe, it, expect } from "vitest";
+import {
+  resultKey, toResultRecord, writeResult, readResult, type RedisLike, type LeafResultRecord,
+} from "../src/leaf-result-store";
+import type { LeafResult } from "../src/run-leaf";
+
+function fakeRedis(): RedisLike & { store: Map<string, string>; ttl: Map<string, number> } {
+  const store = new Map<string, string>();
+  const ttl = new Map<string, number>();
+  return {
+    store, ttl,
+    async set(key, value, opts) { store.set(key, value); if (opts?.EX) ttl.set(key, opts.EX); },
+    async get(key) { return store.get(key) ?? null; },
+  };
+}
+
+describe("resultKey", () => {
+  it("namespaces by leaf session id", () => {
+    expect(resultKey("run-1-i1")).toBe("leaf:result:run-1-i1");
+  });
+});
+
+describe("toResultRecord", () => {
+  it("maps done → verdict-bearing record", () => {
+    const r: LeafResult = { status: "done", verdict: { item_id: "i1", verdict: "FLAGGED", reason: "x" } };
+    expect(toResultRecord(r, "run-1/i1", "T")).toEqual({
+      status: "done", verdict: { item_id: "i1", verdict: "FLAGGED", reason: "x" },
+      gate: null, reason: null, sessionId: "run-1/i1", ts: "T",
+    });
+  });
+  it("maps paused → gate-bearing record", () => {
+    const r: LeafResult = { status: "paused", gateId: 1, gate: { summary: "s", proposed_action: "a" } };
+    expect(toResultRecord(r, "run-1/i1", "T")).toMatchObject({
+      status: "paused", gate: { gateId: 1, summary: "s", proposed_action: "a" }, verdict: null,
+    });
+  });
+  it("maps failed → reason-bearing record", () => {
+    const r: LeafResult = { status: "failed", reason: "no_verdict" };
+    expect(toResultRecord(r, "s", "T")).toMatchObject({ status: "failed", reason: "no_verdict" });
+  });
+});
+
+describe("writeResult / readResult", () => {
+  it("round-trips a record and sets the TTL", async () => {
+    const redis = fakeRedis();
+    const rec: LeafResultRecord = { status: "done", verdict: { item_id: "i1", verdict: "CLEAR", reason: "ok" }, gate: null, reason: null, sessionId: "run-1/i1", ts: "T" };
+    await writeResult(redis, "run-1-i1", rec, 3600);
+    expect(redis.ttl.get("leaf:result:run-1-i1")).toBe(3600);
+    expect(await readResult(redis, "run-1-i1")).toEqual(rec);
+  });
+  it("returns null for a missing key", async () => {
+    expect(await readResult(fakeRedis(), "nope")).toBeNull();
+  });
+  it("returns null for a garbled value", async () => {
+    const redis = fakeRedis();
+    await redis.set("leaf:result:x", "{not json", {});
+    expect(await readResult(redis, "x")).toBeNull();
+  });
+});
