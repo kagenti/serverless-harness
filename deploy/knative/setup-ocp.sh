@@ -9,8 +9,9 @@
 #     KnativeServing CR spec (the operator reverts direct ConfigMap patches).
 #   - Redis, sandbox, LLM secret and the harness Knative Service
 #     via the deploy/knative/overlays/ocp kustomize overlay.
-#   - Sandbox image pre-baked in-cluster against the internal registry (the Kind
-#     `apk add`-as-root pod is blocked by the restricted-v2 SCC).
+#   - Sandbox image pulled pre-baked from GHCR (built by build.yaml, symmetric with
+#     the harness image; the Kind `apk add`-as-root pod is blocked by the
+#     restricted-v2 SCC, so tools are baked in at build time — see sandbox.Dockerfile).
 #   - Ingress via the auto-created OpenShift Route (no Kourier port-forward).
 #
 # Base bring-up: KEDA (async leaf) is opt-in via --with-keda; the optional Redis
@@ -33,8 +34,7 @@ OVERLAY_DIR="$SCRIPT_DIR/overlays/ocp"
 DRY_RUN=false
 NAMESPACE="default"
 HARNESS_IMAGE="ghcr.io/kagenti/serverless-harness:latest"
-SANDBOX_IMAGE=""            # computed from namespace unless overridden
-SKIP_SANDBOX_BUILD=false
+SANDBOX_IMAGE="ghcr.io/kagenti/serverless-harness-sandbox:latest"  # pre-baked, pulled from GHCR
 SKIP_KEDA=true             # base bring-up: async leaf / KEDA is opt-in (--with-keda)
 SERVERLESS_CHANNEL="stable"
 KEDA_CHANNEL="stable"
@@ -69,9 +69,7 @@ and the harness Knative Service — reachable over its auto-created Route.
 Options:
   --namespace <ns>        Target namespace (default: ${NAMESPACE})
   --image <ref>           Harness image (default: ${HARNESS_IMAGE})
-  --sandbox-image <ref>   Use an existing sandbox image instead of building one
-                          in-cluster (implies --skip-sandbox-build)
-  --skip-sandbox-build    Do not build the sandbox image (image must already exist)
+  --sandbox-image <ref>   Sandbox image to pull (default: ${SANDBOX_IMAGE})
   --serverless-channel <c> OpenShift Serverless subscription channel (default: ${SERVERLESS_CHANNEL})
   --with-keda             Install KEDA (Red Hat Custom Metrics Autoscaler Operator)
                           for the async-leaf ScaledJob path (default: off)
@@ -86,7 +84,7 @@ Environment:
   LOG_DIR                 Where build logs are written (default: ${LOG_DIR})
 
 Examples:
-  $0                                   # default namespace, GHCR image, build sandbox
+  $0                                   # default namespace, GHCR harness + sandbox images
   $0 --namespace serverless-harness    # dedicated namespace
   $0 --image ghcr.io/kagenti/serverless-harness:v1.2.3 --dry-run
 EOF
@@ -99,8 +97,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --namespace)         NAMESPACE="$2"; shift 2 ;;
     --image)             HARNESS_IMAGE="$2"; shift 2 ;;
-    --sandbox-image)     SANDBOX_IMAGE="$2"; SKIP_SANDBOX_BUILD=true; shift 2 ;;
-    --skip-sandbox-build) SKIP_SANDBOX_BUILD=true; shift ;;
+    --sandbox-image)     SANDBOX_IMAGE="$2"; shift 2 ;;
     --serverless-channel) SERVERLESS_CHANNEL="$2"; shift 2 ;;
     --with-keda)         SKIP_KEDA=false; shift ;;
     --keda-channel)      KEDA_CHANNEL="$2"; shift 2 ;;
@@ -110,11 +107,6 @@ while [[ $# -gt 0 ]]; do
     *) log_error "Unknown option: $1"; echo; usage; exit 1 ;;
   esac
 done
-
-# Default sandbox image = the in-cluster internal-registry pullspec for this namespace.
-if [ -z "$SANDBOX_IMAGE" ]; then
-  SANDBOX_IMAGE="image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/serverless-harness-sandbox:latest"
-fi
 
 mkdir -p "$LOG_DIR"
 
@@ -163,7 +155,7 @@ fi
 
 echo
 log_info "Target: namespace=$NAMESPACE  harness=$HARNESS_IMAGE"
-log_info "        sandbox=$SANDBOX_IMAGE  build-sandbox=$([ "$SKIP_SANDBOX_BUILD" = true ] && echo no || echo yes)"
+log_info "        sandbox=$SANDBOX_IMAGE"
 
 # ----------------------------------------------------------------------------
 # Namespace
@@ -327,34 +319,7 @@ EOF
 fi
 
 # ============================================================================
-# 3. Sandbox image — pre-baked, built in-cluster against the internal registry
-# ============================================================================
-echo
-if [ "$SKIP_SANDBOX_BUILD" = true ]; then
-  log_info "Skipping sandbox build; using $SANDBOX_IMAGE"
-else
-  log_info "Building sandbox image in-cluster → $SANDBOX_IMAGE"
-  if ! $KUBECTL get buildconfig serverless-harness-sandbox -n "$NAMESPACE" &>/dev/null; then
-    run_cmd $KUBECTL -n "$NAMESPACE" new-build --name serverless-harness-sandbox \
-      --binary --strategy=docker
-  fi
-  if $DRY_RUN; then
-    echo "  [dry-run] oc start-build serverless-harness-sandbox --from-dir <staged Dockerfile> --follow"
-  else
-    BUILD_CTX="$(mktemp -d)"
-    cp "$SCRIPT_DIR/sandbox.Dockerfile" "$BUILD_CTX/Dockerfile"
-    if $KUBECTL -n "$NAMESPACE" start-build serverless-harness-sandbox \
-         --from-dir="$BUILD_CTX" --follow >"$LOG_DIR/sandbox-build.log" 2>&1; then
-      log_success "Sandbox image built (log: $LOG_DIR/sandbox-build.log)"
-    else
-      log_error "Sandbox build failed — see $LOG_DIR/sandbox-build.log"; rm -rf "$BUILD_CTX"; exit 1
-    fi
-    rm -rf "$BUILD_CTX"
-  fi
-fi
-
-# ============================================================================
-# 4. LLM credentials secret
+# 3. LLM credentials secret
 # ============================================================================
 echo
 create_secret() {
@@ -380,7 +345,7 @@ else
 fi
 
 # ============================================================================
-# 5. Grant the harness ServiceAccount an SCC that permits its non-root UID.
+# 4. Grant the harness ServiceAccount an SCC that permits its non-root UID.
 # ============================================================================
 # The published harness image declares no USER, so it defaults to root. We run it
 # as an explicit non-root UID (65532, from the base manifest) rather than relying
@@ -405,7 +370,7 @@ else
 fi
 
 # ============================================================================
-# 5b. agent-sandbox controller (Sandbox CRD) — kubernetes-sigs v0.5.0
+# 5. agent-sandbox controller (Sandbox CRD) — kubernetes-sigs v0.5.0
 # ============================================================================
 # The harness resolves + execs into the sandbox pod; the pod is created by this
 # controller from the Sandbox CR (applied via the overlay below). Mirrors
@@ -439,7 +404,7 @@ render_overlay() {
   $KUBECTL kustomize --load-restrictor LoadRestrictionsNone "$OVERLAY_DIR" \
     | sed \
         -e "s#ghcr.io/kagenti/serverless-harness:latest#${HARNESS_IMAGE}#g" \
-        -e "s#image-registry.openshift-image-registry.svc:5000/default/serverless-harness-sandbox:latest#${SANDBOX_IMAGE}#g" \
+        -e "s#ghcr.io/kagenti/serverless-harness-sandbox:latest#${SANDBOX_IMAGE}#g" \
     | if [ "$NAMESPACE" != "default" ]; then
         sed -e "s#namespace: default#namespace: ${NAMESPACE}#g" \
             -e "s#redis.default.svc#redis.${NAMESPACE}.svc#g"
