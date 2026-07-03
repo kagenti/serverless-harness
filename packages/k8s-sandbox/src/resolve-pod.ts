@@ -19,7 +19,7 @@ export function buildPodNameArgs(selector: string, namespace: string, context?: 
 
 export type RunKubectl = (args: string[]) => Promise<string>;
 
-const defaultRun: RunKubectl = (args) =>
+export const defaultRunKubectl: RunKubectl = (args) =>
   new Promise((resolve, reject) => {
     const child = spawn("kubectl", args, { stdio: ["ignore", "pipe", "pipe"] });
     const out: Buffer[] = [];
@@ -45,7 +45,7 @@ const defaultRun: RunKubectl = (args) =>
 export async function resolveSandboxConfig(
   env: NodeJS.ProcessEnv,
   headCwd: string,
-  run: RunKubectl = defaultRun,
+  run: RunKubectl = defaultRunKubectl,
 ): Promise<K8sSandboxConfig | null> {
   const direct = resolveConfig(env, headCwd);
   if (direct) return direct;
