@@ -66,7 +66,7 @@ creates a real Route per Knative Service (`oc get ksvc serverless-harness -o jso
 | Knative Serving (+ Kourier) | **Red Hat OpenShift Serverless Operator** (OLM Subscription in `openshift-serverless`) + a `KnativeServing` CR in `knative-serving`. Kourier is bundled. |
 | Knative config | Autoscaler tuning + the `podspec-persistent-volume-claim`/`-write`/`-securitycontext` feature flags are set in the **`KnativeServing` CR spec** (the operator reverts direct `config-*` ConfigMap patches). |
 | Redis | Lightweight in-repo Deployment (`redis:7-alpine`), runs under `restricted-v2`. |
-| Sandbox | Pre-baked image ([`sandbox.Dockerfile`](sandbox.Dockerfile), `USER 65532`), built in-cluster against the internal registry (or supplied via `--sandbox-image`). |
+| Sandbox | Pre-baked image ([`sandbox.Dockerfile`](sandbox.Dockerfile), `USER 65532`), pulled from GHCR (`ghcr.io/kagenti/serverless-harness-sandbox:latest`, republished by `build.yaml` on every push to `main`; override with `--sandbox-image`). |
 | Sandbox `/workspace` PVC | `ReadWriteOnce` (Sandbox CR `volumeClaimTemplates`), cluster-default StorageClass. |
 | Harness | Knative Service applied via the [`overlays/ocp`](overlays/ocp) kustomize overlay; SA granted the `nonroot-v2` SCC. |
 | Ingress | Auto-created OpenShift Route. |
@@ -79,8 +79,7 @@ are kustomize patches, not forked YAMLs.
 ```
 --namespace <ns>         Target namespace (default: default)
 --image <ref>            Harness image (default: ghcr.io/kagenti/serverless-harness:latest)
---sandbox-image <ref>    Use an existing sandbox image (implies --skip-sandbox-build)
---skip-sandbox-build     Do not build the sandbox image in-cluster
+--sandbox-image <ref>    Sandbox image to pull (default: ghcr.io/kagenti/serverless-harness-sandbox:latest)
 --serverless-channel <c> OpenShift Serverless subscription channel (default: stable)
 --with-keda              Install KEDA (Custom Metrics Autoscaler Operator) for async leaf
 --keda-channel <c>       Custom Metrics Autoscaler channel (default: stable)
@@ -161,10 +160,17 @@ and verifying the async-leaf path itself on OpenShift is a further step.
 
 ## Image delivery
 
-- **Default:** pull the published `ghcr.io/kagenti/serverless-harness` image; pin a
+Both images default to the published GHCR builds. `build.yaml` republishes
+`ghcr.io/kagenti/serverless-harness` **and**
+`ghcr.io/kagenti/serverless-harness-sandbox` (from [`sandbox.Dockerfile`](sandbox.Dockerfile))
+on every push to `main`, so OpenShift pulls them directly — no in-cluster build step.
+
+- **Harness:** pull the published `ghcr.io/kagenti/serverless-harness` image; pin a
   tag with `--image ghcr.io/kagenti/serverless-harness:<tag>`.
-- **Build from source in-cluster** (no external registry) against the OpenShift
-  internal registry:
+- **Sandbox:** pull the published `ghcr.io/kagenti/serverless-harness-sandbox` image;
+  override with `--sandbox-image ghcr.io/kagenti/serverless-harness-sandbox:<tag>`.
+- **Build the harness from source in-cluster** (no external registry) against the
+  OpenShift internal registry:
   ```bash
   oc new-build --name serverless-harness --binary --strategy=docker -n default
   oc start-build serverless-harness --from-dir=. --follow -n default
