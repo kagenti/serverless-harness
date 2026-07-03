@@ -24,7 +24,7 @@ kind: Kustomization
 
 resources:
   - ../../redis.yaml
-  - ../../sandbox.yaml
+  - ../../sandbox-pool.yaml
   - ../../service.yaml
 
 images:
@@ -33,9 +33,9 @@ images:
     newTag: latest
 
 patches:
+  # Apply to all pool members (sandbox-0..2). No name filter = matches all Sandbox CRs.
   - path: patch-sandbox.yaml
     target:
       group: agents.x-k8s.io
       version: v1beta1
       kind: Sandbox
-      name: sandbox-0

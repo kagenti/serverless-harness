@@ -36,8 +36,10 @@ spec:
               value: "redis://redis.default.svc:6379"
             - name: SH_MODEL
               value: "claude-haiku-4-5"
-            - name: KAGENTI_SANDBOX_NAME
-              value: "sandbox-0"
+            - name: KAGENTI_SANDBOX_POOL_SELECTOR
+              value: "sh.kagenti.io/sandbox-pool=default"
+            # - name: KAGENTI_SANDBOX_POD      # single-pod test override (bypasses pool selection)
+            #   value: "sandbox-0-0"
             - name: LEAF_RESULT_TTL_SECONDS
               value: "86400"
             - name: ANTHROPIC_API_KEY

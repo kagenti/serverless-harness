@@ -1,5 +1,19 @@
 import { describe, it, expect } from "vitest";
 import { runLeaf, buildLeafPrompt, leafSessionId, validateItem } from "../src/run-leaf";
+import type { LeafEnvelope } from "../src/run-leaf.js";
+
+describe("LeafEnvelope repo ref fields", () => {
+  it("accepts optional repoUrl and ref", () => {
+    const env: LeafEnvelope = {
+      sessionId: "run-a/item-1",
+      item: { item_id: "item-1", file: "a.ts", pattern: "x" },
+      repoUrl: "https://git.example/r.git",
+      ref: "abc123",
+    };
+    expect(env.repoUrl).toBe("https://git.example/r.git");
+    expect(env.ref).toBe("abc123");
+  });
+});
 
 describe("validateItem", () => {
   it("accepts a well-formed item", () => {
