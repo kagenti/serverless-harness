@@ -26,6 +26,7 @@ resources:
   - ../../redis.yaml
   - ../../sandbox-pool.yaml
   - ../../service.yaml
+  - ../../gitd.yaml
 
 images:
   - name: dev.local/serverless-harness
