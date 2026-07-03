@@ -68,7 +68,7 @@ BASE_WALL=$(jq -r '.[0].p95Ms' <<<"$POINTS")   # c=1 p95 ~= the single leaf wall
 # Compute knee, duty cycle, derived N, floor verdict via the tested analysis functions.
 # shellcheck disable=SC2016  # single quotes intentional: TypeScript code literal, not bash expansion
 read -r KNEE DUTY NRATIO FLOOR <<<"$(npx tsx -e '
-  import { detectKnee, dutyCycle, derivedRatio, sanityFloorPass } from "./experiments/src/sharing.ts";
+  import { detectKnee, dutyCycle, derivedRatio, sanityFloorPass } from "../../experiments/src/sharing.ts";
   const pts = JSON.parse(process.argv[1]);
   const knee = detectKnee(pts, Number(process.argv[2]));
   const duty = dutyCycle(Number(process.argv[3]), Number(process.argv[4]));
