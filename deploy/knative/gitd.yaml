@@ -22,6 +22,8 @@ spec:
           args:
             - |
               set -eu
+              # alpine/git ships `git` but not the git-daemon binary; install it (Alpine subpackage).
+              apk add --no-cache git-daemon
               K="${GITD_REFS:-16}"
               R=/srv/git/repo.git
               mkdir -p "$R"
