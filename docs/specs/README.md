@@ -77,7 +77,7 @@ the `M`-numbered built harness (Phase 1) and the `Z`-numbered credential plane (
 | ID | Title | Status | Spec / issue |
 |----|-------|--------|--------------|
 | **P1** | **FS-free harness** — leaf envelope + human-gate off the filesystem (inline + Redis); sandbox working set `emptyDir` → agent-sandbox `Sandbox` CR durable PVC | **design ✅** | [`2026-07-02-p1-fs-free-harness-design.md`](2026-07-02-p1-fs-free-harness-design.md) (#45) |
-| **P2** | Shared sandbox pool + routing (`SandboxWarmPool` / `SandboxClaim`, N:M, RWX relocates here) | planned | #46 |
+| **P2** | **Shared sandbox pool + routing** — N distinct `Sandbox` CRs (per-sandbox RWO copy, no RWX), harness-side pick + Redis leases, ref-pinned lazy converge, static-N config knob | **design ✅** | [`2026-07-02-p2-shared-sandbox-pool-design.md`](2026-07-02-p2-shared-sandbox-pool-design.md) (#46) |
 | **P0′** | OpenShift deployment of the FS-free harness — **P1 slice** (single durable RWO sandbox on OCP 4.20.8, full leaf smoke via Route) | **design ✅** | [`2026-07-02-p0prime-ocp-fs-free-deployment-design.md`](2026-07-02-p0prime-ocp-fs-free-deployment-design.md) (#47) |
 | **P3** | Kata isolation + ratio experiments (deferred) | planned | #48 |
 
