@@ -11,9 +11,12 @@
 # (oc new-build --binary --strategy=docker). The harness routes agent tool
 # execution into this pod via `kubectl exec`, so it needs bash + GNU coreutils,
 # findutils, grep and ripgrep (the agent's find/grep tools shell out to `rg`) on PATH.
+# git is required for the P2/P3 ref-pinned converge path (git clone/fetch/worktree run
+# inside this pod); the P0′ smoke used a pre-seeded workspace so never needed it, but the
+# E6/E7 sharing-ratio experiments converge a repo in-sandbox.
 FROM alpine:3.20
 
-RUN apk add --no-cache bash coreutils findutils grep ripgrep
+RUN apk add --no-cache bash coreutils findutils grep ripgrep git
 
 # OpenShift assigns the pod a non-root UID; the OCP overlay pins runAsUser/fsGroup
 # 65532 and backs /workspace with the Sandbox CR's durable PVC (fsGroup-owned, so
