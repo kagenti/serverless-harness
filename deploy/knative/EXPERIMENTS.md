@@ -55,3 +55,27 @@ append their `E6_RESULT` block below.
 Fires `E7_REFS` leaves converging distinct refs on one pod. Hard gate: every leaf's worktree
 observed only its own ref (the live mixed-ref validation deferred from P2 Task 7). Reports the
 converge contention profile. Runs append their `E7_RESULT` block below.
+
+### Kind results (sh-knative, 3-pod pool, SH_MODEL=claude-haiku-4-5, 2026-07-03)
+
+Non-authoritative — laptop-bound Kind, shape/relative only per design §D5. Authoritative numbers are the OCP run.
+
+**E6 — saturation curve** (`E6_LADDER="1 2 4 8 16"`, one pinned sandbox, degradeX=2):
+
+| c (concurrent leaves) | throughput (leaves/s) | p95 latency (ms) |
+|---|---|---|
+| 1 | 0.072 | 13881 |
+| 2 | 0.158 | 12561 |
+| 4 | 0.261 | 15246 |
+| 8 | 0.346 | 23020 |
+| 16 | 0.608 | 26142 |
+
+- **Knee (recommended `KAGENTI_SANDBOX_CAP`): ≥16** — throughput still rising and p95 within the 2× bound at c=16, so no saturation knee was reached below C_max. Treat ≥16 as a floor, not the ceiling.
+- **Duty cycle (C=1): 0.021** (sandbox-busy execMs≈289 over a ~13.9 s leaf wall) → **derived N ≈ 48:1**. The sandbox is busy ~2 % of leaf wall-clock; the remainder is model/network time in the harness tier.
+- Sanity floor (≥4): pass. Feed-back: max leases/pod 2 ≤ derived CAP — pass. Verdict: **pass**.
+
+**E7 — converge contention + mixed-ref correctness** (`E7_REFS=6`, distinct refs, one pinned pod):
+
+- **Mixed-ref consistency: PASS** — all 6 leaves converging distinct refs each saw only their own ref's marker (the live validation deferred from P2 Task 7). Wall 16044 ms; total sandbox exec ms ≈345 (best-effort, informational).
+
+**Takeaway:** the sandbox is lightly used per leaf (~2–6 % duty depending on cold-start), so the harness→sandbox sharing ratio is high (≈20–48:1 on Kind) and one sandbox did not saturate at 16 concurrent leaves — strong support for the dense-harness / shared-sandbox premise. Authoritative CAP/ratio to follow from OCP.
