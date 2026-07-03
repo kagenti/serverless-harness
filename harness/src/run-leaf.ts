@@ -7,7 +7,9 @@ import {
   type FileEntry,
 } from "@earendil-works/pi-coding-agent";
 import { RedisSessionBackend } from "@sh/session-backend";
-import { k8sSandboxExtension, resolveSandboxConfig } from "@sh/k8s-sandbox";
+import { k8sSandboxExtension, kubectlExecInPod } from "@sh/k8s-sandbox";
+import { selectPoolSandbox } from "./select-sandbox.js";
+import { convergeWorkspace, cleanupWorkspace } from "./converge.js";
 import { resolveModelSelection, requireModel, applyModelGateway, type TurnConfig } from "./run-turn.js";
 import { BufferedRedisBackend } from "./buffered-redis-backend.js";
 import { flushExtension } from "./flush-extension.js";
@@ -50,7 +52,9 @@ export interface LeafEnvelope {
   decision?: Decision;        // resume/approve only (was decisionRef)
   model?: string;
   provider?: string;
-  workspaceRef?: string;      // absolute path INSIDE the sandbox pod (harness never opens it)
+  workspaceRef?: string;      // derived from the worktree in P2 when repoUrl+ref are given
+  repoUrl?: string;           // P2: git remote to converge the sandbox repo copy from
+  ref?: string;               // P2: commit/branch/tag the leaf's worktree is pinned to
   maxTurns?: number;
   async?: boolean;            // when true, the HTTP layer enqueues instead of running inline
   tenant?: string;            // namespaces the session id
@@ -194,66 +198,86 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
     }
   }
 
-  // Gate front-end (design §3): decide whether to pause, abort, or seed a prompt.
-  const gateState = computeGateState(prior.map((p) => p.entry));
-  const dv = env.decision ? validateDecision(env.decision) : null;
-  const decision = dv && dv.ok ? dv.value : null;
-  const seed = decideSeed(gateState, decision, buildLeafPrompt(item, env.workspaceRef));
-
-  if (seed.kind === "abort") {
-    if (seed.record) sessionManager.appendCustomEntry(GATE_DECISION_ENTRY_TYPE, seed.record);
-    capture.aborted = true;
-    await backend.flush();
-    return;
-  }
-  if (seed.kind === "paused") {
-    capture.gate = seed.gate; // re-report the pending gate; runLeaf (re)writes the marker
-    await backend.flush();
-    return;
-  }
-  // seed.kind === "seed": record the decision (once) before running the continuation/fresh turn.
-  if (seed.record) sessionManager.appendCustomEntry(GATE_DECISION_ENTRY_TYPE, seed.record);
-
-  // Enforce the gate as a hard guarantee, not a prompt suggestion: for a require_approval item the
-  // submit_verdict tool is WITHHELD until the agent has passed at least one gate (a gate-decision
-  // exists in the log, or one is being applied this turn). In the pre-gate turn the agent's only
-  // structured-output path is request_approval, so it cannot bypass the gate even if it ignores the
-  // prompt. After approve/reject the verdict tool is available so the agent can finalize.
-  const allowVerdict =
-    !item.require_approval || gateState.gateDecisions.length > 0 || seed.record != null;
-
-  const agentDir = getAgentDir();
-  const settingsManager = SettingsManager.create(cwd, agentDir);
-  const sandboxConfig = await resolveSandboxConfig(process.env, cwd);
-  const resourceLoader = new DefaultResourceLoader({
-    cwd,
-    agentDir,
-    settingsManager,
-    extensionFactories: [
-      ...(allowVerdict ? [submitVerdictExtension(capture, sessionManager)] : []),
-      requestApprovalExtension(capture, sessionManager, gateState.nextGateId),
-      k8sSandboxExtension({ config: sandboxConfig }),
-      flushExtension(backend),
-      checkpointExtension(store, sessionManager),
-    ],
+  // --- P2: choose a sandbox pod (pool lease) before building the prompt/session. Placed after the
+  // verdict fast-path so a recovered verdict does not lease a pod. Returns null ⇒ no sandbox
+  // configured (local tools). Throws SandboxPoolSaturatedError when a configured pool is full.
+  const selected = await selectPoolSandbox(process.env, cwd, sid, {
+    cap: Number(process.env.KAGENTI_SANDBOX_CAP ?? "20"),
+    ttlMs: Number(process.env.KAGENTI_SANDBOX_LEASE_TTL_MS ?? "60000"),
   });
-  await resourceLoader.reload();
-
-  const { session } = await createAgentSession({
-    sessionManager,
-    model: model as never,
-    resourceLoader,
-    settingsManager,
-  });
+  const converging = selected != null && !!env.repoUrl && !!env.ref;
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
 
   try {
-    await session.prompt(seed.prompt);
-    if (!capture.verdict && !capture.gate) {
-      const row = await store.latestWhere(sid, isVerdictEntry);
-      const recovered = verdictFromCustomEntry(row?.entry);
-      if (recovered) capture.verdict = recovered;
+    // Ref-pinned lazy converge (spec §5): fetch the ref into the shared object store and add this
+    // leaf's worktree; workspaceRef becomes the derived worktree path. All FS work happens in the
+    // pod via exec — the harness opens nothing.
+    let workspaceRef = env.workspaceRef;
+    if (converging) {
+      const exec = kubectlExecInPod(selected!.config);
+      workspaceRef = await convergeWorkspace(exec, env.repoUrl!, env.ref!, sid);
+      const hbMs = Number(process.env.KAGENTI_SANDBOX_HEARTBEAT_MS ?? "20000");
+      heartbeat = setInterval(() => { void selected!.heartbeat(); }, hbMs);
+    }
+
+    // Gate front-end (design §3): decide whether to pause, abort, or seed a prompt.
+    const gateState = computeGateState(prior.map((p) => p.entry));
+    const dv = env.decision ? validateDecision(env.decision) : null;
+    const decision = dv && dv.ok ? dv.value : null;
+    const seed = decideSeed(gateState, decision, buildLeafPrompt(item, workspaceRef));
+
+    if (seed.kind === "abort") {
+      if (seed.record) sessionManager.appendCustomEntry(GATE_DECISION_ENTRY_TYPE, seed.record);
+      capture.aborted = true;
+      await backend.flush();
+      return;
+    }
+    if (seed.kind === "paused") {
+      capture.gate = seed.gate;
+      await backend.flush();
+      return;
+    }
+    if (seed.record) sessionManager.appendCustomEntry(GATE_DECISION_ENTRY_TYPE, seed.record);
+
+    const allowVerdict =
+      !item.require_approval || gateState.gateDecisions.length > 0 || seed.record != null;
+
+    const agentDir = getAgentDir();
+    const settingsManager = SettingsManager.create(cwd, agentDir);
+    const resourceLoader = new DefaultResourceLoader({
+      cwd,
+      agentDir,
+      settingsManager,
+      extensionFactories: [
+        ...(allowVerdict ? [submitVerdictExtension(capture, sessionManager)] : []),
+        requestApprovalExtension(capture, sessionManager, gateState.nextGateId),
+        k8sSandboxExtension({ config: selected?.config ?? null }),
+        flushExtension(backend),
+        checkpointExtension(store, sessionManager),
+      ],
+    });
+    await resourceLoader.reload();
+
+    const { session } = await createAgentSession({
+      sessionManager,
+      model: model as never,
+      resourceLoader,
+      settingsManager,
+    });
+
+    try {
+      await session.prompt(seed.prompt);
+      if (!capture.verdict && !capture.gate) {
+        const row = await store.latestWhere(sid, isVerdictEntry);
+        const recovered = verdictFromCustomEntry(row?.entry);
+        if (recovered) capture.verdict = recovered;
+      }
+    } finally {
+      await backend.flush();
     }
   } finally {
-    await backend.flush();
+    if (heartbeat) clearInterval(heartbeat);
+    if (converging) await cleanupWorkspace(kubectlExecInPod(selected!.config), sid);
+    if (selected) await selected.release();
   }
 };
