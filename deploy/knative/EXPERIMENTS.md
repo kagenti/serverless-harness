@@ -27,3 +27,31 @@ After a mid-session pod force-kill, the next turn recalled all completed turns.
 Verdict: PASS
 
 *Assisted-By: Claude (Anthropic AI) <noreply@anthropic.com>*
+
+# P3 — Sandbox Sharing-Ratio Results
+
+Authoritative home for the P3 experiment numbers (cluster experiments record here, matching
+E1/E3/E4). See the design: `docs/specs/2026-07-03-p3-sandbox-sharing-ratio-experiments-design.md`.
+
+**How to run (develop on Kind, authoritative on OCP):**
+
+```bash
+# Kind sh-knative (3-pod pool up, gitd deployed via kustomize):
+E6_LIVE=1 bash deploy/knative/e6-saturation.sh
+E7_LIVE=1 bash deploy/knative/e7-converge-contention.sh
+
+# OCP 4.20 (authoritative): export KSVC_URL=<route>, KUBECONFIG=<ocp>, then the same.
+```
+
+## E6 — saturation curve (→ CAP + derived N)
+
+Pins one sandbox, sweeps concurrent leaves (`E6_LADDER`), reports the knee (recommended
+`KAGENTI_SANDBOX_CAP`) and the C=1 duty cycle (→ derived N ≈ 1/duty). Hard gate: sanity
+floor `knee >= E6_MIN_CONCURRENCY`. Feed-back: pool never exceeds the derived CAP. Runs
+append their `E6_RESULT` block below.
+
+## E7 — converge contention + mixed-ref correctness
+
+Fires `E7_REFS` leaves converging distinct refs on one pod. Hard gate: every leaf's worktree
+observed only its own ref (the live mixed-ref validation deferred from P2 Task 7). Reports the
+converge contention profile. Runs append their `E7_RESULT` block below.
