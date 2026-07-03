@@ -123,3 +123,53 @@ start_sampler() {
 }
 stop_sampler() { kill "$1" 2>/dev/null || true; }
 pod_seconds_from() { awk -v iv="$SAMPLE_INTERVAL" '{s+=$1} END{printf "%d", s*iv}' "$1"; }
+
+# --- P3 sharing-ratio experiment helpers ---------------------------------------------------
+
+# The hermetic git-daemon repo URL (see deploy/knative/gitd.yaml).
+gitd_repo_url() { echo "git://gitd.${NS}.svc:9418/repo.git"; }
+
+# Wait until the gitd Deployment is Available. Arg: timeout seconds (default 120).
+wait_gitd() {
+  kubectl -n "$NS" rollout status deploy/gitd --timeout="${1:-120}s" >/dev/null 2>&1
+}
+
+# POST /runs with a P2 converge-path envelope (repoUrl+ref => sandbox converges + worktrees).
+# Usage: dispatch_converge <sessionId> <item_id> <file> <pattern> <ref> [model]
+dispatch_converge() {
+  local sid="$1" id="$2" file="$3" pat="$4" ref="$5" model="${6:-${SH_MODEL:-claude-haiku-4-5}}"
+  local body
+  body=$(jq -nc --arg s "$sid" --arg id "$id" --arg f "$file" --arg p "$pat" \
+    --arg u "$(gitd_repo_url)" --arg r "$ref" --arg m "$model" \
+    '{sessionId:$s, item:{item_id:$id, file:$f, pattern:$p}, repoUrl:$u, ref:$r, model:$m}')
+  # shellcheck disable=SC2086  # CURL_OPTS is intentionally word-split
+  curl -s $CURL_OPTS --max-time 240 ${CURL_HDR[@]+"${CURL_HDR[@]}"} \
+    -H "Content-Type: application/json" -d "$body" "$BASE/runs"
+}
+
+# Sum ms= from [exec-timing] lines in a harness pod's log (needs KAGENTI_EXEC_TIMING=1).
+# Usage: sum_exec_ms <harness_pod>
+sum_exec_ms() {
+  kubectl -n "$NS" logs "$1" 2>/dev/null \
+    | awk -F'ms=' '/\[exec-timing\]/ {split($2,a," "); s+=a[1]} END{printf "%d", s+0}'
+}
+
+# List Running pool pod names (one per line). Pool selector defaults to the P2 label.
+pool_pod_counts() {
+  kubectl get pods -n "$NS" -l "${KAGENTI_SANDBOX_POOL_SELECTOR:-sh.kagenti.io/sandbox-pool=default}" \
+    --field-selector=status.phase=Running --no-headers 2>/dev/null | awk '{print $1}'
+}
+
+# Max active leases observed on any single pool pod, read from Redis in the redis pod.
+# Usage: max_leases_across_pool   (needs a redis pod reachable as deploy/pod "redis")
+max_leases_across_pool() {
+  local now; now=$(date +%s%3N)
+  local max=0
+  for pod in $(pool_pod_counts); do
+    local n
+    n=$(kubectl -n "$NS" exec deploy/redis -- \
+      redis-cli ZCOUNT "sh:sandbox:${pod}:leases" "$now" "+inf" 2>/dev/null | tr -d '[:space:]')
+    n="${n:-0}"; [ "$n" -gt "$max" ] && max="$n"
+  done
+  echo "$max"
+}
