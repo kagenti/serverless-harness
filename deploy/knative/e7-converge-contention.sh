@@ -43,17 +43,20 @@ done
 wait $pids
 t1=$(now_ms)
 
-# Read each leaf's worktree marker from the pinned pod (worktrees survive until cleanup;
-# we read via a fresh exec keyed by the runId path the harness derived).
+# Derive mixed-ref correctness from each leaf's VERDICT, not the worktree: runLeaf's
+# cleanupWorkspace removes the per-leaf worktree on completion, so it cannot be read post-hoc
+# (this transience is exactly why P2 deferred the live validation). Each leaf reviewed
+# marker.txt for pattern "branch-i", and marker.txt contains exactly "branch-i" — so a worktree
+# correctly pinned at branch-i yields verdict FLAGGED. A cross-contaminated worktree (a sibling
+# ref) makes the pattern absent -> CLEAR (or a non-done status), which worktreeConsistent flags.
 OBS="[]"
 i=0
 while [ "$i" -lt "$REFS" ]; do
   ref="branch-$i"; sid="e7-$i-$$"
-  # toSessionId sanitizes sid; the worktree path is /workspace/leaves/<sanitized sid>.
-  wt="/workspace/leaves/${sid//[^A-Za-z0-9._-]/-}"
-  marker=$(kubectl -n "$NS" exec "$PIN" -- sh -c "cat '$wt/marker.txt' 2>/dev/null" | tr -d '[:space:]')
-  marker="${marker:-MISSING}"
-  OBS=$(jq -c --arg r "$sid" --arg e "$ref" --arg o "$marker" \
+  st=$(jq -r '.status // "none"' < "$d/$ref.json" 2>/dev/null)
+  vd=$(jq -r '.verdict.verdict // "none"' < "$d/$ref.json" 2>/dev/null)
+  if [ "$st" = "done" ] && [ "$vd" = "FLAGGED" ]; then obs="$ref"; else obs="wrong($st/$vd)"; fi
+  OBS=$(jq -c --arg r "$sid" --arg e "$ref" --arg o "$obs" \
     '. + [{runId:$r, expectedRef:$e, observedMarker:$o}]' <<<"$OBS")
   i=$((i + 1))
 done
