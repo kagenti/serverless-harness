@@ -216,8 +216,10 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
     if (converging) {
       const exec = kubectlExecInPod(selected!.config);
       workspaceRef = await convergeWorkspace(exec, env.repoUrl!, env.ref!, sid);
+    }
+    if (selected) {
       const hbMs = Number(process.env.KAGENTI_SANDBOX_HEARTBEAT_MS ?? "20000");
-      heartbeat = setInterval(() => { void selected!.heartbeat(); }, hbMs);
+      heartbeat = setInterval(() => { void selected.heartbeat(); }, hbMs);
     }
 
     // Gate front-end (design §3): decide whether to pause, abort, or seed a prompt.
