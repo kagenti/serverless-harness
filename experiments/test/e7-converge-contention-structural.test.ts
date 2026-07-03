@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { worktreeConsistent, type LeafObservation } from "../src/sharing";
-import { RedisLeaseStore, leaseKey } from "@sh/harness/sandbox-lease";
+import { RedisLeaseStore } from "@sh/harness/sandbox-lease";
 
 describe("E7 — mixed-ref consistency (structural)", () => {
   it("passes when every leaf observed its own ref, fails on cross-contamination", () => {

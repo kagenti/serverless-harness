@@ -173,3 +173,12 @@ max_leases_across_pool() {
   done
   echo "$max"
 }
+
+# Reset the harness ksvc env to the committed service.yaml defaults (pool mode, no timing/cap
+# override, no single-pod pin). Used by experiment drivers via `trap ... EXIT` so a run — even
+# one that exits mid-way — never leaves the ksvc mutated for the next smoke.
+restore_ksvc_env() {
+  kubectl set env ksvc/"$KSVC" -n "$NS" \
+    KAGENTI_SANDBOX_POD- KAGENTI_EXEC_TIMING- KAGENTI_SANDBOX_CAP- \
+    KAGENTI_SANDBOX_POOL_SELECTOR=sh.kagenti.io/sandbox-pool=default >/dev/null 2>&1 || true
+}

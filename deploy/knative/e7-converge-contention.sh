@@ -14,14 +14,21 @@ source ./lib.sh
 
 [ "${E7_LIVE:-0}" = "1" ] || { echo "SKIP (set E7_LIVE=1)"; exit 0; }
 
+# Restore ksvc to service.yaml defaults on any exit (normal or error) so a partial run
+# never leaves the ksvc mutated for the next smoke. Installed AFTER the gate so an
+# ungated SKIP run never issues a kubectl call.
+trap 'restore_ksvc_env' EXIT
+
 REFS="${E7_REFS:-8}"
 PIN="${KAGENTI_SANDBOX_POD:-sandbox-0}"
 
 echo "--- E7: converge contention + mixed-ref (refs=$REFS pin=$PIN) ---"
 ensure_port_forward >/dev/null || true
 wait_gitd 120 || { echo "gitd not ready"; exit 1; }
+# Remove KAGENTI_SANDBOX_POOL_SELECTOR so the single-pod pin actually takes effect
+# (the pool selector has precedence and would otherwise ignore KAGENTI_SANDBOX_POD).
 kubectl set env ksvc/"$KSVC" -n "$NS" \
-  KAGENTI_SANDBOX_POD="$PIN" KAGENTI_EXEC_TIMING=1 KAGENTI_SANDBOX_CAP=1000 >/dev/null
+  KAGENTI_SANDBOX_POD="$PIN" KAGENTI_SANDBOX_POOL_SELECTOR- KAGENTI_EXEC_TIMING=1 KAGENTI_SANDBOX_CAP=1000 >/dev/null
 wait_ksvc_ready
 
 d="$(mktemp -d)"; pids=""; t0=$(date +%s%3N)

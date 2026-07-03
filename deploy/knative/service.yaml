@@ -38,7 +38,7 @@ spec:
               value: "claude-haiku-4-5"
             - name: KAGENTI_SANDBOX_POOL_SELECTOR
               value: "sh.kagenti.io/sandbox-pool=default"
-            # - name: KAGENTI_SANDBOX_POD      # single-pod test override (bypasses pool selection)
+            # - name: KAGENTI_SANDBOX_POD      # single-pod test override (only effective when KAGENTI_SANDBOX_POOL_SELECTOR is unset; pool selector takes precedence)
             #   value: "sandbox-0-0"
             - name: LEAF_RESULT_TTL_SECONDS
               value: "86400"
