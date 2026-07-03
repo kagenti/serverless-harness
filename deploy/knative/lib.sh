@@ -126,6 +126,16 @@ pod_seconds_from() { awk -v iv="$SAMPLE_INTERVAL" '{s+=$1} END{printf "%d", s*iv
 
 # --- P3 sharing-ratio experiment helpers ---------------------------------------------------
 
+# Milliseconds since the epoch, portable across GNU date (%s%3N) and BSD/macOS date (no %N,
+# which would leave a literal "N" and break arithmetic). Falls back to python3, then to
+# second-precision as a last resort.
+now_ms() {
+  local ms; ms=$(date +%s%3N 2>/dev/null)
+  case "$ms" in *[!0-9]*|"") ms=$(python3 -c 'import time;print(int(time.time()*1000))' 2>/dev/null) ;; esac
+  case "$ms" in *[!0-9]*|"") ms=$(( $(date +%s) * 1000 )) ;; esac
+  printf '%s' "$ms"
+}
+
 # The hermetic git-daemon repo URL (see deploy/knative/gitd.yaml).
 gitd_repo_url() { echo "git://gitd.${NS}.svc:9418/repo.git"; }
 
@@ -163,7 +173,7 @@ pool_pod_counts() {
 # Max active leases observed on any single pool pod, read from Redis in the redis pod.
 # Usage: max_leases_across_pool   (needs a redis pod reachable as deploy/pod "redis")
 max_leases_across_pool() {
-  local now; now=$(date +%s%3N)
+  local now; now=$(now_ms)
   local max=0
   for pod in $(pool_pod_counts); do
     local n
@@ -174,11 +184,36 @@ max_leases_across_pool() {
   echo "$max"
 }
 
+# Upsert (NAME=value) or remove (NAME-) env vars on the harness ksvc's container[0], then force a
+# new Revision. `kubectl set env` does NOT support the Knative Service CRD, and a JSON merge-patch
+# would replace the whole env list (dropping the ANTHROPIC_* secretKeyRefs). So read the current
+# env, mutate it by name with jq (preserving valueFrom entries), and replace the array via a
+# JSON-patch op — a spec.template change makes Knative mint a fresh revision.
+set_ksvc_env() {
+  local cur jqp='.' i=0 args=() kv name val newenv
+  cur=$(kubectl get ksvc "$KSVC" -n "$NS" -o json | jq -c '.spec.template.spec.containers[0].env // []')
+  for kv in "$@"; do
+    if [ "${kv#*=}" = "$kv" ]; then            # no '=' → removal, arg is "NAME-"
+      name="${kv%-}"
+      jqp="$jqp | map(select(.name != \$k$i))"
+      args+=(--arg "k$i" "$name")
+    else                                        # "NAME=value" → upsert (replace any existing)
+      name="${kv%%=*}"; val="${kv#*=}"
+      jqp="$jqp | (map(select(.name != \$k$i)) + [{name:\$k$i, value:\$v$i}])"
+      args+=(--arg "k$i" "$name" --arg "v$i" "$val")
+    fi
+    i=$((i + 1))
+  done
+  newenv=$(printf '%s' "$cur" | jq -c ${args[@]+"${args[@]}"} "$jqp")
+  kubectl patch ksvc "$KSVC" -n "$NS" --type=json \
+    -p "[{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/env\",\"value\":$newenv}]" >/dev/null
+  wait_ksvc_ready
+}
+
 # Reset the harness ksvc env to the committed service.yaml defaults (pool mode, no timing/cap
 # override, no single-pod pin). Used by experiment drivers via `trap ... EXIT` so a run — even
 # one that exits mid-way — never leaves the ksvc mutated for the next smoke.
 restore_ksvc_env() {
-  kubectl set env ksvc/"$KSVC" -n "$NS" \
-    KAGENTI_SANDBOX_POD- KAGENTI_EXEC_TIMING- KAGENTI_SANDBOX_CAP- \
+  set_ksvc_env KAGENTI_SANDBOX_POD- KAGENTI_EXEC_TIMING- KAGENTI_SANDBOX_CAP- \
     KAGENTI_SANDBOX_POOL_SELECTOR=sh.kagenti.io/sandbox-pool=default >/dev/null 2>&1 || true
 }

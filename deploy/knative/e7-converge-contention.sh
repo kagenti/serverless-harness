@@ -27,11 +27,9 @@ ensure_port_forward >/dev/null || true
 wait_gitd 120 || { echo "gitd not ready"; exit 1; }
 # Remove KAGENTI_SANDBOX_POOL_SELECTOR so the single-pod pin actually takes effect
 # (the pool selector has precedence and would otherwise ignore KAGENTI_SANDBOX_POD).
-kubectl set env ksvc/"$KSVC" -n "$NS" \
-  KAGENTI_SANDBOX_POD="$PIN" KAGENTI_SANDBOX_POOL_SELECTOR- KAGENTI_EXEC_TIMING=1 KAGENTI_SANDBOX_CAP=1000 >/dev/null
-wait_ksvc_ready
+set_ksvc_env KAGENTI_SANDBOX_POD="$PIN" KAGENTI_SANDBOX_POOL_SELECTOR- KAGENTI_EXEC_TIMING=1 KAGENTI_SANDBOX_CAP=1000
 
-d="$(mktemp -d)"; pids=""; t0=$(date +%s%3N)
+d="$(mktemp -d)"; pids=""; t0=$(now_ms)
 i=0
 while [ "$i" -lt "$REFS" ]; do
   ref="branch-$i"
@@ -43,7 +41,7 @@ while [ "$i" -lt "$REFS" ]; do
 done
 # shellcheck disable=SC2086
 wait $pids
-t1=$(date +%s%3N)
+t1=$(now_ms)
 
 # Read each leaf's worktree marker from the pinned pod (worktrees survive until cleanup;
 # we read via a fresh exec keyed by the runId path the harness derived).

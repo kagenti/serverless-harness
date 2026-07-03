@@ -32,25 +32,23 @@ wait_gitd 120 || { echo "gitd not ready"; exit 1; }
 # Pin all leaves to one sandbox + enable exec timing; force a new revision and wait Ready.
 # Remove KAGENTI_SANDBOX_POOL_SELECTOR so the single-pod pin actually takes effect
 # (the pool selector has precedence and would otherwise ignore KAGENTI_SANDBOX_POD).
-kubectl set env ksvc/"$KSVC" -n "$NS" \
-  KAGENTI_SANDBOX_POD="$PIN" KAGENTI_SANDBOX_POOL_SELECTOR- KAGENTI_EXEC_TIMING=1 KAGENTI_SANDBOX_CAP=1000 >/dev/null
-wait_ksvc_ready
+set_ksvc_env KAGENTI_SANDBOX_POD="$PIN" KAGENTI_SANDBOX_POOL_SELECTOR- KAGENTI_EXEC_TIMING=1 KAGENTI_SANDBOX_CAP=1000
 
 # Fire C concurrent converge-leaves at ref branch-0; echo "<throughput> <p95ms>".
 run_rung() {
   local c="$1" d; d="$(mktemp -d)"
   local t0 t1 pids=""
-  t0=$(date +%s%3N)
+  t0=$(now_ms)
   local i=0
   while [ "$i" -lt "$c" ]; do
-    ( ts=$(date +%s%3N)
+    ( ts=$(now_ms)
       dispatch_converge "e6-$c-$i-$$" "e6" "marker.txt" "$REF" "$REF" >/dev/null 2>&1
-      echo $(( $(date +%s%3N) - ts )) > "$d/$i.ms" ) & pids="$pids $!"
+      echo $(( $(now_ms) - ts )) > "$d/$i.ms" ) & pids="$pids $!"
     i=$((i + 1))
   done
   # shellcheck disable=SC2086
   wait $pids
-  t1=$(date +%s%3N)
+  t1=$(now_ms)
   local wall=$(( t1 - t0 )); [ "$wall" -lt 1 ] && wall=1
   local thr; thr=$(awk -v c="$c" -v w="$wall" 'BEGIN{printf "%.3f", c/(w/1000.0)}')
   local p95
@@ -67,41 +65,59 @@ run_rung() {
   echo "$thr $p95"
 }
 
+# Drain any harness pods left over from the pin's prior revision (or earlier runs) so the C=1
+# leaf cold-starts a FRESH pod whose log holds only its own [exec-timing] lines. Without this,
+# the C=1 duty-cycle sum picks up execs accumulated by a lingering warm pod across many leaves.
+wait_for_zero_pods 90 || true
+
 POINTS="[]"
+EXEC_MS=0
+BASE_WALL=0
 for c in $LADDER; do
   read -r thr p95 <<<"$(run_rung "$c")"
   echo "  c=$c throughput=$thr p95Ms=$p95"
   POINTS=$(jq -c --argjson c "$c" --argjson t "$thr" --argjson p "$p95" \
     '. + [{c:$c, throughput:$t, p95Ms:$p}]' <<<"$POINTS")
+  # Duty cycle MUST be captured at C=1, while the harness pod that served it is still Running:
+  # Knative scales it to zero within the retention window before the whole sweep finishes, so a
+  # post-sweep read finds an idle/absent pod (execMs=0). Sum exec-timing across the pods live now.
+  if [ "$c" = 1 ]; then
+    EXEC_MS=$(for p in $(kubectl get pods -n "$NS" -l "serving.knative.dev/service=$KSVC" \
+      --field-selector=status.phase=Running --no-headers 2>/dev/null | awk '{print $1}'); do
+        sum_exec_ms "$p"; done | awk '{s+=$1} END{printf "%d", s+0}')
+    BASE_WALL="$p95"   # c=1 p95 == the single leaf's wall time (denominator for duty cycle)
+  fi
 done
 
-# C=1 duty cycle: sum exec ms from the (single) harness pod that served the c=1 leaf.
-HARNESS_POD=$(kubectl get pods -n "$NS" -l "serving.knative.dev/service=$KSVC" \
-  --field-selector=status.phase=Running --no-headers 2>/dev/null | awk 'NR==1{print $1}')
-EXEC_MS=$(sum_exec_ms "$HARNESS_POD"); EXEC_MS="${EXEC_MS:-0}"
-BASE_WALL=$(jq -r '.[0].p95Ms' <<<"$POINTS")   # c=1 p95 ~= the single leaf wall time
-
-# Compute knee, duty cycle, derived N, floor verdict via the tested analysis functions.
-# shellcheck disable=SC2016  # single quotes intentional: TypeScript code literal, not bash expansion
-read -r KNEE DUTY NRATIO FLOOR <<<"$(npx tsx -e '
-  import { detectKnee, dutyCycle, derivedRatio, sanityFloorPass } from "../../experiments/src/sharing.ts";
+# Knee (recommended CAP) + sanity floor — always computed from the curve.
+# shellcheck disable=SC2016  # single quotes intentional: TypeScript literal, not bash expansion
+read -r KNEE FLOOR <<<"$(npx tsx -e '
+  import { detectKnee, sanityFloorPass } from "../../experiments/src/sharing.ts";
   const pts = JSON.parse(process.argv[1]);
   const knee = detectKnee(pts, Number(process.argv[2]));
-  const duty = dutyCycle(Number(process.argv[3]), Number(process.argv[4]));
-  const n = derivedRatio(duty);
-  const floor = sanityFloorPass(knee, Number(process.argv[5]));
-  process.stdout.write(`${knee} ${duty.toFixed(3)} ${n} ${floor}`);
-' "$POINTS" "$DEGRADE_X" "$EXEC_MS" "$BASE_WALL" "$MIN_C")"
+  process.stdout.write(`${knee} ${sanityFloorPass(knee, Number(process.argv[3]))}`);
+' "$POINTS" "$DEGRADE_X" "$MIN_C")"
 
-echo "  knee(CAP)=$KNEE dutyCycle=$DUTY derivedN=$NRATIO floorPass=$FLOOR"
+# Duty cycle (C=1) -> derived N. Guarded: if exec timing was not captured (EXEC_MS=0) the tested
+# derivedRatio throws on duty<=0 by design, so report NA rather than aborting and losing the knee.
+if [ "${EXEC_MS:-0}" -gt 0 ] && [ "${BASE_WALL:-0}" -gt 0 ]; then
+  # shellcheck disable=SC2016
+  read -r DUTY NRATIO <<<"$(npx tsx -e '
+    import { dutyCycle, derivedRatio } from "../../experiments/src/sharing.ts";
+    const d = dutyCycle(Number(process.argv[1]), Number(process.argv[2]));
+    process.stdout.write(`${d.toFixed(3)} ${derivedRatio(d)}`);
+  ' "$EXEC_MS" "$BASE_WALL")"
+else
+  DUTY=NA; NRATIO=NA
+fi
+
+echo "  knee(CAP)=$KNEE dutyCycle=$DUTY derivedN=$NRATIO floorPass=$FLOOR execMs=$EXEC_MS baseWall=$BASE_WALL"
 
 # --- Feed-back check: pool at the derived CAP, leases never exceed it ---
 # Unpin the single sandbox and restore pool mode so the burst runs against the full pool
 # at the derived CAP (without restoring the selector, neither pod nor pool is set, causing
 # null selection where max_leases_across_pool returns 0 and the MAXL <= KNEE check trivially passes).
-kubectl set env ksvc/"$KSVC" -n "$NS" \
-  KAGENTI_SANDBOX_POD- KAGENTI_SANDBOX_POOL_SELECTOR=sh.kagenti.io/sandbox-pool=default KAGENTI_SANDBOX_CAP="$KNEE" >/dev/null
-wait_ksvc_ready
+set_ksvc_env KAGENTI_SANDBOX_POD- KAGENTI_SANDBOX_POOL_SELECTOR=sh.kagenti.io/sandbox-pool=default KAGENTI_SANDBOX_CAP="$KNEE"
 BURST=$(( KNEE * 3 ))
 fb_pids=""
 for i in $(seq 1 "$BURST"); do
