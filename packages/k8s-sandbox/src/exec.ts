@@ -25,6 +25,17 @@ export function buildKubectlArgs(config: K8sSandboxConfig, command: string): str
   return args;
 }
 
+/** True only when exec timing is explicitly enabled (off by default). */
+export function shouldEmitExecTiming(env: NodeJS.ProcessEnv): boolean {
+  return env.KAGENTI_EXEC_TIMING === "1";
+}
+
+/** One stable, newline-terminated timing line for a single exec. */
+export function formatExecTiming(pod: string, ms: number, command: string): string {
+  const cmd = command.slice(0, 60).replace(/\s+/g, " ");
+  return `[exec-timing] pod=${pod} ms=${ms} cmd=${cmd}\n`;
+}
+
 /** Default transport: shell out to `kubectl exec`. */
 export function kubectlExecInPod(config: K8sSandboxConfig): ExecInPod {
   return (command, opts = {}) =>
@@ -32,6 +43,7 @@ export function kubectlExecInPod(config: K8sSandboxConfig): ExecInPod {
       const child = spawn("kubectl", buildKubectlArgs(config, command), {
         stdio: ["pipe", "pipe", "pipe"],
       });
+      const startMs = Date.now();
       const out: Buffer[] = [];
       let timedOut = false;
       let settled = false;
@@ -67,6 +79,9 @@ export function kubectlExecInPod(config: K8sSandboxConfig): ExecInPod {
         opts.signal?.removeEventListener("abort", onAbort);
         if (opts.signal?.aborted) return reject(new Error("aborted"));
         if (timedOut) return reject(new Error(`timeout:${opts.timeout}`));
+        if (shouldEmitExecTiming(process.env)) {
+          process.stderr.write(formatExecTiming(config.pod, Date.now() - startMs, command));
+        }
         resolve({ stdout: Buffer.concat(out), exitCode: code });
       });
 
