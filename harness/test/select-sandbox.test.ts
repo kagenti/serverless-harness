@@ -10,14 +10,16 @@ describe("orderByLoad", () => {
   });
 });
 
-function fakeLease(loads: Record<string, number>, cap: number): LeaseStore & { acquired: string[] } {
+function fakeLease(loads: Record<string, number>, cap: number): LeaseStore & { acquired: string[]; acquiredTtl: number[] } {
   const counts = { ...loads };
   const acquired: string[] = [];
+  const acquiredTtl: number[] = [];
   return {
     acquired,
+    acquiredTtl,
     async load(pod) { return counts[pod] ?? 0; },
-    async acquire(pod, c, _runId) {
-      if ((counts[pod] ?? 0) < c) { counts[pod] = (counts[pod] ?? 0) + 1; acquired.push(pod); return true; }
+    async acquire(pod, c, _runId, ttlMs) {
+      if ((counts[pod] ?? 0) < c) { counts[pod] = (counts[pod] ?? 0) + 1; acquired.push(pod); acquiredTtl.push(ttlMs); return true; }
       return false;
     },
     async heartbeat() {},
@@ -50,6 +52,7 @@ describe("selectPoolSandbox", () => {
     });
     expect(res?.config.pod).toBe("sandbox-1-0");
     expect(lease.acquired).toEqual(["sandbox-1-0"]);
+    expect(lease.acquiredTtl).toEqual([opts.ttlMs]);
   });
 
   it("throws SandboxPoolSaturatedError when every pod is at cap", async () => {
