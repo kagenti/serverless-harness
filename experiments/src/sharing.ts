@@ -42,3 +42,18 @@ export function derivedRatio(duty: number): number {
 export function sanityFloorPass(knee: number, minConcurrency: number): boolean {
   return knee >= minConcurrency;
 }
+
+export interface LeafObservation {
+  runId: string;
+  expectedRef: string;   // the ref this leaf's envelope pinned
+  observedMarker: string; // marker.txt content read from its worktree
+}
+
+/** Every leaf must have seen its own ref's marker — no sibling leakage. */
+export function worktreeConsistent(obs: LeafObservation[]): {
+  ok: boolean;
+  mismatches: LeafObservation[];
+} {
+  const mismatches = obs.filter((o) => o.observedMarker !== o.expectedRef);
+  return { ok: mismatches.length === 0, mismatches };
+}
