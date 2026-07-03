@@ -1,28 +1,32 @@
-# OpenShift variant of the sandbox pod. The base runs `apk add ...` as root at
-# start-up (blocked by restricted-v2); the tools are pre-baked into the image
-# (sandbox.Dockerfile, swapped in via the overlay `images:` transformer), so the
-# command is just `sleep infinity`. Adds restricted-v2-compatible securityContext
-# and mounts an emptyDir at /workspace (fsGroup-owned → writable by the assigned
-# UID) so the sandbox can write regardless of root-filesystem permissions.
-apiVersion: v1
-kind: Pod
-metadata:
-  name: sandbox-0
-spec:
-  securityContext:
+# OpenShift variant of the sandbox pod, applied as a JSON6902 patch onto the
+# Sandbox CR (agents.x-k8s.io/v1beta1). The base (Kind) runs `apk add ...` as root
+# at start-up — blocked by OCP SCCs. Here: tools are pre-baked into the image
+# (sandbox.Dockerfile), so the command is just `sleep infinity`; the image is the
+# in-cluster-built internal-registry pullspec; the pod runs non-root (UID 65532,
+# admitted by nonroot-v2 on the serverless-harness-sandbox SA) with fsGroup 65532
+# so the Sandbox CR's durable /workspace PVC (from volumeClaimTemplates) is writable.
+# NOTE: we deliberately do NOT touch volumeClaimTemplates/volumeMounts — /workspace
+# stays on the durable RWO PVC (the point of P0′), not an emptyDir.
+- op: replace
+  path: /spec/podTemplate/spec/containers/0/image
+  value: image-registry.openshift-image-registry.svc:5000/default/serverless-harness-sandbox:latest
+- op: replace
+  path: /spec/podTemplate/spec/containers/0/command
+  value: ["sleep", "infinity"]
+- op: add
+  path: /spec/podTemplate/spec/serviceAccountName
+  value: serverless-harness-sandbox
+- op: add
+  path: /spec/podTemplate/spec/securityContext
+  value:
+    runAsUser: 65532
     runAsNonRoot: true
+    fsGroup: 65532
     seccompProfile:
       type: RuntimeDefault
-  containers:
-    - name: sandbox
-      command: ["sleep", "infinity"]
-      securityContext:
-        allowPrivilegeEscalation: false
-        capabilities:
-          drop: ["ALL"]
-      volumeMounts:
-        - name: workspace
-          mountPath: /workspace
-  volumes:
-    - name: workspace
-      emptyDir: {}
+- op: add
+  path: /spec/podTemplate/spec/containers/0/securityContext
+  value:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]

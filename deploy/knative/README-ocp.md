@@ -3,8 +3,8 @@
 `deploy/knative/setup-ocp.sh` stands up the serverless-harness stack on
 **OpenShift 4.20+** — the OpenShift-native sibling of [`setup-kind.sh`](setup-kind.sh).
 It installs OpenShift Serverless (Knative + Kourier), Redis, the sandbox pod, the
-`leaf-work` PVC, the LLM-credentials secret, and the harness Knative Service,
-reachable over its **auto-created OpenShift Route**.
+LLM-credentials secret, and the harness Knative Service, reachable over its
+**auto-created OpenShift Route**.
 
 Base bring-up only — see [Scope](#scope) for what is deferred.
 
@@ -12,13 +12,17 @@ Base bring-up only — see [Scope](#scope) for what is deferred.
 
 - **`oc`**, logged in to an OpenShift **4.20+** cluster as **cluster-admin**
   (operator installs + SCC assignment require it).
-- A default **StorageClass** for the `leaf-work` PVC (the script fails fast if
+- A default **StorageClass** for the sandbox's durable `/workspace` PVC (the script fails fast if
   none exists). See the [storage caveat](#storage--scc).
 - A model credential:
   - `ANTHROPIC_API_KEY` (direct), **or**
   - `ANTHROPIC_AUTH_TOKEN` + `ANTHROPIC_BASE_URL` (Bearer-token gateway, e.g. LiteLLM).
 - The harness image. By default the script pulls the published
   `ghcr.io/kagenti/serverless-harness:latest`; override with `--image`.
+- **agent-sandbox controller** (kubernetes-sigs v0.5.0) is installed by the script
+  (`sandboxes.agents.x-k8s.io`); it creates the `sandbox-0` pod from the Sandbox CR
+  and provisions its durable `/workspace` PVC. The harness resolves the pod via the
+  CR's `.status.selector` and `kubectl exec`s tool calls into it.
 
 ## Quick start
 
@@ -63,7 +67,7 @@ creates a real Route per Knative Service (`oc get ksvc serverless-harness -o jso
 | Knative config | Autoscaler tuning + the `podspec-persistent-volume-claim`/`-write`/`-securitycontext` feature flags are set in the **`KnativeServing` CR spec** (the operator reverts direct `config-*` ConfigMap patches). |
 | Redis | Lightweight in-repo Deployment (`redis:7-alpine`), runs under `restricted-v2`. |
 | Sandbox | Pre-baked image ([`sandbox.Dockerfile`](sandbox.Dockerfile), `USER 65532`), built in-cluster against the internal registry (or supplied via `--sandbox-image`). |
-| `leaf-work` PVC | `ReadWriteOnce`, cluster-default StorageClass. |
+| Sandbox `/workspace` PVC | `ReadWriteOnce` (Sandbox CR `volumeClaimTemplates`), cluster-default StorageClass. |
 | Harness | Knative Service applied via the [`overlays/ocp`](overlays/ocp) kustomize overlay; SA granted the `nonroot-v2` SCC. |
 | Ingress | Auto-created OpenShift Route. |
 
@@ -144,11 +148,12 @@ and verifying the async-leaf path itself on OpenShift is a further step.
 
 ## Storage & SCC
 
-- **Storage / RWX.** `leaf-work` is `ReadWriteOnce`. On block storage (e.g. AWS EBS
+- **Storage / RWX.** The sandbox's `/workspace` PVC is `ReadWriteOnce`. On block storage (e.g. AWS EBS
   `gp3-csi`) it binds to a single node — fine for a single harness consumer.
   Concurrent multi-node scale-out, or co-mounting with the leaf-orchestrator, needs
   a **RWX** StorageClass (a filesystem provisioner). The base bring-up does not deploy
   the orchestrator. Set a specific class by making it the cluster default before install.
+  RWX, if ever needed for a shared sandbox pool, lives on the sandbox tier (P2) — never the harness.
 - **SCC.** The published harness image declares no `USER` (defaults to root), so it
   runs as an explicit non-root UID (65532) and the script grants the harness
   ServiceAccount the `nonroot-v2` SCC (`oc adm policy add-scc-to-user nonroot-v2 -z
@@ -174,7 +179,7 @@ and verifying the async-leaf path itself on OpenShift is a further step.
 |---------|-------------|
 | `ksvc` never Ready, pod `CreateContainerConfigError: container has runAsNonRoot and image will run as root` | The `nonroot-v2` SCC grant didn't apply. Re-run the script, or `oc adm policy add-scc-to-user nonroot-v2 -z serverless-harness -n <ns>`. |
 | `ksvc` never Ready, pod `CrashLoopBackOff` with `ERR_MODULE_NOT_FOUND` | The harness image is broken/stale. Use a newer `--image` (the fix shipped in the image build; see the repo history). |
-| `leaf-work` PVC stuck `Pending` | No (default) StorageClass. Set one, or ensure a provisioner is installed. |
+| Sandbox `/workspace` PVC stuck `Pending` | No (default) StorageClass. Set one, or ensure a provisioner is installed. |
 | `oc apply -k overlays/ocp` fails with a load-restrictor / "not in or below" error | The overlay references shared base YAMLs one level up. Render with `oc kustomize --load-restrictor LoadRestrictionsNone deploy/knative/overlays/ocp \| oc apply -f -` — `setup-ocp.sh` does this for you. |
 | `/turn` returns `"Connection error"` | The harness can't reach its configured Anthropic endpoint from the cluster (egress/gateway reachability). `/health` and session creation still work. |
 
@@ -183,7 +188,11 @@ and verifying the async-leaf path itself on OpenShift is a further step.
 ```bash
 oc delete ksvc serverless-harness -n default
 oc delete -k <(oc kustomize --load-restrictor LoadRestrictionsNone deploy/knative/overlays/ocp) 2>/dev/null || true
-oc delete pod sandbox-0 deployment/redis svc/redis pvc/leaf-work secret/llm-credentials -n default
+oc delete sandbox sandbox-0 deployment/redis svc/redis secret/llm-credentials -n default
+# The durable /workspace PVC is provisioned StatefulSet-style from the Sandbox CR's
+# volumeClaimTemplates and is NOT garbage-collected when the CR is deleted — remove it
+# explicitly to reclaim the backing EBS volume:
+oc delete pvc workspace-sandbox-0 -n default
 # Operators (optional): oc delete knativeserving knative-serving -n knative-serving; oc delete subscription serverless-operator -n openshift-serverless
 ```
 

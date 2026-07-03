@@ -40,7 +40,7 @@ dispatch_item() {
   local body
   body=$(jq -nc --arg s "$sid" --arg m "$model" --arg id "$id" --arg f "$file" --arg p "$pat" --arg ws "$SBOX_REPO" \
     '{sessionId:$s, model:$m, workspaceRef:$ws, item:{item_id:$id, file:$f, pattern:$p}}')
-  curl -s --max-time 240 -H "$HOST_HEADER" -H "Content-Type: application/json" -d "$body" "$BASE/runs"
+  curl -s $CURL_OPTS --max-time 240 ${CURL_HDR[@]+"${CURL_HDR[@]}"} -H "Content-Type: application/json" -d "$body" "$BASE/runs"
 }
 
 # dispatch <item_id> [model] -> echoes terminal JSON from /runs
@@ -129,7 +129,7 @@ if [ "$bogus" = "failed" ] && [ "$good" = "done" ]; then ok "bogus model -> fail
 # is the server's isLeafEnvelope/validateItem guard: a body with no `item` must return HTTP 400.
 claim 5 "Malformed envelope (missing item) is rejected with HTTP 400"
 neg_body=$(jq -nc --arg s "$RUN/ineg" '{sessionId:$s}')
-neg_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -H "$HOST_HEADER" -H "Content-Type: application/json" -d "$neg_body" "$BASE/runs")
+neg_code=$(curl -s $CURL_OPTS -o /dev/null -w '%{http_code}' --max-time 30 ${CURL_HDR[@]+"${CURL_HDR[@]}"} -H "Content-Type: application/json" -d "$neg_body" "$BASE/runs")
 if [ "$neg_code" = "400" ]; then ok "malformed envelope rejected (HTTP 400)"; else ko "expected HTTP 400, got $neg_code"; fi
 
 # --- Claim 6: idempotent re-invoke returns a valid verdict ---
