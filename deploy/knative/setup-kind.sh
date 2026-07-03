@@ -105,19 +105,22 @@ kubectl apply --server-side -f "https://github.com/kubernetes-sigs/agent-sandbox
 kubectl -n agent-sandbox-system rollout status deploy/agent-sandbox-controller --timeout=180s
 kubectl wait --for=condition=Established crd/sandboxes.agents.x-k8s.io --timeout=120s
 
-# 6. Deploy durable Sandbox CR
-echo "--- Deploying Sandbox CR ---"
-kubectl apply -f "$SCRIPT_DIR/sandbox.yaml"
-# Wait for the Sandbox controller to publish .status.selector, then wait for the pod
-SEL=""
-for _ in $(seq 1 60); do
-  SEL=$(kubectl -n default get sandbox sandbox-0 -o jsonpath='{.status.selector}' 2>/dev/null || true)
-  [ -n "$SEL" ] && break
+# 6. Deploy the durable Sandbox POOL (issue #54: pool, not a single sandbox — the harness
+#    resolves KAGENTI_SANDBOX_POOL_SELECTOR against all pool pods).
+echo "--- Deploying Sandbox pool ---"
+kubectl apply -f "$SCRIPT_DIR/sandbox-pool.yaml"
+# Wait for every pool pod (sandbox-0..N-1) to go Ready via the common pool label.
+POOL_SELECTOR="sh.kagenti.io/sandbox-pool=default"
+for _ in $(seq 1 90); do
+  ready=$(kubectl -n default get pods -l "$POOL_SELECTOR" \
+    --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d ' ')
+  want=$(grep -c '^kind: Sandbox' "$SCRIPT_DIR/sandbox-pool.yaml")
+  [ "$ready" -ge "$want" ] && break
   sleep 2
 done
-[ -n "$SEL" ] && kubectl -n default wait --for=condition=Ready pod -l "$SEL" --timeout=180s || {
-  echo "sandbox pod not ready (selector='$SEL')"
-  kubectl -n default get sandbox sandbox-0 -o yaml | head -40
+kubectl -n default wait --for=condition=Ready pod -l "$POOL_SELECTOR" --timeout=180s || {
+  echo "sandbox pool not all Ready (label='$POOL_SELECTOR')"
+  kubectl -n default get pods -l "$POOL_SELECTOR" -o wide | head -40
   exit 1
 }
 
