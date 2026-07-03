@@ -9,7 +9,8 @@
     "./buffered-redis-backend": "./src/buffered-redis-backend.ts",
     "./budget-voter": "./src/budget-voter.ts",
     "./leaf-job-runner": "./src/leaf-job-runner.ts",
-    "./leaf-result-store": "./src/leaf-result-store.ts"
+    "./leaf-result-store": "./src/leaf-result-store.ts",
+    "./sandbox-lease": "./src/sandbox-lease.ts"
   },
   "scripts": {
     "test": "vitest run",

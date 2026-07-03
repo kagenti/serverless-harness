@@ -12,3 +12,4 @@ resources:
   - redis.yaml
   - sandbox-pool.yaml
   - service.yaml
+  - gitd.yaml

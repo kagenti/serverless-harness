@@ -79,7 +79,8 @@ the `M`-numbered built harness (Phase 1) and the `Z`-numbered credential plane (
 | **P1** | **FS-free harness** — leaf envelope + human-gate off the filesystem (inline + Redis); sandbox working set `emptyDir` → agent-sandbox `Sandbox` CR durable PVC | **design ✅** | [`2026-07-02-p1-fs-free-harness-design.md`](2026-07-02-p1-fs-free-harness-design.md) (#45) |
 | **P2** | **Shared sandbox pool + routing** — N distinct `Sandbox` CRs (per-sandbox RWO copy, no RWX), harness-side pick + Redis leases, ref-pinned lazy converge, static-N config knob | **design ✅** | [`2026-07-02-p2-shared-sandbox-pool-design.md`](2026-07-02-p2-shared-sandbox-pool-design.md) (#46) |
 | **P0′** | OpenShift deployment of the FS-free harness — **P1 slice** (single durable RWO sandbox on OCP 4.20.8, full leaf smoke via Route) | **design ✅** | [`2026-07-02-p0prime-ocp-fs-free-deployment-design.md`](2026-07-02-p0prime-ocp-fs-free-deployment-design.md) (#47) |
-| **P3** | Kata isolation + ratio experiments (deferred) | planned | #48 |
+| **P3** | **Sandbox sharing-ratio experiments** — measure the per-sandbox concurrency knee (→ `KAGENTI_SANDBOX_CAP`) and derived provisioning ratio N on runc; E6 saturation curve + E7 converge contention (delivers the deferred P2 live mixed-ref validation); in-cluster git-daemon substrate; Kind-dev → OCP-authoritative | **design ✅** | [`2026-07-03-p3-sandbox-sharing-ratio-experiments-design.md`](2026-07-03-p3-sandbox-sharing-ratio-experiments-design.md) (#48) |
+| **P4** | Kata/VM isolation + intra-pod cross-leaf hardening (infra-gated: bare-metal pool vs Kata peer-pods vs gVisor — no nested KVM on the m6i cluster); Kata-overhead delta on P3's baseline; conditional RWX revisit | planned | #57 |
 
 > **Supersedes** the local un-pushed `docs/archetype-a-ocp-support` branch (NFS-RWX-for-harness):
 > after P1 the harness mounts nothing, so the harness never co-mounts `/work`. Reference only.
