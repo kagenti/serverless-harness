@@ -10,24 +10,6 @@ import {
 } from "../src/sharing";
 
 describe("E6 — saturation analysis (structural)", () => {
-  // Throughput rises then plateaus; p95 stays flat then blows up past the knee.
-  const series: LadderPoint[] = [
-    { c: 1, throughput: 1.0, p95Ms: 1000 },
-    { c: 2, throughput: 1.9, p95Ms: 1050 },
-    { c: 4, throughput: 3.6, p95Ms: 1200 },
-    { c: 8, throughput: 5.0, p95Ms: 1900 },
-    { c: 16, throughput: 5.1, p95Ms: 4200 }, // plateau + latency blowup
-  ];
-
-  it("detects the knee as the last still-scaling point within the latency bound", () => {
-    // degradeX=2 => p95 bound = 2000ms; c=16 exceeds it and throughput plateaued.
-    expect(detectKnee(series, 2)).toBe(8);
-  });
-
-  it("throws when there is no c=1 baseline", () => {
-    expect(() => detectKnee([{ c: 2, throughput: 1, p95Ms: 1 }], 2)).toThrow(/baseline/);
-  });
-
   it("computes duty cycle and derived ratio", () => {
     expect(dutyCycle(250, 1000)).toBeCloseTo(0.25, 5);
     expect(derivedRatio(0.25)).toBe(4.0);
@@ -39,6 +21,44 @@ describe("E6 — saturation analysis (structural)", () => {
     expect(dutyCycle(1500, 1000)).toBe(1);
     expect(sanityFloorPass(8, 4)).toBe(true);
     expect(sanityFloorPass(2, 4)).toBe(false);
+  });
+});
+
+describe("detectKnee — sustained-decline (noise-tolerant)", () => {
+  it("still returns the last healthy rung when the top rung blows past the latency bound", () => {
+    const series: LadderPoint[] = [
+      { c: 1, throughput: 1.0, p95Ms: 1000 },
+      { c: 2, throughput: 1.9, p95Ms: 1050 },
+      { c: 4, throughput: 3.6, p95Ms: 1200 },
+      { c: 8, throughput: 5.0, p95Ms: 1900 },
+      { c: 16, throughput: 5.1, p95Ms: 4200 }, // latency blowup (> 2x baseline)
+    ];
+    expect(detectKnee(series, 2)).toBe(8);
+  });
+
+  it("tolerates a single throughput dip within the latency bound (does not break early)", () => {
+    const series: LadderPoint[] = [
+      { c: 1, throughput: 1.0, p95Ms: 1000 },
+      { c: 2, throughput: 2.0, p95Ms: 1100 },
+      { c: 4, throughput: 1.8, p95Ms: 1200 }, // single dip below running-max 2.0
+      { c: 8, throughput: 2.6, p95Ms: 1500 }, // recovers
+    ];
+    expect(detectKnee(series, 2)).toBe(8);
+  });
+
+  it("breaks on a sustained decline (patience consecutive unhealthy rungs)", () => {
+    const series: LadderPoint[] = [
+      { c: 1, throughput: 1.0, p95Ms: 1000 },
+      { c: 2, throughput: 2.0, p95Ms: 1100 },
+      { c: 4, throughput: 1.5, p95Ms: 1200 }, // unhealthy 1
+      { c: 8, throughput: 1.4, p95Ms: 1300 }, // unhealthy 2 -> break
+      { c: 16, throughput: 3.0, p95Ms: 1400 }, // never reached
+    ];
+    expect(detectKnee(series, 2)).toBe(2);
+  });
+
+  it("throws when there is no c=1 baseline", () => {
+    expect(() => detectKnee([{ c: 2, throughput: 1, p95Ms: 1 }], 2)).toThrow(/baseline/);
   });
 });
 

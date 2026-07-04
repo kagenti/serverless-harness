@@ -5,23 +5,29 @@ export interface LadderPoint {
 }
 
 /**
- * The knee = the highest concurrency that is still "healthy": p95 within
- * `degradeX` of the single-leaf baseline AND throughput still rising vs the
- * previous rung. That c is the recommended KAGENTI_SANDBOX_CAP.
+ * The knee = the highest concurrency still "healthy": p95 within `degradeX` of the single-leaf
+ * baseline AND throughput at/above the running max. Tolerates transient dips — breaks only after
+ * `patience` consecutive unhealthy rungs (per-leaf latency variance makes a single rung dip). The
+ * knee that c is the recommended KAGENTI_SANDBOX_CAP (a floor when no break occurs).
  */
-export function detectKnee(points: LadderPoint[], degradeX: number): number {
+export function detectKnee(points: LadderPoint[], degradeX: number, patience = 2): number {
   const baseline = points.find((p) => p.c === 1);
   if (!baseline) throw new Error("detectKnee: no c=1 baseline point");
   const bound = baseline.p95Ms * degradeX;
   const sorted = [...points].sort((a, b) => a.c - b.c);
   let knee = 1;
+  let best = baseline.throughput;
+  let unhealthy = 0;
   for (let i = 1; i < sorted.length; i++) {
     const cur = sorted[i];
-    const prev = sorted[i - 1];
-    const withinLatency = cur.p95Ms <= bound;
-    const stillScaling = cur.throughput > prev.throughput;
-    if (withinLatency && stillScaling) knee = cur.c;
-    else break;
+    const healthy = cur.p95Ms <= bound && cur.throughput >= best;
+    if (healthy) {
+      knee = cur.c;
+      best = cur.throughput;
+      unhealthy = 0;
+    } else if (++unhealthy >= patience) {
+      break;
+    }
   }
   return knee;
 }
