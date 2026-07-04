@@ -166,7 +166,7 @@ sum_exec_ms() {
 
 # Count [exec-timing] lines in a harness pod log (needs KAGENTI_EXEC_TIMING=1). Usage: count_exec_lines <pod>
 count_exec_lines() {
-  kubectl -n "$NS" logs "$1" 2>/dev/null | grep -c '\[exec-timing\]'
+  kubectl -n "$NS" logs "$1" 2>/dev/null | grep -c '\[exec-timing\]' || true
 }
 
 # Median of integers read one-per-line on stdin (integer result). Usage: printf '%s\n' 3 1 2 | median

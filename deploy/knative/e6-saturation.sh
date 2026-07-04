@@ -31,6 +31,14 @@ VARIANTS=("L0:small.py:password" "L1:medium.py:eval(" "L2:large.py:eval(")
 echo "--- E6: workload curve + un-capped sweep (samples=$SAMPLES pin=$PIN sweepMax=$SWEEP_MAX) ---"
 ensure_port_forward >/dev/null || true
 wait_gitd 120 || { echo "gitd not ready"; exit 1; }
+# gitd has no readiness probe and pushes the "work" ref LAST; wait until it actually
+# resolves so Phase 1's first sample doesn't race the seed.
+for _ in $(seq 1 30); do
+  if kubectl -n "$NS" exec deploy/gitd -- git ls-remote "$(gitd_repo_url)" "$WREF" 2>/dev/null | grep -q "$WREF"; then
+    break
+  fi
+  sleep 2
+done
 
 # Pin one sandbox, disable pool routing, enable exec timing; warm exactly one harness pod (min=max=1)
 # so C=1 has no cold start and a single stable pod owns the [exec-timing] log across samples.
@@ -59,7 +67,7 @@ for v in "${VARIANTS[@]}"; do
 "; wall_s="$wall_s$wall
 "
   done
-  medMs=$(printf '%s' "$ms_s"   | grep -v '^$' | median)
+  medMs=$(printf '%s' "$ms_s"   | grep -v '^$' | median); [ "$medMs" -lt 1 ] && medMs=1
   medCnt=$(printf '%s' "$cnt_s" | grep -v '^$' | median)
   medWall=$(printf '%s' "$wall_s" | grep -v '^$' | median); [ "$medWall" -lt 1 ] && medWall=1
   echo "  $label file=$file execCount=$medCnt execMs=$medMs wallMs=$medWall"
@@ -115,12 +123,13 @@ for c in $LADDER; do
 done
 
 # shellcheck disable=SC2016
-read -r KNEE FLOOR <<<"$(npx tsx -e '
+KF=$(npx tsx -e '
   import { detectKnee, sanityFloorPass } from "../../experiments/src/sharing.ts";
   const pts = JSON.parse(process.argv[1]);
   const knee = detectKnee(pts, Number(process.argv[2]));
   process.stdout.write(`${knee} ${sanityFloorPass(knee, Number(process.argv[3]))}`);
-' "$POINTS" "$DEGRADE_X" "$MIN_C")"
+' "$POINTS" "$DEGRADE_X" "$MIN_C")
+read -r KNEE FLOOR <<<"$KF"
 echo "  knee(CAP floor)=$KNEE floorPass=$FLOOR maxScale=$SWEEP_MAX"
 
 echo "E6_RESULT ratioCurve=$CURVE knee=$KNEE floorPass=$FLOOR maxScale=$SWEEP_MAX pass=$([ "$FAIL" = 0 ] && echo yes || echo no)"
