@@ -43,12 +43,17 @@ E7_LIVE=1 bash deploy/knative/e7-converge-contention.sh
 # OCP 4.20 (authoritative): export KSVC_URL=<route>, KUBECONFIG=<ocp>, then the same.
 ```
 
-## E6 — saturation curve (→ CAP + derived N)
+## E6 — sandbox-load characterization (N-vs-workload curve + knee floor)
 
-Pins one sandbox, sweeps concurrent leaves (`E6_LADDER`), reports the knee (recommended
-`KAGENTI_SANDBOX_CAP`) and the C=1 duty cycle (→ derived N ≈ 1/duty). Hard gate: sanity
-floor `knee >= E6_MIN_CONCURRENCY`. Feed-back: pool never exceeds the derived CAP. Runs
-append their `E6_RESULT` block below.
+Reports the harness→sandbox sharing ratio **N as a curve over per-leaf sandbox work**, measured at
+C=1 on a warm pod across real Archetype-A code-review variants L0/L1/L2 (increasing review scope over
+the git-daemon `work` fixtures), each point tagged with the leaf's measured sandbox exec count. N is
+workload-dependent: the light L0 leaf is a near-empty-leaf **upper bound**; heavier leaves drive more
+sandbox execs → higher duty → lower N. A separate concurrency sweep at the heaviest variant, with the
+harness un-capped (`max-scale` raised so the sandbox — not the 5-pod harness cap — limits
+concurrency), warm and multi-sampled, feeds the sustained-decline `detectKnee`; the knee is reported
+as a floor. **Supersedes** the earlier single-N figure (N ≈ 29–48:1), which was the L0 (near-empty-leaf)
+upper bound measured with a trivial `marker.txt` leaf.
 
 ## E7 — converge contention + mixed-ref correctness
 
