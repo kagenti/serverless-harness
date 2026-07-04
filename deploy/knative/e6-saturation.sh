@@ -50,18 +50,29 @@ harness_pod() {
     --field-selector=status.phase=Running --no-headers 2>/dev/null | awk 'NR==1{print $1}'
 }
 
+# wait_ksvc_ready confirms the ksvc config is Ready but NOT that a pod is Running; without a
+# Running pod, harness_pod() returns "" and the exec-timing delta reads a non-existent pod name
+# (execCount=0 for every sample). Wait for the pinned min-scale pod, then warm the converge path
+# (shared /workspace/repo clone) so the first real sample isn't cold-start/first-clone inflated.
+# (Both discovered live on Kind — wait_ksvc_ready is necessary but not sufficient here.)
+for _ in $(seq 1 60); do [ -n "$(harness_pod)" ] && break; sleep 2; done
+dispatch_converge "e6-warmup-$RANDOM-$$" "L0" "small.py" "password" "$WREF" >/dev/null 2>&1 || true
+
 # --- Phase 1: N-vs-workload curve (C=1, warm, exec-timing DELTA per leaf, median of SAMPLES) ---
 CURVE_IN="[]"
 for v in "${VARIANTS[@]}"; do
   IFS=: read -r label file pat <<<"$v"
   ms_s=""; cnt_s=""; wall_s=""
   for _ in $(seq 1 "$SAMPLES"); do
-    pod="$(harness_pod)"
-    before_ms="$(sum_exec_ms "$pod")"; before_cnt="$(count_exec_lines "$pod")"
+    # Aggregate the exec-timing delta over ALL Running harness pods: Knative keeps multiple revision
+    # pods Running across a config transition and may route this leaf to any of them, so a single
+    # sampled pod (harness_pod) misses execs served elsewhere (observed: execCount=0). All pods pin
+    # into the same sandbox, so the union of their [exec-timing] lines is the leaf's true work.
+    before_ms="$(sum_exec_ms_all)"; before_cnt="$(count_exec_lines_all)"
     t0=$(now_ms)
     dispatch_converge "e6-$label-$RANDOM-$$" "$label" "$file" "$pat" "$WREF" >/dev/null 2>&1 || true
     wall=$(( $(now_ms) - t0 ))
-    after_ms="$(sum_exec_ms "$pod")"; after_cnt="$(count_exec_lines "$pod")"
+    after_ms="$(sum_exec_ms_all)"; after_cnt="$(count_exec_lines_all)"
     ms_s="$ms_s$(( after_ms - before_ms ))
 "; cnt_s="$cnt_s$(( after_cnt - before_cnt ))
 "; wall_s="$wall_s$wall

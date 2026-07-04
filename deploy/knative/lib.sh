@@ -169,6 +169,30 @@ count_exec_lines() {
   kubectl -n "$NS" logs "$1" 2>/dev/null | grep -c '\[exec-timing\]' || true
 }
 
+# List Running pod names for the harness Knative service (one per line). Knative keeps multiple
+# revision pods Running during a config transition, and a leaf may be served by ANY of them, so the
+# exec-timing delta must aggregate over all of them rather than a single (possibly non-serving) pod.
+harness_pods_all() {
+  kubectl get pods -n "$NS" -l "serving.knative.dev/service=$KSVC" \
+    --field-selector=status.phase=Running --no-headers 2>/dev/null | awk '{print $1}'
+}
+
+# Sum sum_exec_ms across ALL Running harness pods (robust to revision churn). Usage: sum_exec_ms_all
+sum_exec_ms_all() {
+  local total=0 p
+  # shellcheck disable=SC2013  # pod names are single tokens; word-splitting the list is intended
+  for p in $(harness_pods_all); do total=$(( total + $(sum_exec_ms "$p") )); done
+  echo "$total"
+}
+
+# Count [exec-timing] lines across ALL Running harness pods (robust to revision churn). Usage: count_exec_lines_all
+count_exec_lines_all() {
+  local total=0 p
+  # shellcheck disable=SC2013
+  for p in $(harness_pods_all); do total=$(( total + $(count_exec_lines "$p") )); done
+  echo "$total"
+}
+
 # Median of integers read one-per-line on stdin (integer result). Usage: printf '%s\n' 3 1 2 | median
 median() {
   sort -n | awk '{a[NR]=$1} END{ if(NR==0){print 0} else if(NR%2){print a[(NR+1)/2]} else {printf "%d", int((a[NR/2]+a[NR/2+1])/2)} }'
