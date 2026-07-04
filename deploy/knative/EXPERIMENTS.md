@@ -43,12 +43,38 @@ E7_LIVE=1 bash deploy/knative/e7-converge-contention.sh
 # OCP 4.20 (authoritative): export KSVC_URL=<route>, KUBECONFIG=<ocp>, then the same.
 ```
 
-## E6 — saturation curve (→ CAP + derived N)
+## E6 — sandbox-load characterization (N-vs-workload curve + knee floor)
 
-Pins one sandbox, sweeps concurrent leaves (`E6_LADDER`), reports the knee (recommended
-`KAGENTI_SANDBOX_CAP`) and the C=1 duty cycle (→ derived N ≈ 1/duty). Hard gate: sanity
-floor `knee >= E6_MIN_CONCURRENCY`. Feed-back: pool never exceeds the derived CAP. Runs
-append their `E6_RESULT` block below.
+Reports the harness→sandbox sharing ratio **N as a curve over per-leaf sandbox work**, measured at
+C=1 on a warm pod across real Archetype-A code-review variants L0/L1/L2 (increasing review scope over
+the git-daemon `work` fixtures small/medium/large.py), each point tagged with the leaf's measured
+sandbox exec count. A separate concurrency sweep at the heaviest variant, with the harness un-capped
+(`max-scale` raised so the sandbox — not the 5-pod harness cap — limits concurrency), warm and
+multi-sampled, feeds the sustained-decline `detectKnee`; the knee is reported as a floor.
+
+**Measured finding (supersedes the decreasing-curve hypothesis).** With real converge leaves, per-leaf
+sandbox work is a **fixed per-leaf constant** — ~2 execs (`.sh-fetch.lock` acquire + per-leaf worktree
+add) at ~280 ms — **independent of review scope**: the shared `/workspace/repo` clone is amortized
+across leaves, and the small→large review-scope difference lands in the **LLM turn (wall-time / tokens),
+not in sandbox execs**. So N is roughly **flat at ~20–24:1**, not a decreasing curve. This **supersedes**
+the earlier single-N figure (N ≈ 29–48:1), which used a trivial `marker.txt` leaf with no real converge.
+The honest characterization: the harness→sandbox ratio is governed by fixed per-leaf git plumbing —
+high and largely scope-invariant — so the workload dimension that moves cost is LLM latency in the
+harness tier, not sandbox occupancy.
+
+### P3.1 workload-parameterized Kind result (sh-knative, SH_MODEL=claude-haiku-4-5, 2026-07-03)
+
+Non-authoritative (laptop-bound Kind; the authoritative OCP 4.20 run is deferred to a follow-up). N-vs-workload curve, C=1, warm, 3 samples/variant:
+
+| variant | file | execCount | execMs | wallMs | N (=1/duty) |
+|---|---|---|---|---|---|
+| L0 | small.py | 2 | 280 | 6095 | 21.8 |
+| L1 | medium.py | 2 | 277 | 6648 | 24.0 |
+| L2 | large.py | 2 | 290 | 5711 | 19.7 |
+
+- **execCount is constant (2) across L0/L1/L2** → per-leaf sandbox duty is fixed git plumbing, not review scope; N ≈ **20–24:1**, flat (the 21.8 / 24 / 19.7 spread is wall-time noise, not a scope trend).
+- Concurrency sweep (L2, `max-scale=20`, degradeX=2, 3 samples/rung): c=1→16 throughput 0.114→0.664 leaves/s (monotonically rising), p95 8671→23892 ms. **knee (CAP floor) = 2**, floorPass=false — p95 crossed the 2× baseline bound at c=4 on Kind's single node (latency-bound, *not* throughput saturation). Environment-limited; the authoritative concurrency floor is the deferred OCP run.
+- Two driver bugs were caught and fixed live (invisible to shellcheck / the gated no-op): a pod-Running race (`wait_ksvc_ready` ≠ a Running pod) and single-pod exec-timing sampling under Knative multi-revision routing (fixed by aggregating the exec-timing delta across all Running harness pods).
 
 ## E7 — converge contention + mixed-ref correctness
 
