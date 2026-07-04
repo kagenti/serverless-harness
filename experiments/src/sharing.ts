@@ -57,3 +57,25 @@ export function worktreeConsistent(obs: LeafObservation[]): {
   const mismatches = obs.filter((o) => o.observedMarker !== o.expectedRef);
   return { ok: mismatches.length === 0, mismatches };
 }
+
+export interface WorkloadPoint {
+  label: string;
+  execMs: number;    // sandbox-busy ms attributable to one leaf of this workload
+  execCount: number; // number of sandbox execs the leaf issued
+  wallMs: number;    // leaf wall-clock
+}
+
+export interface RatioCurvePoint {
+  label: string;
+  execCount: number;
+  duty: number;
+  n: number;
+}
+
+/** N ≈ 1/duty at each workload intensity — the sharing ratio as a curve over sandbox work. */
+export function buildRatioCurve(points: WorkloadPoint[]): RatioCurvePoint[] {
+  return points.map((p) => {
+    const duty = dutyCycle(p.execMs, p.wallMs);
+    return { label: p.label, execCount: p.execCount, duty, n: derivedRatio(duty) };
+  });
+}

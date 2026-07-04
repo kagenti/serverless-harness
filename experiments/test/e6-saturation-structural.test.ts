@@ -4,7 +4,9 @@ import {
   dutyCycle,
   derivedRatio,
   sanityFloorPass,
+  buildRatioCurve,
   type LadderPoint,
+  type WorkloadPoint,
 } from "../src/sharing";
 
 describe("E6 — saturation analysis (structural)", () => {
@@ -37,5 +39,27 @@ describe("E6 — saturation analysis (structural)", () => {
     expect(dutyCycle(1500, 1000)).toBe(1);
     expect(sanityFloorPass(8, 4)).toBe(true);
     expect(sanityFloorPass(2, 4)).toBe(false);
+  });
+});
+
+describe("buildRatioCurve — N as a function of per-leaf sandbox work", () => {
+  it("maps each workload point to duty + N, N decreasing as sandbox work rises", () => {
+    const pts: WorkloadPoint[] = [
+      { label: "L0", execMs: 300, execCount: 2, wallMs: 12000 },
+      { label: "L1", execMs: 1200, execCount: 6, wallMs: 12000 },
+      { label: "L2", execMs: 3000, execCount: 14, wallMs: 12000 },
+    ];
+    const curve = buildRatioCurve(pts);
+    expect(curve.map((c) => c.label)).toEqual(["L0", "L1", "L2"]);
+    expect(curve[0].duty).toBeCloseTo(0.025, 3);
+    expect(curve[0].n).toBe(40); // 1/0.025
+    expect(curve[0].execCount).toBe(2);
+    // heavier sandbox work at equal wall => higher duty => lower N
+    expect(curve[2].duty).toBeGreaterThan(curve[0].duty);
+    expect(curve[2].n).toBeLessThan(curve[0].n);
+  });
+
+  it("propagates the dutyCycle guard (wallMs <= 0 throws)", () => {
+    expect(() => buildRatioCurve([{ label: "x", execMs: 1, execCount: 1, wallMs: 0 }])).toThrow();
   });
 });
