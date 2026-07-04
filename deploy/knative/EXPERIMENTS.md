@@ -56,15 +56,17 @@ multi-sampled, feeds the sustained-decline `detectKnee`; the knee is reported as
 sandbox work is a **fixed per-leaf constant** — ~2 execs (`.sh-fetch.lock` acquire + per-leaf worktree
 add) at ~280 ms — **independent of review scope**: the shared `/workspace/repo` clone is amortized
 across leaves, and the small→large review-scope difference lands in the **LLM turn (wall-time / tokens),
-not in sandbox execs**. So N is roughly **flat at ~20–24:1**, not a decreasing curve. This **supersedes**
-the earlier single-N figure (N ≈ 29–48:1), which used a trivial `marker.txt` leaf with no real converge.
+not in sandbox execs**. So N is roughly **flat** (Kind ~20–24:1, OCP ~12–17:1), not a decreasing curve —
+the flat, scope-invariant *shape* holds on both clusters; the absolute ratio scales with per-leaf
+git-plumbing latency (OCP's EBS-backed `/workspace` is costlier than Kind's → higher duty → lower N).
+This **supersedes** the earlier single-N figure (N ≈ 29–48:1), which used a trivial `marker.txt` leaf with no real converge.
 The honest characterization: the harness→sandbox ratio is governed by fixed per-leaf git plumbing —
 high and largely scope-invariant — so the workload dimension that moves cost is LLM latency in the
 harness tier, not sandbox occupancy.
 
 ### P3.1 workload-parameterized Kind result (sh-knative, SH_MODEL=claude-haiku-4-5, 2026-07-03)
 
-Non-authoritative (laptop-bound Kind; the authoritative OCP 4.20 run is deferred to a follow-up). N-vs-workload curve, C=1, warm, 3 samples/variant:
+Non-authoritative (laptop-bound Kind; the authoritative OCP 4.20 run is recorded below). N-vs-workload curve, C=1, warm, 3 samples/variant:
 
 | variant | file | execCount | execMs | wallMs | N (=1/duty) |
 |---|---|---|---|---|---|
@@ -75,6 +77,22 @@ Non-authoritative (laptop-bound Kind; the authoritative OCP 4.20 run is deferred
 - **execCount is constant (2) across L0/L1/L2** → per-leaf sandbox duty is fixed git plumbing, not review scope; N ≈ **20–24:1**, flat (the 21.8 / 24 / 19.7 spread is wall-time noise, not a scope trend).
 - Concurrency sweep (L2, `max-scale=20`, degradeX=2, 3 samples/rung): c=1→16 throughput 0.114→0.664 leaves/s (monotonically rising), p95 8671→23892 ms. **knee (CAP floor) = 2**, floorPass=false — p95 crossed the 2× baseline bound at c=4 on Kind's single node (latency-bound, *not* throughput saturation). Environment-limited; the authoritative concurrency floor is the deferred OCP run.
 - Two driver bugs were caught and fixed live (invisible to shellcheck / the gated no-op): a pod-Running race (`wait_ksvc_ready` ≠ a Running pod) and single-pod exec-timing sampling under Knative multi-revision routing (fixed by aggregating the exec-timing delta across all Running harness pods).
+
+### P3.1 authoritative OCP result (OCP 4.20.8, 3-pod pool, image ghcr.io/kagenti/serverless-harness:0.2.1, SH_MODEL=claude-haiku-4-5, 2026-07-04)
+
+Issue #64. Standing P3 stack (4-node cluster, Route ingress); gitd re-applied for the `work` ref. N-vs-workload curve, C=1, warm, 3 samples/variant:
+
+| variant | file | execCount | execMs | wallMs | N (=1/duty) |
+|---|---|---|---|---|---|
+| L0 | small.py | 2 | 455 | 6751 | 14.8 |
+| L1 | medium.py | 2 | 518 | 6551 | 12.6 |
+| L2 | large.py | 2 | 431 | 7108 | 16.5 |
+
+- **Confirms the Kind finding: the curve is flat, `execCount` constant at 2 across L0/L1/L2** — per-leaf sandbox work is fixed converge git plumbing, independent of review scope. N ≈ **12–17:1** (the 14.8 / 12.6 / 16.5 spread is git-timing noise). Lower than Kind's ~20–24 only because OCP's EBS-backed `/workspace` makes the ~2 git execs costlier (~470 ms vs ~280 ms), i.e. higher duty — the *shape* is identical.
+- Concurrency sweep (L2, `max-scale=20`, degradeX=2, 3 samples/rung): c=1→16 throughput 0.122 → 0.152 → 0.232 → 0.223 → 0.591 leaves/s, p95 8118 → 13036 → 17149 → 35712 → 26878 ms. **knee (CAP floor) = 2**, floorPass=false — p95 crossed the 2× baseline bound at c=4 and sustained past c=8.
+- **The knee is a *harness-tier* limit, not sandbox saturation.** At the wall, the pinned sandbox is only ~6–8 % busy (duty 0.06–0.08); the p95 blowup under concurrency is LLM latency + Knative cold-start (`max-scale=20` bursts new harness pods), not the sandbox. So the authoritative reading is: **one sandbox comfortably absorbs the offered concurrency (≈6–8 % duty even at C_max); the concurrency ceiling for real code-review leaves is set by the model/harness tier, not the sandbox** — which is exactly the dense-harness / shared-sandbox premise. A recommended `KAGENTI_SANDBOX_CAP` is not sandbox-bound here; scale the harness (`max-scale`) and model throughput first.
+
+**Bottom line (Kind + OCP):** N is flat and scope-invariant at ~12–24:1 (cluster-dependent on git-plumbing cost), governed by fixed per-leaf git plumbing rather than review scope; and one shared sandbox does not saturate under the offered concurrency — the limiter is the harness/LLM tier.
 
 ## E7 — converge contention + mixed-ref correctness
 
