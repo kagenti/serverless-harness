@@ -43,6 +43,17 @@ spec:
                 git push -q origin "branch-$i"
                 i=$((i + 1))
               done
+              # E6 workload ref: real code-review fixtures of increasing size (small/medium/large)
+              # so leaf review scope (=> sandbox tool calls => duty) spans light..heavy.
+              git checkout -q --orphan work || git checkout -q -b work
+              git rm -rq --cached . 2>/dev/null || true
+              rm -f marker.txt
+              printf 'API_KEY = "abc123"\npassword = "hunter2"\n' > small.py
+              { echo "import os"; i=0; while [ "$i" -lt 40 ]; do echo "def f$i(x):"; echo "    return eval(x)  # finding $i"; i=$((i+1)); done; } > medium.py
+              { echo "import subprocess"; i=0; while [ "$i" -lt 120 ]; do echo "def g$i(x):"; echo "    return eval(x)  # scan $i"; i=$((i+1)); done; } > large.py
+              git add small.py medium.py large.py
+              git commit -qm "work fixtures"
+              git push -q origin work
               # Serve read-only; upload-pack (fetch) is enabled by --export-all.
               exec git daemon --reuseaddr --verbose --export-all \
                 --base-path=/srv/git --listen=0.0.0.0 --port=9418 /srv/git
