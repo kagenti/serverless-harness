@@ -11,19 +11,29 @@ export function leafWorkspaceRef(runId: string): string {
 }
 
 /**
- * Ref-pinned lazy converge (spec §5): clone /workspace/repo once, fetch the target ref under a
- * per-pod flock (serializes concurrent converges), then add a per-leaf detached worktree at the
- * fetched commit. Idempotent — a pod already holding the ref and worktree is a no-op. Prints the
- * worktree path on stdout.
+ * Ref-pinned lazy converge (spec §5): maintain a single shared object store at /workspace/repo and
+ * fetch the target ref *by explicit URL* under a per-pod flock (serializes concurrent converges),
+ * then add a per-leaf detached worktree at the fetched commit. Idempotent — a pod already holding
+ * the ref and worktree is a no-op. Prints the worktree path on stdout.
+ *
+ * Fetching by URL (not a fixed `origin`) lets one pooled sandbox serve many repos: the first
+ * converge no longer binds /workspace/repo to its repoUrl (#67). init+fetch run entirely under the
+ * flock so concurrent leaves on a fresh workspace don't race, and a missing/corrupt repo self-heals
+ * via rm -rf + git init (a failed fetch retries once), closing the non-self-healing wedge in #59.
  */
 export function buildConvergeScript(repoUrl: string, ref: string, runId: string): string {
   const LEAF = leafWorkspaceRef(runId);
+  const fetch = `git -C "$REPO" fetch --quiet ${sq(repoUrl)} ${sq(ref)}`;
+  const init = `rm -rf "$REPO"; git init -q "$REPO"`;
   return [
     `set -eu`,
     `REPO=/workspace/repo; LOCK=/workspace/.sh-fetch.lock; LEAF=${sq(LEAF)}`,
     `mkdir -p /workspace/leaves`,
-    `[ -d "$REPO/.git" ] || git clone --quiet ${sq(repoUrl)} "$REPO"`,
-    `( flock 9; git -C "$REPO" fetch --quiet origin ${sq(ref)} ) 9>"$LOCK"`,
+    `(`,
+    `  flock 9`,
+    `  [ -d "$REPO/.git" ] || { ${init}; }`,
+    `  ${fetch} || { ${init}; ${fetch}; }`,
+    `) 9>"$LOCK"`,
     `COMMIT=$(git -C "$REPO" rev-parse FETCH_HEAD)`,
     `[ -d "$LEAF" ] || git -C "$REPO" worktree add --quiet --detach "$LEAF" "$COMMIT"`,
     `printf '%s' "$LEAF"`,
