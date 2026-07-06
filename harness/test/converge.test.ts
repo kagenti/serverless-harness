@@ -11,10 +11,24 @@ describe("leafWorkspaceRef", () => {
 
 describe("buildConvergeScript", () => {
   const s = buildConvergeScript("https://git.example/r.git", "abc123", "leaf-1");
-  it("clones only when absent (idempotent) and fetches the ref under a flock", () => {
-    expect(s).toContain('[ -d "$REPO/.git" ] || git clone');
-    expect(s).toContain("flock 9");
-    expect(s).toContain("fetch --quiet origin");
+  it("fetches the per-leaf repoUrl+ref explicitly (never a fixed 'origin')", () => {
+    // #67: fetch must target the URL from this leaf's envelope, so one pooled
+    // sandbox can serve many repos. It must NOT fetch a fixed `origin`.
+    expect(s).toContain("fetch --quiet 'https://git.example/r.git' 'abc123'");
+    expect(s).not.toContain("fetch --quiet origin");
+    // No `git clone` — init+fetch replaces it (clone binds origin to the first URL).
+    expect(s).not.toContain("git clone");
+  });
+  it("does init+fetch inside the flocked subshell (no clone race)", () => {
+    // #67 defect 2: the whole init+fetch must run under the flock, in order:
+    // flock → init → fetch → close the lock fd.
+    expect(s).toMatch(/flock 9[\s\S]*git init[\s\S]*fetch[\s\S]*9>"\$LOCK"/);
+  });
+  it("self-heals a missing or corrupt repo (init under lock, retry on fetch failure)", () => {
+    // Missing/non-git /workspace/repo → rm -rf + git init (closes #59).
+    expect(s).toContain('[ -d "$REPO/.git" ] || { rm -rf "$REPO"; git init');
+    // A failed fetch (e.g. corrupt .git) re-inits and fetches once more.
+    expect(s).toMatch(/fetch --quiet '[^']*' '[^']*' \|\| \{ rm -rf "\$REPO"; git init/);
   });
   it("adds a per-leaf worktree at the fetched commit and prints the path", () => {
     expect(s).toContain("worktree add");
