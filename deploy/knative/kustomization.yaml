@@ -13,3 +13,4 @@ resources:
   - sandbox-pool.yaml
   - service.yaml
   - gitd.yaml
+  - harness-egress-policy.yaml
