@@ -1,13 +1,39 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import { runTurn, type TurnConfig } from "@sh/harness/run-turn";
-import { runLeaf, leafSessionId, validateItem, type LeafEnvelope } from "@sh/harness/run-leaf";
+import { runLeaf, leafSessionId, validateItem, type LeafEnvelope, type LeafResult } from "@sh/harness/run-leaf";
 import { RedisWorkQueue } from "@sh/work-queue";
 import { RedisResultStore, toResultRecord, writeResult, readResult } from "@sh/harness/leaf-result-store";
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
 const JSON_HEADERS = { "Content-Type": "application/json" };
 const RESULT_TTL_SECONDS = parseInt(process.env.LEAF_RESULT_TTL_SECONDS ?? "86400", 10);
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+// Parse an integer env knob, falling back to `def` when unset or malformed. Without the finite
+// guard a typo (e.g. WAIT_MS=abc) yields NaN, which poisons `Date.now() < deadline` (always false,
+// skipping the bounded wait) and emits "Retry-After: NaN"; negatives are rejected for the same reason.
+function intEnv(name: string, def: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return def;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : def;
+}
+
+// Spec §4.3 sync-path saturation handling: how long to bound-wait (re-attempting pool acquisition
+// with exponential backoff) before returning 503, and what Retry-After to advertise. Read per
+// request so overrides take effect without a restart (and so tests can shrink the budget).
+function saturationWaitConfig() {
+  return {
+    waitMs: intEnv("KAGENTI_SYNC_SATURATION_WAIT_MS", 30000),
+    backoffMs: intEnv("KAGENTI_SYNC_SATURATION_BACKOFF_MS", 250),
+    maxBackoffMs: intEnv("KAGENTI_SYNC_SATURATION_MAX_BACKOFF_MS", 5000),
+    retryAfterS: intEnv("KAGENTI_SYNC_SATURATION_RETRY_AFTER_S", 5),
+  };
+}
+
+const isSaturated = (r: LeafResult): boolean => r.status === "failed" && r.reason === "saturated";
 
 function buildConfig(): TurnConfig {
   return {
@@ -91,7 +117,29 @@ async function handleEnqueueLeafParsed(body: any, res: ServerResponse): Promise<
 
 async function handleRunLeafParsed(body: any, _raw: string, res: ServerResponse): Promise<void> {
   if (!isLeafEnvelope(body)) { res.writeHead(400, JSON_HEADERS).end(JSON.stringify({ error: "envelope_invalid" })); return; }
-  const result = await runLeaf(body, buildConfig());
+
+  // Spec §4.3: on pool saturation the sync path bounded-waits with backoff, then 503 Retry-After.
+  // selectPoolSandbox throws before taking any lease or doing agent work, so re-running runLeaf on a
+  // "saturated" result only re-attempts acquisition — the preceding steps (validate, model resolve,
+  // Redis verdict fast-path) are idempotent. The async path is untouched (queue drains as leases free).
+  const cfg = saturationWaitConfig();
+  const deadline = Date.now() + cfg.waitMs;
+  let delay = cfg.backoffMs;
+  let result = await runLeaf(body, buildConfig());
+  while (isSaturated(result) && Date.now() < deadline) {
+    await sleep(Math.min(delay, Math.max(0, deadline - Date.now())));
+    delay = Math.min(delay * 2, cfg.maxBackoffMs);
+    result = await runLeaf(body, buildConfig());
+  }
+
+  if (isSaturated(result)) {
+    // Still saturated after the budget: tell the client to retry. Do NOT persist a result record —
+    // a 503 is "retry", not a terminal failure, and /runs/status must not report it as one.
+    res.writeHead(503, { ...JSON_HEADERS, "Retry-After": String(cfg.retryAfterS) })
+      .end(JSON.stringify({ status: "failed", reason: "saturated" }));
+    return;
+  }
+
   await writeResult(getResultStore(), leafSessionId(body), toResultRecord(result, body.sessionId, new Date().toISOString()), RESULT_TTL_SECONDS);
   res.writeHead(200, JSON_HEADERS).end(JSON.stringify(result));
 }

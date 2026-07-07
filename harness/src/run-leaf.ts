@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { RedisSessionBackend } from "@sh/session-backend";
 import { k8sSandboxExtension, kubectlExecInPod } from "@sh/k8s-sandbox";
-import { selectPoolSandbox } from "./select-sandbox.js";
+import { selectPoolSandbox, SandboxPoolSaturatedError } from "./select-sandbox.js";
 import { convergeWorkspace, cleanupWorkspace } from "./converge.js";
 import { resolveModelSelection, requireModel, applyModelGateway, type TurnConfig } from "./run-turn.js";
 import { BufferedRedisBackend } from "./buffered-redis-backend.js";
@@ -69,7 +69,7 @@ export type LeafResult =
   | { status: "done"; verdict: Verdict }
   | { status: "paused"; gateId: number; gate: { summary: string; proposed_action: string } }
   | { status: "aborted" }
-  | { status: "failed"; reason: "no_verdict" | "invalid_verdict" | "bad_inputs" | "error"; message?: string };
+  | { status: "failed"; reason: "no_verdict" | "invalid_verdict" | "bad_inputs" | "error" | "saturated"; message?: string };
 
 export function buildLeafPrompt(item: LeafItem, workspaceRef?: string): string {
   // The file/grep tools run in the sandbox pod; give the agent the absolute path so it does
@@ -131,6 +131,12 @@ export async function runLeaf(
   try {
     await produce(item, env, config, capture);
   } catch (err) {
+    // Saturation is a distinct, transient signal: the sync /runs path bounded-waits and returns
+    // 503 Retry-After on it (spec §4.3), and classifyOutcome keeps it retryable for the async
+    // path (drains as leases free). Every other throw is a generic "error".
+    if (err instanceof SandboxPoolSaturatedError) {
+      return { status: "failed", reason: "saturated", message: err.message };
+    }
     return { status: "failed", reason: "error", message: err instanceof Error ? err.message : String(err) };
   }
 

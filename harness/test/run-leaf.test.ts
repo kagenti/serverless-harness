@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { runLeaf, buildLeafPrompt, leafSessionId, validateItem } from "../src/run-leaf";
 import type { LeafEnvelope } from "../src/run-leaf.js";
+import { SandboxPoolSaturatedError } from "../src/select-sandbox.js";
 
 describe("LeafEnvelope repo ref fields", () => {
   it("accepts optional repoUrl and ref", () => {
@@ -81,6 +82,16 @@ describe("runLeaf", () => {
     const r = await runLeaf(env, undefined, { produceVerdict });
     expect(r.status).toBe("failed");
     if (r.status === "failed") expect(r.reason).toBe("error");
+  });
+
+  it("returns failed:saturated (not error) when the pool is saturated", async () => {
+    // Distinguishing saturation from a generic error lets the sync /runs path implement the
+    // spec §4.3 bounded-wait + 503 Retry-After behavior without touching the async path.
+    const env = { sessionId: "run/i1", item: { item_id: "i1", file: "f", pattern: "p" } };
+    const produceVerdict = async () => { throw new SandboxPoolSaturatedError("pool=x"); };
+    const r = await runLeaf(env, undefined, { produceVerdict });
+    expect(r.status).toBe("failed");
+    if (r.status === "failed") expect(r.reason).toBe("saturated");
   });
 });
 

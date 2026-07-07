@@ -20,4 +20,7 @@ describe("classifyOutcome", () => {
   it("retries a transient error without acking", () => {
     expect(classifyOutcome({ status: "failed", reason: "error" })).toEqual({ ack: false, retryable: true });
   });
+  it("retries a saturated result without acking (async drains as leases free, spec §4.3)", () => {
+    expect(classifyOutcome({ status: "failed", reason: "saturated" })).toEqual({ ack: false, retryable: true });
+  });
 });
