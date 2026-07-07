@@ -302,6 +302,15 @@ The harness lock-down passes when, on a Kind cluster with the zero-trust harness
    manifest has the right **shape** (default-deny egress, correct Knative pod selector, only the
    `{DNS, Redis, HTTPS}` allowlist, and both kustomizations wiring it in) — is asserted in CI by
    `packages/knative-server/test/harness-egress-policy.test.ts`.*
+   - **Liveness under the policy:** the OCP gate must also confirm the harness pod reaches and **holds
+     `Ready`** with the policy applied — including a **scale-from-zero** — so that the Knative
+     **queue-proxy** sidecar's own control-plane egress needs are covered by the allowlist. Queue-proxy
+     shares the pod netns, so a default-deny egress that omits one of its egress peers can silently
+     **starve the sidecar** and surface only as a failed scale-up (the pod never goes `Ready`), not as
+     an obvious connection error. Assert readiness + a successful cold-start request, not just
+     LLM/Redis/API reachability. (Autoscaler metrics are *scraped* — ingress to the pod — and this
+     policy is `Egress`-only, so that path is unaffected; the check guards against any egress peer we
+     have not enumerated.)
 4. **Local-exec defanged:** a forced un-routed local-exec attempt (e.g. a tool that would spawn a
    local shell) **fails** — no shell present (L4) and, were it present, no route out (L3).
 5. **Least privilege:** the harness SA **cannot** exec into a non-sandbox pod and **cannot** read

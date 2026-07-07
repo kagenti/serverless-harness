@@ -78,11 +78,22 @@ describe('harness egress NetworkPolicy manifest', () => {
     expect(selectsRedisPod, '6379 rule targets podSelector app=redis').toBe(true);
   });
 
-  it('allows outbound HTTPS on 443 (external LLM + in-cluster K8s API — the M8 seam)', () => {
+  it('allows outbound HTTPS on 443 + 6443 to 0.0.0.0/0 (external LLM + in-cluster K8s API — the M8 seam)', () => {
     const egress = np.spec?.egress ?? [];
-    const httpsPorts = egress.flatMap((r: any) => r.ports ?? []).filter((p: any) => p.port === 443);
-    expect(httpsPorts.length).toBeGreaterThan(0);
-    expect(httpsPorts.every((p: any) => (p.protocol ?? 'TCP') === 'TCP')).toBe(true);
+    const httpsRule = egress.find((r: any) => (r.ports ?? []).some((p: any) => p.port === 443));
+    expect(httpsRule, 'a rule allowing 443').toBeDefined();
+    const ports = new Set((httpsRule.ports ?? []).map((p: any) => p.port));
+    // 443 (external LLM + the kubernetes.default :443 ClusterIP) AND 6443 (the apiserver
+    // endpoint reached by kube-proxy DNAT from that ClusterIP) — lock in the documented pair.
+    expect(ports.has(443)).toBe(true);
+    expect(ports.has(6443)).toBe(true);
+    expect((httpsRule.ports ?? []).every((p: any) => (p.protocol ?? 'TCP') === 'TCP')).toBe(true);
+    // The external hop today is the M8 seam: this rule targets 0.0.0.0/0, not an in-cluster
+    // peer. When the injector lands it narrows to the injector's pinned ClusterIP.
+    const targetsAllExternal = (httpsRule.to ?? []).some(
+      (peer: any) => peer.ipBlock?.cidr === '0.0.0.0/0',
+    );
+    expect(targetsAllExternal, 'HTTPS rule targets ipBlock 0.0.0.0/0').toBe(true);
   });
 
   it("does NOT open the git-daemon port (9418) — gitd is the sandbox's peer, not the harness's", () => {
