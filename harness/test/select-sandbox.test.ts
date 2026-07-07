@@ -63,4 +63,16 @@ describe("selectPoolSandbox", () => {
       lease,
     })).rejects.toBeInstanceOf(SandboxPoolSaturatedError);
   });
+
+  it("throws a plain Error (not SandboxPoolSaturatedError) when a pool selector is set but no pods are Running", async () => {
+    const env = { KAGENTI_SANDBOX_POOL_SELECTOR: "app=sandbox" } as unknown as NodeJS.ProcessEnv;
+    // lease is never touched: the empty-list guard throws before any lease call.
+    const err = await selectPoolSandbox(env, "/head", "leaf-1", opts, {
+      listPods: async () => [],
+      lease: fakeLease({}, opts.cap),
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(SandboxPoolSaturatedError);
+    expect((err as Error).message).toBe("no Running pods for pool selector 'app=sandbox'");
+  });
 });
