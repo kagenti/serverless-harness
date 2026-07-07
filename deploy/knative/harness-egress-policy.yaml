@@ -1,0 +1,66 @@
+# deploy/knative/harness-egress-policy.yaml
+# Default-deny egress NetworkPolicy on the harness ("brain") pod — issue #66,
+# Z2 harness lock-down §4 Layer 3 (the exfil boundary).
+#
+# Invariant: the harness may reach ONLY {LLM inference, sandbox control channel}.
+# Everything else (git, arbitrary web, MCP/tool calls) must flow through the
+# sandbox — the single controlled I/O surface. This policy is the kernel/CNI-
+# enforced half of that invariant: default-deny egress + an explicit allowlist.
+#
+# CNI dependency (Z2 §6): a NetworkPolicy is only as real as the CNI enforcing it.
+# The Kind base uses kindnet, which does NOT enforce egress policy — there this
+# manifest is a documented no-op and the live-enforcement check runs on OCP
+# (OVN-Kubernetes). See the Z2 spec's verification gate.
+#
+# policyTypes is Egress ONLY: ingress is intentionally left untouched so the
+# Knative activator can still route requests into the pod.
+#
+# Allowlist today (pre-M8 injector):
+#   - DNS   : resolve the external LLM hostname (api.anthropic.com, rotating CDN IPs).
+#   - Redis : the durable session log (in-cluster, scoped to the redis pod).
+#   - :443  : the LLM provider AND the in-cluster K8s API server (pods/exec = the
+#             sandbox control channel).
+#
+# The 0.0.0.0/0:443 rule and the DNS rule are the M8 SEAM: when the inference
+# injector (Z3/M8) lands, the harness no longer holds the provider key and reaches
+# the LLM via the injector by pinned ClusterIP. External :443 then collapses to an
+# in-cluster injector peer and the DNS rule is dropped entirely (the injector owns
+# the only DNS-to-internet path), so the harness gains no internet route and no DNS
+# tunnel. See Z2 §5 and decisions H4/H5/H6.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: serverless-harness-egress
+  namespace: default
+spec:
+  # Knative stamps this label on the user pod; select it, not an app= label the
+  # Knative pod does not carry.
+  podSelector:
+    matchLabels:
+      serving.knative.dev/service: serverless-harness
+  policyTypes:
+    - Egress
+  egress:
+    # DNS — resolve the external LLM hostname. Broad by destination, narrow by port.
+    # Removed entirely at M8 (harness targets the injector by IP), closing the
+    # DNS-tunnel exfil channel.
+    - ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # Redis — the durable log. Scoped to the in-cluster redis pod by label.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - { protocol: TCP, port: 6379 }
+    # Outbound HTTPS — external LLM provider + in-cluster K8s API server (pods/exec).
+    # 443 and 6443: kubernetes.default is a :443 ClusterIP, but kube-proxy may DNAT
+    # it to an apiserver endpoint on :6443, so allow both to keep the sandbox control
+    # channel reachable regardless of the cluster's apiserver port.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }

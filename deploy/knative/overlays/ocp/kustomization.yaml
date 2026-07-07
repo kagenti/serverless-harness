@@ -27,6 +27,7 @@ resources:
   - ../../sandbox-pool.yaml
   - ../../service.yaml
   - ../../gitd.yaml
+  - ../../harness-egress-policy.yaml
 
 images:
   - name: dev.local/serverless-harness

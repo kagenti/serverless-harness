@@ -14,6 +14,21 @@ Parent design: [Zero-Trust, Multi-Agent Extensions to the Serverless Harness](..
 Builds on / consumes: M2 ([`K8sSandboxClient`](2026-06-17-m2-k8s-sandbox-client-design.md)), M3 ([persistent channel](2026-06-17-m3-persistent-channel-design.md)), M4 ([Knative wrapper](2026-06-17-m4-knative-serverless-wrapper-design.md)).
 Sibling: [M13 — Generalized Credentialed Egress](2026-06-19-m13-generalized-credentialed-egress-design.md) (the **sandbox**'s heavyweight egress plane). This design explicitly argues that apparatus does **not** extend to the harness.
 
+> **Implementation status (issue #66, 2026-07-07).** The **egress invariant** this design enforces:
+> *the harness may reach only the **LLM inference** endpoint and the **sandbox** control channel; all
+> other outbound traffic — git, arbitrary web, MCP/tool calls — flows through the sandbox, the single
+> controlled I/O surface.* Two Z2 controls now back it in the tree:
+> **(1) Fail-closed redirection (Layer 1)** — implemented and verified on `main`: `kubectlExecInPod`
+> and the persistent channel reject on any child error / abort / timeout with **no local branch**, and
+> the tool ops propagate exec rejections directly. There is no local-exec fallback on a routing error.
+> **(2) Default-deny egress NetworkPolicy (Layer 3)** — ships as `deploy/knative/harness-egress-policy.yaml`,
+> wired into both the Kind base and the OCP overlay (see Layer 3 for the shipped v1 rules).
+> The **injector pod (H4/M8) is not yet built**, so the v1 allowlist reflects today's topology —
+> `{DNS, Redis, external LLM :443, K8s API server}` — where the harness still holds the provider key
+> and resolves the LLM hostname itself. The external `:443` rule and the DNS rule are the **M8 seam**:
+> once the injector lands they collapse to in-cluster peers pinned by ClusterIP and the DNS rule is
+> **removed entirely** — eliminating both the internet route and the DNS-tunnel exfil channel.
+
 > **Why this exists.** The credential plane was designed quickly across three docs (parent → M10 →
 > M13) that kept pivoting, and the apparatus grew heavyweight. This spec re-examines the **harness**
 > on its own terms and finds it needs far less than the parent implied: its egress is
@@ -179,12 +194,30 @@ non-sandboxed local runs; the *zero-trust harness deployment* refuses them.
 ### Layer 3 — Default-deny egress NetworkPolicy *(core; the exfil boundary)*
 
 - Default-deny egress on the harness pod; **allow only**: K8s API server (for `pods/exec`), Redis,
-  and the injector pod. **No `0.0.0.0/0:443`.**
+  and the injector pod. **No `0.0.0.0/0:443`.** *(This is the **M8 end-state**; the shipped v1 below
+  is a documented intermediate that still has an external hop because the injector is not yet built.)*
 - This is the control that actually closes exfil: even Node `fs`/`net` code running locally in the
   harness (which distroless cannot stop, H10) has **nowhere to send data**.
 - **H6 dependency:** because NetworkPolicy is per-pod and a pod shares one netns, the injector must
   be a **separate pod** (not a sidecar) for "harness has no internet route" to hold while the
   injector still reaches the provider.
+- **Shipped (v1, issue #66):** `deploy/knative/harness-egress-policy.yaml` — a `policyTypes: [Egress]`
+  policy (ingress deliberately untouched so the Knative activator can still route into the pod)
+  selecting the harness pod by its Knative label `serving.knative.dev/service: serverless-harness`,
+  with a three-rule allowlist:
+  - **DNS** (`:53` UDP+TCP) — to resolve the external LLM hostname.
+  - **Redis** (`podSelector app=redis`, `:6379`) — the durable log, scoped to the in-cluster pod.
+  - **Outbound HTTPS** (`:443`/`:6443` to `0.0.0.0/0`) — the external LLM provider **and** the
+    in-cluster K8s API server (`pods/exec` = the sandbox control channel; `:6443` covers apiserver
+    endpoints reached by DNAT from the `:443` `kubernetes.default` ClusterIP).
+
+  Pre-M8 the LLM is external, so `0.0.0.0/0:443` and DNS are unavoidable and are explicitly the **M8
+  seam**: the injector terminates the external hop, the harness then targets it by pinned ClusterIP so
+  `:443` narrows to an in-cluster peer, and the DNS rule is **dropped**. Dropping DNS is part of the
+  boundary, not incidental — DNS is itself an exfil channel (a compromised harness could tunnel data
+  as `<data>.attacker.com` queries through the cluster resolver), so the end-state removes it so that
+  tunnel cannot exist. Even at v1, default-deny still blocks all lateral in-cluster movement, all
+  non-allowlisted ports, and any plaintext exfil.
 
 ### Layer 4 — Distroless image + hardened securityContext *(defense-in-depth)*
 
@@ -262,6 +295,22 @@ The harness lock-down passes when, on a Kind cluster with the zero-trust harness
    injector).
 3. **No exfil route:** from inside the harness container, an outbound connection to an arbitrary
    public host on `:443` **fails**; connections to `{API server, Redis, injector}` succeed.
+   *This gate requires a policy-enforcing CNI and therefore runs on **OCP (OVN-Kubernetes)**, not the
+   Kind base — kindnet does not enforce egress policy, so there the manifest is present but a no-op
+   (Z2 §6). Note that **pre-M8**, arbitrary-host `:443` still succeeds by construction (the LLM is
+   external); it is the injector end-state that makes it fail. The CNI-independent half — that the
+   manifest has the right **shape** (default-deny egress, correct Knative pod selector, only the
+   `{DNS, Redis, HTTPS}` allowlist, and both kustomizations wiring it in) — is asserted in CI by
+   `packages/knative-server/test/harness-egress-policy.test.ts`.*
+   - **Liveness under the policy:** the OCP gate must also confirm the harness pod reaches and **holds
+     `Ready`** with the policy applied — including a **scale-from-zero** — so that the Knative
+     **queue-proxy** sidecar's own control-plane egress needs are covered by the allowlist. Queue-proxy
+     shares the pod netns, so a default-deny egress that omits one of its egress peers can silently
+     **starve the sidecar** and surface only as a failed scale-up (the pod never goes `Ready`), not as
+     an obvious connection error. Assert readiness + a successful cold-start request, not just
+     LLM/Redis/API reachability. (Autoscaler metrics are *scraped* — ingress to the pod — and this
+     policy is `Egress`-only, so that path is unaffected; the check guards against any egress peer we
+     have not enumerated.)
 4. **Local-exec defanged:** a forced un-routed local-exec attempt (e.g. a tool that would spawn a
    local shell) **fails** — no shell present (L4) and, were it present, no route out (L3).
 5. **Least privilege:** the harness SA **cannot** exec into a non-sandbox pod and **cannot** read
