@@ -88,6 +88,46 @@ describe("POST /runs saturation (spec §4.3)", () => {
   });
 });
 
+// A malformed operator knob must not silently disable the bounded wait or emit "Retry-After: NaN".
+// Each *_MS/*_S value falls back to its default when it is not a finite, non-negative number.
+describe("POST /runs saturation env hardening", () => {
+  afterEach(() => {
+    server.close();
+    delete process.env.KAGENTI_SYNC_SATURATION_WAIT_MS;
+    delete process.env.KAGENTI_SYNC_SATURATION_BACKOFF_MS;
+    delete process.env.KAGENTI_SYNC_SATURATION_MAX_BACKOFF_MS;
+    delete process.env.KAGENTI_SYNC_SATURATION_RETRY_AFTER_S;
+  });
+
+  it("falls back to the default budget on a malformed wait value (still bound-waits)", async () => {
+    // Bug being guarded: "abc" → NaN → `Date.now() < NaN` is false → the loop is skipped and a
+    // saturated first result becomes an immediate 503. With the fallback, WAIT_MS reverts to its
+    // (ample) default, so a pod that frees on the second attempt is served a 200.
+    process.env.KAGENTI_SYNC_SATURATION_WAIT_MS = "abc";
+    process.env.KAGENTI_SYNC_SATURATION_BACKOFF_MS = "5";
+    process.env.KAGENTI_SYNC_SATURATION_MAX_BACKOFF_MS = "10";
+    server = startServer(0); base = `http://127.0.0.1:${server.address().port}`;
+    runLeaf
+      .mockResolvedValueOnce({ status: "failed", reason: "saturated" })
+      .mockResolvedValueOnce({ status: "done", verdict: { item_id: "i1", verdict: "CLEAR", reason: "ok" } });
+    const r = await post("/runs", { sessionId: "run/i1", item: { item_id: "i1", file: "f", pattern: "p" } });
+    expect(r.status).toBe(200);
+    expect(runLeaf).toHaveBeenCalledTimes(2);
+  });
+
+  it("advertises the default Retry-After when the env value is malformed (never NaN)", async () => {
+    process.env.KAGENTI_SYNC_SATURATION_WAIT_MS = "30";
+    process.env.KAGENTI_SYNC_SATURATION_BACKOFF_MS = "5";
+    process.env.KAGENTI_SYNC_SATURATION_MAX_BACKOFF_MS = "10";
+    process.env.KAGENTI_SYNC_SATURATION_RETRY_AFTER_S = "abc";
+    server = startServer(0); base = `http://127.0.0.1:${server.address().port}`;
+    runLeaf.mockResolvedValue({ status: "failed", reason: "saturated" });
+    const r = await post("/runs", { sessionId: "run/i1", item: { item_id: "i1", file: "f", pattern: "p" } });
+    expect(r.status).toBe(503);
+    expect(r.headers.get("retry-after")).toBe("5");
+  });
+});
+
 // Regression: the pre-rename path must keep working as a deprecated alias (issue #37).
 describe("POST /run-leaf (deprecated alias)", () => {
   beforeEach(() => { server = startServer(0); base = `http://127.0.0.1:${server.address().port}`; });

@@ -11,15 +11,25 @@ const RESULT_TTL_SECONDS = parseInt(process.env.LEAF_RESULT_TTL_SECONDS ?? "8640
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+// Parse an integer env knob, falling back to `def` when unset or malformed. Without the finite
+// guard a typo (e.g. WAIT_MS=abc) yields NaN, which poisons `Date.now() < deadline` (always false,
+// skipping the bounded wait) and emits "Retry-After: NaN"; negatives are rejected for the same reason.
+function intEnv(name: string, def: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return def;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : def;
+}
+
 // Spec §4.3 sync-path saturation handling: how long to bound-wait (re-attempting pool acquisition
 // with exponential backoff) before returning 503, and what Retry-After to advertise. Read per
 // request so overrides take effect without a restart (and so tests can shrink the budget).
 function saturationWaitConfig() {
   return {
-    waitMs: parseInt(process.env.KAGENTI_SYNC_SATURATION_WAIT_MS ?? "30000", 10),
-    backoffMs: parseInt(process.env.KAGENTI_SYNC_SATURATION_BACKOFF_MS ?? "250", 10),
-    maxBackoffMs: parseInt(process.env.KAGENTI_SYNC_SATURATION_MAX_BACKOFF_MS ?? "5000", 10),
-    retryAfterS: parseInt(process.env.KAGENTI_SYNC_SATURATION_RETRY_AFTER_S ?? "5", 10),
+    waitMs: intEnv("KAGENTI_SYNC_SATURATION_WAIT_MS", 30000),
+    backoffMs: intEnv("KAGENTI_SYNC_SATURATION_BACKOFF_MS", 250),
+    maxBackoffMs: intEnv("KAGENTI_SYNC_SATURATION_MAX_BACKOFF_MS", 5000),
+    retryAfterS: intEnv("KAGENTI_SYNC_SATURATION_RETRY_AFTER_S", 5),
   };
 }
 
