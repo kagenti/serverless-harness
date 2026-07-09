@@ -3,3 +3,5 @@ node_modules/
 dist/
 *.log
 pnpm-lock.yaml
+packages/k8s-sandbox/src/gen/
+gen/

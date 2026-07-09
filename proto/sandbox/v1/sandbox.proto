@@ -1,0 +1,65 @@
+syntax = "proto3";
+package sandbox.v1;
+
+// Worker (any language) dials the relay and holds ONE bidi stream.
+// worker→relay carries results/liveness; relay→worker carries commands.
+service SandboxWorker {
+  rpc Attach(stream WorkerFrame) returns (stream ServerFrame);
+}
+
+// Harness asks the relay to run a command on a connected sandbox and
+// streams the output back. The relay bridges to the worker's Attach
+// stream, keyed by sandbox_id. In-cluster only.
+service SandboxExec {
+  rpc Exec(ExecRequest) returns (stream ExecEvent);   // server-streaming output
+  rpc Abort(AbortRequest) returns (AbortResponse);
+}
+
+// ---- worker → relay ----
+message WorkerFrame {
+  oneof msg {
+    Hello     hello     = 1;   // sent first: identity + capabilities
+    Heartbeat heartbeat = 2;   // liveness; also keeps NAT/proxy state open
+    Chunk     chunk     = 3;   // streamed stdout for an exec
+    End       end       = 4;   // terminal success for an exec
+    ExecError error     = 5;   // exec/channel failure
+  }
+}
+
+// ---- relay → worker ----
+message ServerFrame {
+  oneof msg {
+    Exec  exec  = 1;           // run one command
+    Abort abort = 2;           // cancel an in-flight exec
+  }
+}
+
+message Hello {
+  string sandbox_id            = 1;
+  map<string,string> labels    = 2;   // team=alpha, env=prod, region=us-east
+  repeated string capabilities = 3;   // ["python3","kubectl","gpu","node20"]
+  string image                 = 4;   // sandbox image tag/digest
+  string arch                  = 5;   // amd64 | arm64
+  uint32 capacity_max          = 6;   // max concurrent execs the worker allows
+  string trust                 = 7;   // "trusted" | "untrusted"
+}
+
+message Heartbeat {}                   // liveness/keepalive only; harness owns lease counts
+
+message Exec {
+  uint64 req_id    = 1;                // monotonic; correlation + dedup key
+  string command   = 2;
+  bytes  stdin     = 3;                // raw bytes (protobuf is binary — no base64)
+  uint32 timeout_s = 4;
+  bool   streaming = 5;                // true for bash/grep; false for read/write
+}
+message Abort     { uint64 req_id = 1; }
+message Chunk     { uint64 req_id = 1; bytes data = 2; }        // 0..n, only if streaming
+message End       { uint64 req_id = 1; sint32 exit_code = 2; }  // exit_code < 0 = signal/none
+message ExecError { uint64 req_id = 1; string message = 2; }
+
+// ---- harness ↔ relay (SandboxExec) ----
+message ExecRequest { string sandbox_id = 1; Exec exec = 2; }   // sandbox_id from the lease
+message ExecEvent   { oneof event { Chunk chunk = 1; End end = 2; ExecError error = 3; } }
+message AbortRequest  { string sandbox_id = 1; uint64 req_id = 2; }
+message AbortResponse {}
