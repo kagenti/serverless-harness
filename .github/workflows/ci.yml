@@ -89,8 +89,9 @@ jobs:
 
       - name: Verify no codegen drift
         run: |
-          git diff --exit-code -- packages/k8s-sandbox/src/gen gen \
-            || { echo "::error::Generated stubs are out of date. Run 'buf generate' and commit."; exit 1; }
+          git add -A -- packages/k8s-sandbox/src/gen gen
+          git diff --cached --exit-code -- packages/k8s-sandbox/src/gen gen \
+            || { echo "::error::Generated stubs are out of date or untracked. Run 'buf generate' and commit."; exit 1; }
 
       - name: Build and test Go stubs
         run: cd gen/go && go build ./... && go test ./...
