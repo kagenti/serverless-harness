@@ -34,6 +34,7 @@ spec). Chronological by the spec's date; numbers are permanent.
 | [0021](0021-shared-sandbox-pool.md) | Shared sandbox pool via N Sandbox CRs with harness-side Redis-lease routing | Implemented |
 | [0022](0022-workload-parameterized-sandbox-load.md) | Report the sharing ratio as an N-vs-workload curve, not a single number | Implemented |
 | [0023](0023-sandbox-sharing-ratio-experiments.md) | Measure sandbox sharing capacity on runc; split Kata isolation into P4 | Implemented |
+| [0024](0024-sandbox-transport-remote-exec.md) | Remote sandbox exec over a worker-dialed gRPC stream, contract as language-neutral Protobuf | Accepted |
 
 ## What an ADR is (and isn't)
 
