@@ -14,3 +14,12 @@ plugins:
       - esModuleInterop=true
       - forceLong=number
       - useOptionals=none
+  # Go (worker) — messages + gRPC service stubs.
+  - remote: buf.build/protocolbuffers/go:v1.36.4
+    out: gen/go
+    opt:
+      - paths=source_relative
+  - remote: buf.build/grpc/go:v1.5.1
+    out: gen/go
+    opt:
+      - paths=source_relative
