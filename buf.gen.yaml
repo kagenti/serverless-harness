@@ -1,0 +1,16 @@
+# buf.gen.yaml — reproducible codegen. Regenerate with `buf generate`.
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: github.com/kagenti/serverless-harness/gen/go
+plugins:
+  # TypeScript (backend) — grpc-js service defs + message types.
+  - remote: buf.build/community/stephenh-ts-proto:v2.6.1
+    out: packages/k8s-sandbox/src/gen
+    opt:
+      - outputServices=grpc-js
+      - esModuleInterop=true
+      - forceLong=number
+      - useOptionals=none
