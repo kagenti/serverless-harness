@@ -23,3 +23,8 @@ secrets.*
 # OS
 .DS_Store
 Thumbs.db
+
+# Implementation plans are local-only, ephemeral work artifacts (see docs/plans/README.md).
+# They go stale the moment code merges; the durable "why" lives in docs/specs/ + docs/adrs/.
+docs/plans/*
+!docs/plans/README.md

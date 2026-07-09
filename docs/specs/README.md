@@ -135,6 +135,35 @@ live only in identity-keyed egress points. Dependency-ordered:
 
 ---
 
+## Documentation lifecycle
+
+Three artifact types, three lifecycles. Code is the source of truth for *how*; the durable
+value of docs is the *why* — decisions and the alternatives we rejected.
+
+| Artifact | Answers | Retention | Home |
+|---|---|---|---|
+| **Spec** (design doc) | *what & why* — alternatives, trade-offs, deferred work | committed, point-in-time; mark `Superseded by …`, don't delete | `docs/specs/` (here) |
+| **ADR** | one significant decision + context + consequences | committed, **permanent & immutable**, supersession-aware | [`docs/adrs/`](../adrs/) |
+| **Plan** (impl steps) | *how, in what order* | **local-only, ephemeral** — delete once coded; never committed | [`docs/plans/`](../plans/) (gitignored) |
+
+- A **spec** is a dated deep-dive. It's never retro-edited — a superseded spec gets a
+  `Status:` header pointing at its successor and stays in git as the point-in-time record.
+- An **ADR** is the permanent spine: a short, immutable record of a single decision that links
+  out to the spec for the full reasoning. See [`docs/adrs/README.md`](../adrs/README.md).
+- A **plan** is a throwaway checklist, obsolete the moment the code merges — so plans are
+  local-only work artifacts (gitignored). See [`docs/plans/README.md`](../plans/README.md).
+
+### Status vocabulary (specs & ADRs)
+
+Every spec and ADR carries a `Status:` line in its header, drawn from:
+
+> `Proposed` → `Accepted` → `Implemented` → `Superseded by <link>` (or `Deprecated`)
+
+When a design is replaced, set the old spec's status to `Superseded by <link to successor>`
+rather than deleting it — the record of what we once thought, and why we changed, has value.
+(For example, the removed Redis-transport remote-exec design is marked superseded by the
+gRPC/Connect sandbox-transport spec, which records the supersession in its own §12.)
+
 ## Conventions going forward
 
 - **New Phase-2 specs** take the next free **`Zx`** id and record it in this table.
@@ -142,8 +171,8 @@ live only in identity-keyed egress points. Dependency-ordered:
   lives here, not in the filename, to avoid rename churn.
 - Each spec keeps the existing header block (Version / Status / Scope / Builds-on); cross-reference
   by **canonical id** (e.g. "Z3") with the filename in parentheses on first mention.
-- Implementation plans live in `docs/superpowers/plans/` per repo convention, named for the spec
-  they implement.
+- Implementation plans live in [`docs/plans/`](../plans/) (local-only, gitignored), named for the
+  spec they implement, and are deleted once the work is coded and merged.
 
 ---
 
