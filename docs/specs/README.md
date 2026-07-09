@@ -88,6 +88,29 @@ the `M`-numbered built harness (Phase 1) and the `Z`-numbered credential plane (
 
 ---
 
+## SandboxTransport (`ST`-prefix)
+
+Make the sandbox reachable from **anywhere** by inverting connectivity: the sandbox worker dials
+*out* over one gRPC bidi stream (HTTP/2 on `:443`), a single-replica in-cluster relay bridges it to
+the harness, and both paths land behind the existing `SandboxTransport` seam
+(`KubectlTransport` local + `GrpcRelayTransport` remote). Extends the shared-sandbox model (P2) to
+untrusted bring-your-own / NAT / on-prem / other-cloud sandboxes without touching the Pi loop,
+session backend, or leaf queue. Contract is a **language-neutral Protobuf IDL** (`sandbox/v1`), not
+a TypeScript interface.
+
+| ID | Title | Status | Spec / issue |
+|----|-------|--------|--------------|
+| **ST** | **SandboxTransport — language-neutral remote sandbox exec over gRPC** — worker-dialed `Attach` stream, single-replica presence-only relay mirroring into the existing pool, `SandboxTransport` seam, Go reference worker; per-sandbox bearer token day-one (SPIFFE/mTLS additive later) | **design ✅** | [`2026-07-08-sandbox-transport-grpc-design.md`](2026-07-08-sandbox-transport-grpc-design.md) (#78); [ADR-0024](../adrs/0024-sandbox-transport-remote-exec.md); epic #89 |
+
+> **Two build tracks, separate contributors.** The **backend** (TypeScript / in-cluster — proto,
+> `SandboxTransport` seam + `KubectlTransport` rename, relay + `GrpcRelayTransport` + presence mirror:
+> issues #84–#86) and the **worker** (Go / sandbox side — reference worker: #87) build in parallel
+> off the shared `sandbox/v1` contract, joined by the integration + live gate (#88). This mirrors the
+> Z2/Z3 (harness) vs. Z4/Z5 (sandbox) split. Implementation **plans are local-only** (`../plans/`,
+> gitignored) and authored per contributor.
+
+---
+
 ## Phase 2 — Zero-Trust Credential Plane (`Z`-prefix)
 
 > **Roadmap anchor:** [Leaf-Session Backend Capability Charter](2026-06-26-leaf-session-backend-capability-charter.md) (evidence base: [Pipeline Archetypes & Requirements](2026-06-26-pipeline-archetypes-requirements.md)) tests the design against three independent agentic-pipeline archetypes and **reprioritizes** this track: the harness's core role is a **leaf-session backend for external orchestrators**. **Z1 (per-user identity) defers** until multi-tenant hosting; **Z6 _extras_ defer** — the core clean-context-subagent need (one archetype plans it) is met by a **re-entrant leaf-session contract**, not new machinery. Z3/Z5 stay "keep-light."
