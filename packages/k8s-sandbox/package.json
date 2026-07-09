@@ -16,8 +16,6 @@
   "dependencies": {
     "@bufbuild/protobuf": "^2.6.1",
     "@earendil-works/pi-coding-agent": "link:../../pi-fork/packages/coding-agent",
-    "@grpc/grpc-js": "^1.12.0",
-    "long": "^5.2.3",
-    "protobufjs": "^7.4.0"
+    "@grpc/grpc-js": "^1.12.0"
   }
 }
