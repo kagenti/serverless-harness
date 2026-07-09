@@ -4,6 +4,37 @@ This directory is the **permanent decision spine** of the harness. An ADR captur
 significant decision** — the context that forced it, the choice made, and the consequences
 we accepted — in a form that stays true even as the code around it changes.
 
+## Index
+
+Reconstructed from the design specs in [`../specs/`](../specs/) (each ADR links back to its
+spec). Chronological by the spec's date; numbers are permanent.
+
+| # | Decision | Status |
+|---|----------|--------|
+| [0001](0001-redis-session-backend.md) | Persist Pi session state through a pluggable Redis backend | Implemented |
+| [0002](0002-k8s-sandbox-client-remote-exec.md) | Route Pi tool execution to a remote pod via `kubectl exec` | Implemented |
+| [0003](0003-persistent-in-pod-channel.md) | Reuse a long-lived in-pod bash session for fast tool ops | Implemented |
+| [0004](0004-knative-serverless-wrapper.md) | Expose the harness as a scale-to-zero Knative HTTP service | Implemented |
+| [0005](0005-mcp-code-mode.md) | Originate MCP calls as code the model runs in the sandbox | Accepted |
+| [0006](0006-generalized-credentialed-egress.md) | Placeholder-swap over a forward proxy for all credentialed egress | Accepted |
+| [0007](0007-compaction-checkpoint-fast-path.md) | Ride Pi's native compaction entry as the resume checkpoint | Implemented |
+| [0008](0008-experiments-harness.md) | Measure the loader as in-process reconstruction cost, not end-to-end latency | Implemented |
+| [0009](0009-cluster-experiments.md) | Drive cluster experiments with bash extending `smoke.sh` | Implemented |
+| [0010](0010-identity-spine.md) | Per-session SPIFFE identity, user in the attested path, minted by the orchestrator | Accepted |
+| [0011](0011-harness-lockdown.md) | Defend the harness by defanging local execution, not by mediating egress | Accepted |
+| [0012](0012-inference-injector.md) | A separate injector pod holds the provider key and owns public LLM egress | Accepted |
+| [0013](0013-leaf-session-backend-reprioritization.md) | Reprioritize the harness as a leaf-session backend; defer the heavy credential plane | Accepted |
+| [0014](0014-mvp-leaf-session-contract.md) | Prove the backend with a run-to-completion `/runs` invocation contract | Implemented |
+| [0015](0015-async-leaf-completion.md) | KEDA ScaledJob over a Redis Streams queue for background leaf execution | Implemented |
+| [0016](0016-human-gate.md) | Human-gate as a structured terminal plus externally-triggered continuation | Implemented |
+| [0017](0017-registry-securitycontext-hardening.md) | Apply the non-root least-privilege securityContext baseline to agent pods | Implemented |
+| [0018](0018-scheduled-leaf-dispatch.md) | Native Kubernetes CronJob as the scheduled dispatch start signal | Implemented |
+| [0019](0019-ocp-fs-free-deployment.md) | Durable RWO EBS Sandbox CR, non-root under nonroot-v2, for the OCP deployment | Implemented |
+| [0020](0020-fs-free-harness.md) | Filesystem-free harness (envelope inline + Redis, working set on Sandbox CR) | Implemented |
+| [0021](0021-shared-sandbox-pool.md) | Shared sandbox pool via N Sandbox CRs with harness-side Redis-lease routing | Implemented |
+| [0022](0022-workload-parameterized-sandbox-load.md) | Report the sharing ratio as an N-vs-workload curve, not a single number | Implemented |
+| [0023](0023-sandbox-sharing-ratio-experiments.md) | Measure sandbox sharing capacity on runc; split Kata isolation into P4 | Implemented |
+
 ## What an ADR is (and isn't)
 
 | | ADR | Spec (`../specs/`) | Plan (`../plans/`) |
