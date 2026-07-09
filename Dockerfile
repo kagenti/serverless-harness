@@ -1,5 +1,5 @@
 # Stage 1: install + build pi-fork
-FROM node:22-alpine AS builder
+FROM node:24-alpine AS builder
 RUN apk add --no-cache build-base python3 pkgconfig pixman-dev cairo-dev pango-dev jpeg-dev giflib-dev librsvg-dev
 RUN corepack enable && corepack prepare pnpm@9 --activate
 WORKDIR /app
@@ -36,7 +36,7 @@ RUN npm run build -w packages/ai && \
 WORKDIR /app
 
 # Stage 2: slim runtime
-FROM node:22-alpine
+FROM node:24-alpine
 RUN apk add --no-cache kubectl cairo pango libjpeg-turbo giflib librsvg pixman
 WORKDIR /app
 COPY --from=builder /app ./
