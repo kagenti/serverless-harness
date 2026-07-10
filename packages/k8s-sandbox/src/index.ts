@@ -7,3 +7,4 @@ export { buildSelectorArgs, buildPodNameArgs, resolveSandboxConfig, type RunKube
 export { buildPoolPodsArgs, parsePodNames, listPoolPods } from "./pool.js";
 export { defaultRunKubectl } from "./resolve-pod.js";
 export { GrpcRelayTransport, type ExecClientLike } from "./grpc-relay-transport.js";
+export * from "./gen/sandbox/v1/sandbox.js";
