@@ -207,9 +207,11 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
   // --- P2: choose a sandbox pod (pool lease) before building the prompt/session. Placed after the
   // verdict fast-path so a recovered verdict does not lease a pod. Returns null ⇒ no sandbox
   // configured (local tools). Throws SandboxPoolSaturatedError when a configured pool is full.
+  const remoteSandbox = process.env.SH_REMOTE_SANDBOX === "1";
   const selected = await selectPoolSandbox(process.env, cwd, sid, {
     cap: Number(process.env.KAGENTI_SANDBOX_CAP ?? "20"),
     ttlMs: Number(process.env.KAGENTI_SANDBOX_LEASE_TTL_MS ?? "60000"),
+    remoteSandbox,
   });
   const converging = selected != null && !!env.repoUrl && !!env.ref;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -220,11 +222,16 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
     // pod via exec — the harness opens nothing.
     let workspaceRef = env.workspaceRef;
     if (converging) {
-      const transport = KubectlTransport(selected!.config);
+      // Reuse the leased grpc transport (Task 8) when present; otherwise build a fresh
+      // KubectlTransport exactly as before. For pods, KubectlTransport.close() is a no-op and
+      // each exec spawns fresh, so building + closing per phase stays observationally identical
+      // to today. For grpc, this is the SAME transport instance used by the agent extension and
+      // cleanup below — closed exactly once, in the outer finally.
+      const convergeTransport = selected?.transport ?? KubectlTransport(selected!.config);
       try {
-        workspaceRef = await convergeWorkspace(transport, env.repoUrl!, env.ref!, sid);
+        workspaceRef = await convergeWorkspace(convergeTransport, env.repoUrl!, env.ref!, sid);
       } finally {
-        await transport.close();
+        if (!selected?.transport) await convergeTransport.close();
       }
     }
     if (selected) {
@@ -263,7 +270,7 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
       extensionFactories: [
         ...(allowVerdict ? [submitVerdictExtension(capture, sessionManager)] : []),
         requestApprovalExtension(capture, sessionManager, gateState.nextGateId),
-        k8sSandboxExtension({ config: selected?.config ?? null }),
+        k8sSandboxExtension({ config: selected?.config ?? null, transport: selected?.transport }),
         flushExtension(backend),
         checkpointExtension(store, sessionManager),
       ],
@@ -290,10 +297,16 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
   } finally {
     if (heartbeat) clearInterval(heartbeat);
     if (converging) {
-      const transport = KubectlTransport(selected!.config);
-      await cleanupWorkspace(transport, sid);
-      await transport.close();
+      const cleanupTransport = selected?.transport ?? KubectlTransport(selected!.config);
+      try {
+        await cleanupWorkspace(cleanupTransport, sid);
+      } finally {
+        if (!selected?.transport) await cleanupTransport.close();
+      }
     }
     if (selected) await selected.release();
+    // The shared grpc transport (Task 8) is leased once and used by converge + the agent
+    // extension + cleanup above; close it exactly once here, never per-phase.
+    if (selected?.transport) await selected.transport.close();
   }
 };
