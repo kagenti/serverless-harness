@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { orderByLoad, selectPoolSandbox, SandboxPoolSaturatedError } from "../src/select-sandbox.js";
 import type { LeaseStore } from "../src/sandbox-lease.js";
+import type { RecordStore, SandboxRecord } from "../src/pool-records.js";
+import type { ExecClientLike } from "@sh/k8s-sandbox";
 
 describe("orderByLoad", () => {
   it("sorts ascending by active load, stable on ties", () => {
@@ -74,5 +76,39 @@ describe("selectPoolSandbox", () => {
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(SandboxPoolSaturatedError);
     expect((err as Error).message).toBe("no Running pods for pool selector 'app=sandbox'");
+  });
+});
+
+const grpcRec: SandboxRecord = { sandboxId: "sbx-remote-1", labels: {}, capabilities: [], capacityMax: 4, transport: "grpc" };
+const fakeRecords = (recs: SandboxRecord[]): RecordStore => ({ put: async () => {}, remove: async () => {}, list: async () => recs });
+const fakeExecClient: ExecClientLike = { exec: () => ({ on: () => ({}), cancel: () => {} }) as never, abort: (_r, cb) => { cb(null); return {}; } };
+
+describe("selectPoolSandbox remote dispatch", () => {
+  const env = (extra: Record<string, string> = {}) => ({ KAGENTI_SANDBOX_POOL_SELECTOR: "app=sbx", ...extra }) as NodeJS.ProcessEnv;
+  const opts = { cap: 4, ttlMs: 60000, remoteSandbox: true };
+
+  it("flag OFF: ignores grpc records, transport is undefined", async () => {
+    const lease = fakeLease({ "sandbox-0-0": 0 }, opts.cap);
+    const sel = await selectPoolSandbox(env(), "/head", "run-1", { cap: 4, ttlMs: 60000 /* remoteSandbox omitted ⇒ false */ }, {
+      listPods: async () => ["sandbox-0-0"],
+      lease,
+      records: fakeRecords([grpcRec]),
+    });
+    expect(sel?.transport).toBeUndefined();
+    expect(sel?.config.pod).toBe("sandbox-0-0");
+  });
+
+  it("flag ON: a leased grpc record yields a GrpcRelayTransport", async () => {
+    // Only the grpc record is available (no pods) so it must be chosen.
+    const lease = fakeLease({ "sbx-remote-1": 0 }, opts.cap);
+    const sel = await selectPoolSandbox(env(), "/head", "run-1", opts, {
+      listPods: async () => [],
+      lease,
+      records: fakeRecords([grpcRec]),
+      makeExecClient: () => fakeExecClient,
+    });
+    expect(sel?.transport).toBeDefined();
+    expect(typeof sel?.transport?.exec).toBe("function");
+    expect(sel?.config.pod).toBe("sbx-remote-1");
   });
 });

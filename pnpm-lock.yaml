@@ -39,6 +39,9 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: link:../pi-fork/packages/coding-agent
         version: link:../pi-fork/packages/coding-agent
+      '@grpc/grpc-js':
+        specifier: ^1.12.0
+        version: 1.14.4
       '@sh/k8s-sandbox':
         specifier: workspace:*
         version: link:../packages/k8s-sandbox
