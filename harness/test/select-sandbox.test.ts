@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { orderByLoad, selectPoolSandbox, SandboxPoolSaturatedError } from "../src/select-sandbox.js";
 import type { LeaseStore } from "../src/sandbox-lease.js";
 import type { RecordStore, SandboxRecord } from "../src/pool-records.js";
@@ -87,15 +87,19 @@ describe("selectPoolSandbox remote dispatch", () => {
   const env = (extra: Record<string, string> = {}) => ({ KAGENTI_SANDBOX_POOL_SELECTOR: "app=sbx", ...extra }) as NodeJS.ProcessEnv;
   const opts = { cap: 4, ttlMs: 60000, remoteSandbox: true };
 
-  it("flag OFF: ignores grpc records, transport is undefined", async () => {
+  it("flag OFF: ignores grpc records, transport is undefined, and never calls records.list()", async () => {
     const lease = fakeLease({ "sandbox-0-0": 0 }, opts.cap);
+    const list = vi.fn(async () => [grpcRec]);
+    const records: RecordStore = { put: async () => {}, remove: async () => {}, list };
     const sel = await selectPoolSandbox(env(), "/head", "run-1", { cap: 4, ttlMs: 60000 /* remoteSandbox omitted ⇒ false */ }, {
       listPods: async () => ["sandbox-0-0"],
       lease,
-      records: fakeRecords([grpcRec]),
+      records,
     });
     expect(sel?.transport).toBeUndefined();
     expect(sel?.config.pod).toBe("sandbox-0-0");
+    // The #1 inertness gate: when remoteSandbox is off, RecordStore.list() must never be invoked.
+    expect(list).not.toHaveBeenCalled();
   });
 
   it("flag ON: a leased grpc record yields a GrpcRelayTransport", async () => {
