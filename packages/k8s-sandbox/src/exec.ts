@@ -1,21 +1,11 @@
-import { spawn } from "node:child_process";
+import { spawn as nodeSpawn } from "node:child_process";
 import type { K8sSandboxConfig } from "./config.js";
+import type { ExecInPod, SandboxTransport } from "./transport.js";
 
-/**
- * Run one command inside the sandbox pod (as `bash -c <command>`).
- * stdout is collected and returned; stderr is streamed to onData (with stdout)
- * but NOT included in `stdout`, so file ops get clean bytes. Pass `stdin` to
- * feed data (e.g. base64 for writes). `onData` streams output for bash.
- */
-export type ExecInPod = (
-  command: string,
-  opts?: {
-    stdin?: Buffer;
-    onData?: (chunk: Buffer) => void;
-    signal?: AbortSignal;
-    timeout?: number; // seconds
-  },
-) => Promise<{ stdout: Buffer; exitCode: number | null }>;
+// Re-export so existing `./exec.js` importers of ExecInPod keep working.
+export type { ExecInPod } from "./transport.js";
+
+type SpawnFn = typeof nodeSpawn;
 
 /** Pure argv builder for `kubectl exec` (unit-tested). */
 export function buildKubectlArgs(config: K8sSandboxConfig, command: string): string[] {
@@ -36,11 +26,19 @@ export function formatExecTiming(pod: string, ms: number, command: string): stri
   return `[exec-timing] pod=${pod} ms=${ms} cmd=${cmd}\n`;
 }
 
-/** Default transport: shell out to `kubectl exec`. */
-export function kubectlExecInPod(config: K8sSandboxConfig): ExecInPod {
-  return (command, opts = {}) =>
+/**
+ * Default transport: each `exec()` shells out to a fresh `kubectl exec`. There is
+ * no long-lived resource, so `close()` is a no-op. `deps.spawn` is injectable for
+ * tests (defaults to node's spawn); real callers pass only `config`.
+ */
+export function KubectlTransport(
+  config: K8sSandboxConfig,
+  deps: { spawn?: SpawnFn } = {},
+): SandboxTransport {
+  const spawnFn = deps.spawn ?? nodeSpawn;
+  const exec: ExecInPod = (command, opts = {}) =>
     new Promise((resolve, reject) => {
-      const child = spawn("kubectl", buildKubectlArgs(config, command), {
+      const child = spawnFn("kubectl", buildKubectlArgs(config, command), {
         stdio: ["pipe", "pipe", "pipe"],
       });
       const startMs = Date.now();
@@ -88,4 +86,13 @@ export function kubectlExecInPod(config: K8sSandboxConfig): ExecInPod {
       if (opts.stdin) child.stdin.end(opts.stdin);
       else child.stdin.end();
     });
+  return { exec, close: async () => {} };
+}
+
+/**
+ * @deprecated Back-compat alias retained only during the ST2 migration; use
+ * `KubectlTransport(config).exec`. Removed in the final ST2 task.
+ */
+export function kubectlExecInPod(config: K8sSandboxConfig): ExecInPod {
+  return KubectlTransport(config).exec;
 }
