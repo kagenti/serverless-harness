@@ -1,4 +1,4 @@
-import type { ExecInPod } from "@sh/k8s-sandbox";
+import type { SandboxTransport } from "@sh/k8s-sandbox";
 
 /** Single-quote-escape a string for safe interpolation into a bash command. */
 function sq(s: string): string {
@@ -53,14 +53,14 @@ export function buildCleanupScript(runId: string): string {
 
 /** Run the converge script in the pod; return the worktree ref. Throws on non-zero exit. */
 export async function convergeWorkspace(
-  exec: ExecInPod, repoUrl: string, ref: string, runId: string,
+  transport: SandboxTransport, repoUrl: string, ref: string, runId: string,
 ): Promise<string> {
-  const { stdout, exitCode } = await exec(buildConvergeScript(repoUrl, ref, runId), { timeout: 300 });
+  const { stdout, exitCode } = await transport.exec(buildConvergeScript(repoUrl, ref, runId), { timeout: 300 });
   if (exitCode !== 0) throw new Error(`converge failed (exit ${exitCode})`);
   return stdout.toString().trim() || leafWorkspaceRef(runId);
 }
 
 /** Best-effort worktree cleanup; swallows errors so it never masks a verdict. */
-export async function cleanupWorkspace(exec: ExecInPod, runId: string): Promise<void> {
-  try { await exec(buildCleanupScript(runId), { timeout: 60 }); } catch { /* ignore */ }
+export async function cleanupWorkspace(transport: SandboxTransport, runId: string): Promise<void> {
+  try { await transport.exec(buildCleanupScript(runId), { timeout: 60 }); } catch { /* ignore */ }
 }

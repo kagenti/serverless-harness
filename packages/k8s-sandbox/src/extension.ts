@@ -9,7 +9,8 @@ import {
   type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 import { type K8sSandboxConfig, resolveConfig } from "./config.js";
-import { type ExecInPod, kubectlExecInPod } from "./exec.js";
+import { KubectlTransport } from "./exec.js";
+import type { SandboxTransport } from "./transport.js";
 import { persistentExecInPod } from "./persistent-exec.js";
 import {
   createPodBashOps,
@@ -27,18 +28,18 @@ import { createPodGrepTool } from "./grep-tool.js";
  * configured.
  *
  * Two-tier transport:
- *  - fastExec: a persistent in-pod bash channel for the small request/response
+ *  - fastTransport: a persistent in-pod bash channel for the small request/response
  *    ops (read/write/edit/ls/find), with transparent fallback to per-call exec.
- *  - streamExec: M2's per-call `kubectl exec` for the streaming/long-running ops
+ *  - streamTransport: per-call `kubectl exec` for the streaming/long-running ops
  *    (bash, grep, user `!`), which need onData/abort/long-running semantics.
  *
- * @param opts.config Explicit config; if omitted, resolved from process.env.
- *                    Pass `null` to force-disable.
- * @param opts.exec   Override BOTH transports (used by tests / alternate auth).
+ * @param opts.config    Explicit config; if omitted, resolved from process.env.
+ *                       Pass `null` to force-disable.
+ * @param opts.transport Override BOTH transports (used by tests / alternate auth).
  */
 export function k8sSandboxExtension(opts?: {
   config?: K8sSandboxConfig | null;
-  exec?: ExecInPod;
+  transport?: SandboxTransport;
 }): ExtensionFactory {
   return (pi: ExtensionAPI) => {
     const localCwd = process.cwd();
@@ -46,21 +47,21 @@ export function k8sSandboxExtension(opts?: {
       opts?.config !== undefined ? opts.config : resolveConfig(process.env, localCwd);
     if (!config) return; // off gate — local tools stand
 
-    const streamExec = opts?.exec ?? kubectlExecInPod(config);
-    const fastExec =
-      opts?.exec ?? persistentExecInPod(config, { fallback: kubectlExecInPod(config) });
+    const streamTransport = opts?.transport ?? KubectlTransport(config);
+    const fastTransport =
+      opts?.transport ?? persistentExecInPod(config, { fallback: KubectlTransport(config).exec });
 
     // Fast request/response ops → persistent channel.
-    pi.registerTool(createReadTool(localCwd, { operations: createPodReadOps(fastExec, config) }));
-    pi.registerTool(createWriteTool(localCwd, { operations: createPodWriteOps(fastExec, config) }));
-    pi.registerTool(createEditTool(localCwd, { operations: createPodEditOps(fastExec, config) }));
-    pi.registerTool(createLsTool(localCwd, { operations: createPodLsOps(fastExec, config) }));
-    pi.registerTool(createFindTool(localCwd, { operations: createPodFindOps(fastExec, config) }));
+    pi.registerTool(createReadTool(localCwd, { operations: createPodReadOps(fastTransport.exec, config) }));
+    pi.registerTool(createWriteTool(localCwd, { operations: createPodWriteOps(fastTransport.exec, config) }));
+    pi.registerTool(createEditTool(localCwd, { operations: createPodEditOps(fastTransport.exec, config) }));
+    pi.registerTool(createLsTool(localCwd, { operations: createPodLsOps(fastTransport.exec, config) }));
+    pi.registerTool(createFindTool(localCwd, { operations: createPodFindOps(fastTransport.exec, config) }));
 
-    // Streaming / long-running ops → per-call kubectl exec (M2 path, unchanged).
-    pi.registerTool(createBashTool(localCwd, { operations: createPodBashOps(streamExec, config) }));
-    pi.registerTool(createPodGrepTool(localCwd, streamExec, config));
-    pi.on("user_bash", () => ({ operations: createPodBashOps(streamExec, config) }));
+    // Streaming / long-running ops → per-call kubectl exec.
+    pi.registerTool(createBashTool(localCwd, { operations: createPodBashOps(streamTransport.exec, config) }));
+    pi.registerTool(createPodGrepTool(localCwd, streamTransport.exec, config));
+    pi.on("user_bash", () => ({ operations: createPodBashOps(streamTransport.exec, config) }));
 
     // Tell the model its cwd is the pod's, not the head's.
     pi.on("before_agent_start", (event) => {
@@ -72,9 +73,8 @@ export function k8sSandboxExtension(opts?: {
     });
 
     // Tear down the persistent kubectl process so it is never leaked.
-    pi.on("session_shutdown", () => {
-      const maybe = fastExec as ExecInPod & { dispose?: () => void };
-      if (typeof maybe.dispose === "function") maybe.dispose();
+    pi.on("session_shutdown", async () => {
+      await fastTransport.close();
     });
   };
 }

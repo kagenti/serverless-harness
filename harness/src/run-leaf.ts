@@ -7,7 +7,7 @@ import {
   type FileEntry,
 } from "@earendil-works/pi-coding-agent";
 import { RedisSessionBackend } from "@sh/session-backend";
-import { k8sSandboxExtension, kubectlExecInPod } from "@sh/k8s-sandbox";
+import { k8sSandboxExtension, KubectlTransport } from "@sh/k8s-sandbox";
 import { selectPoolSandbox, SandboxPoolSaturatedError } from "./select-sandbox.js";
 import { convergeWorkspace, cleanupWorkspace } from "./converge.js";
 import { resolveModelSelection, requireModel, applyModelGateway, type TurnConfig } from "./run-turn.js";
@@ -220,8 +220,12 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
     // pod via exec — the harness opens nothing.
     let workspaceRef = env.workspaceRef;
     if (converging) {
-      const exec = kubectlExecInPod(selected!.config);
-      workspaceRef = await convergeWorkspace(exec, env.repoUrl!, env.ref!, sid);
+      const transport = KubectlTransport(selected!.config);
+      try {
+        workspaceRef = await convergeWorkspace(transport, env.repoUrl!, env.ref!, sid);
+      } finally {
+        await transport.close();
+      }
     }
     if (selected) {
       const hbMs = Number(process.env.KAGENTI_SANDBOX_HEARTBEAT_MS ?? "20000");
@@ -285,7 +289,11 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
     }
   } finally {
     if (heartbeat) clearInterval(heartbeat);
-    if (converging) await cleanupWorkspace(kubectlExecInPod(selected!.config), sid);
+    if (converging) {
+      const transport = KubectlTransport(selected!.config);
+      await cleanupWorkspace(transport, sid);
+      await transport.close();
+    }
     if (selected) await selected.release();
   }
 };

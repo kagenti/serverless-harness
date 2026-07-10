@@ -78,7 +78,7 @@ sandbox pod, not on the harness head — M2 isolation is proven end-to-end.
 # M3 persistent channel + env injection + find — real kind smoke
 
 Proves the three M3 changes on a real cluster, plus the post-fix write/edit path
-and dispose. Unlike M2's `cli.ts` runbook, M3's smoke is an **automated,
+and close. Unlike M2's `cli.ts` runbook, M3's smoke is an **automated,
 skip-by-default vitest suite** that drives the real M3 transports/ops directly
 against a live pod — deterministic and gateway-independent (no model needed).
 The suite lives at `test/m3-live-smoke.test.ts` and is gated on `M3_LIVE_SMOKE`,
@@ -138,7 +138,7 @@ Suite is skipped without the gate (`pnpm test` → 47 passed | 6 skipped).
   re-included** — a positive `-g <pattern>` whitelist-overrides a *file-level*
   ignore (minor divergence from Pi's `fd`; see design D5). Net: directory-level
   gitignore parity; only individually-ignored files matching the glob can leak.
-- **Claim 5 — dispose:** `fastExec.dispose()` non-throwing; the persistent
+- **Claim 5 — close:** `fastExec.close()` non-throwing; the persistent
   `kubectl exec -- bash` is torn down (best-effort process probe, informational).
 
 **Conclusion: PASS.** The persistent channel serves fast-op bursts with one
