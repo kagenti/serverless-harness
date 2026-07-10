@@ -1,0 +1,63 @@
+# Minimal OpenAI-compatible chat/completions stub that stands in for a real IBAC (intent-based
+# access control) decision service. Part of the RC1 AuthBridge path: applied only when
+# SH_AUTHBRIDGE=1 is enabled on the harness. Inert otherwise — never applied in the default flow,
+# and not wired into any kustomization base in this task. Reuses the harness image with the
+# ibac-stub entrypoint (see deploy/knative/relay-deployment.yaml for the same shared-image
+# convention).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ibac-stub
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ibac-stub
+  template:
+    metadata:
+      labels:
+        app: ibac-stub
+    spec:
+      containers:
+        - name: ibac-stub
+          image: dev.local/serverless-harness
+          workingDir: /app
+          command: ["node", "--import", "tsx", "packages/ibac-stub/src/main.ts"]
+          env:
+            - name: IBAC_STUB_PORT
+              value: "8080"
+            - name: IBAC_STUB_DENY_TOOLS
+              value: ""
+            - name: IBAC_STUB_DENY_URLS
+              value: ""
+            - name: IBAC_STUB_DENY_ARG_MARKERS
+              value: ""
+          ports:
+            - containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ibac-stub
+  namespace: default
+spec:
+  selector:
+    app: ibac-stub
+  ports:
+    - port: 8080
+      targetPort: 8080
