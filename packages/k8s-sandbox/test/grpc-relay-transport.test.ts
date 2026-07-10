@@ -118,4 +118,29 @@ describe("GrpcRelayTransport extra semantics", () => {
     await assertion;
     vi.useRealTimers();
   });
+
+  it("close() closes the underlying gRPC channel via client.close()", async () => {
+    const { client } = manualClient();
+    const closeSpy = vi.fn();
+    (client as unknown as { close: () => void }).close = closeSpy;
+    const t = GrpcRelayTransport("sbx-1", client as never);
+    await t.close();
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("close() is idempotent: calling it twice closes the channel at most once", async () => {
+    const { client } = manualClient();
+    const closeSpy = vi.fn();
+    (client as unknown as { close: () => void }).close = closeSpy;
+    const t = GrpcRelayTransport("sbx-1", client as never);
+    await t.close();
+    await t.close();
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("close() is a safe no-op when the client exposes no close() (scripted fakes)", async () => {
+    const { client } = manualClient(); // manualClient's fake has no `close` method
+    const t = GrpcRelayTransport("sbx-1", client as never);
+    await expect(t.close()).resolves.toBeUndefined();
+  });
 });

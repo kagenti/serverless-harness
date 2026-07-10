@@ -15,6 +15,8 @@ export interface ExecClientLike {
     cancel(): void;
   };
   abort(request: AbortRequest, cb: (err: Error | null) => void): unknown;
+  /** Closes the underlying gRPC channel. Optional: scripted test fakes omit it. */
+  close?(): void;
 }
 
 let reqCounter = 0;
@@ -111,8 +113,9 @@ export function GrpcRelayTransport(
   return {
     exec,
     async close() {
-      closed = true; // idempotent; per-exec calls own their own stream lifecycle
-      void closed;
+      if (closed) return; // idempotent; per-exec calls own their own stream lifecycle
+      closed = true;
+      client.close?.(); // safe no-op for scripted fakes that don't implement close()
     },
   };
 }
