@@ -1,0 +1,50 @@
+# Single-replica, presence-only gRPC relay (spec §6). Bridges the worker's
+# outbound SandboxWorker.Attach stream to in-cluster SandboxExec calls and
+# mirrors connected workers into the Redis pool. Inert until SH_REMOTE_SANDBOX
+# is enabled on the harness AND a worker connects. Reuses the harness image with
+# the relay entrypoint.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandbox-relay
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sandbox-relay
+  template:
+    metadata:
+      labels:
+        app: sandbox-relay
+    spec:
+      containers:
+        - name: sandbox-relay
+          image: dev.local/serverless-harness
+          workingDir: /app
+          command: ["node", "--import", "tsx", "packages/sandbox-relay/src/main.ts"]
+          env:
+            - name: REDIS_URL
+              value: redis://redis.default.svc.cluster.local:6379
+            - name: SH_RELAY_PORT
+              value: "8443"
+          ports:
+            - containerPort: 8443
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sandbox-relay
+  namespace: default
+spec:
+  selector:
+    app: sandbox-relay
+  ports:
+    - port: 8443
+      targetPort: 8443
