@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Hello, Exec, End } from "../src/gen/sandbox/v1/sandbox";
+import { Chunk, Stream } from "../src/gen/sandbox/v1/sandbox.js";
 
 describe("sandbox/v1 generated TypeScript stubs", () => {
   it("round-trips a Hello through binary encode/decode", () => {
@@ -38,5 +39,20 @@ describe("sandbox/v1 generated TypeScript stubs", () => {
   it("preserves a negative exit_code (sint32 zigzag)", () => {
     const back = End.decode(End.encode({ reqId: 7, exitCode: -9 }).finish());
     expect(back.exitCode).toBe(-9);
+  });
+});
+
+describe("Chunk stream discriminator (ST3)", () => {
+  it("exposes the Stream enum with stdout/stderr", () => {
+    expect(Stream.STREAM_STDOUT).toBe(1);
+    expect(Stream.STREAM_STDERR).toBe(2);
+    expect(Stream.STREAM_UNSPECIFIED).toBe(0);
+  });
+
+  it("round-trips a Chunk carrying stderr", () => {
+    const c = Chunk.decode(Chunk.encode({ reqId: 7, data: new Uint8Array([1, 2]), stream: Stream.STREAM_STDERR }).finish());
+    expect(c.reqId).toBe(7);
+    expect(c.stream).toBe(Stream.STREAM_STDERR);
+    expect([...c.data]).toEqual([1, 2]);
   });
 });

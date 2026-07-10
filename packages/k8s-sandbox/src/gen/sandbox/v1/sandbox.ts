@@ -25,6 +25,51 @@ import {
 
 export const protobufPackage = "sandbox.v1";
 
+/**
+ * Which output stream a Chunk carries. Default (0) is treated as stdout so a
+ * worker that does not set the field still collects output into stdout.
+ */
+export enum Stream {
+  STREAM_UNSPECIFIED = 0,
+  /** STREAM_STDOUT - collected into returned stdout + replayed to onData */
+  STREAM_STDOUT = 1,
+  /** STREAM_STDERR - replayed to onData only, excluded from returned stdout */
+  STREAM_STDERR = 2,
+  UNRECOGNIZED = -1,
+}
+
+export function streamFromJSON(object: any): Stream {
+  switch (object) {
+    case 0:
+    case "STREAM_UNSPECIFIED":
+      return Stream.STREAM_UNSPECIFIED;
+    case 1:
+    case "STREAM_STDOUT":
+      return Stream.STREAM_STDOUT;
+    case 2:
+    case "STREAM_STDERR":
+      return Stream.STREAM_STDERR;
+    case -1:
+    case "UNRECOGNIZED":
+    default:
+      return Stream.UNRECOGNIZED;
+  }
+}
+
+export function streamToJSON(object: Stream): string {
+  switch (object) {
+    case Stream.STREAM_UNSPECIFIED:
+      return "STREAM_UNSPECIFIED";
+    case Stream.STREAM_STDOUT:
+      return "STREAM_STDOUT";
+    case Stream.STREAM_STDERR:
+      return "STREAM_STDERR";
+    case Stream.UNRECOGNIZED:
+    default:
+      return "UNRECOGNIZED";
+  }
+}
+
 /** ---- worker → relay ---- */
 export interface WorkerFrame {
   /** sent first: identity + capabilities */
@@ -99,6 +144,7 @@ export interface Abort {
 export interface Chunk {
   reqId: number;
   data: Uint8Array;
+  stream: Stream;
 }
 
 export interface End {
@@ -814,7 +860,7 @@ export const Abort: MessageFns<Abort> = {
 };
 
 function createBaseChunk(): Chunk {
-  return { reqId: 0, data: new Uint8Array(0) };
+  return { reqId: 0, data: new Uint8Array(0), stream: 0 };
 }
 
 export const Chunk: MessageFns<Chunk> = {
@@ -824,6 +870,9 @@ export const Chunk: MessageFns<Chunk> = {
     }
     if (message.data.length !== 0) {
       writer.uint32(18).bytes(message.data);
+    }
+    if (message.stream !== 0) {
+      writer.uint32(24).int32(message.stream);
     }
     return writer;
   },
@@ -851,6 +900,14 @@ export const Chunk: MessageFns<Chunk> = {
           message.data = reader.bytes();
           continue;
         }
+        case 3: {
+          if (tag !== 24) {
+            break;
+          }
+
+          message.stream = reader.int32() as any;
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -864,6 +921,7 @@ export const Chunk: MessageFns<Chunk> = {
     return {
       reqId: isSet(object.reqId) ? globalThis.Number(object.reqId) : 0,
       data: isSet(object.data) ? bytesFromBase64(object.data) : new Uint8Array(0),
+      stream: isSet(object.stream) ? streamFromJSON(object.stream) : 0,
     };
   },
 
@@ -875,6 +933,9 @@ export const Chunk: MessageFns<Chunk> = {
     if (message.data.length !== 0) {
       obj.data = base64FromBytes(message.data);
     }
+    if (message.stream !== 0) {
+      obj.stream = streamToJSON(message.stream);
+    }
     return obj;
   },
 
@@ -885,6 +946,7 @@ export const Chunk: MessageFns<Chunk> = {
     const message = createBaseChunk();
     message.reqId = object.reqId ?? 0;
     message.data = object.data ?? new Uint8Array(0);
+    message.stream = object.stream ?? 0;
     return message;
   },
 };
