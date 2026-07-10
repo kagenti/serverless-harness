@@ -53,7 +53,7 @@ export function createRelay(deps: RelayDeps): Relay {
           capacityMax: frame.hello.capacityMax,
           transport: "grpc",
         };
-        void deps.records.put(rec);
+        void deps.records.put(rec).catch((e) => console.error("presence put failed", e));
         return;
       }
       // chunk/end/error frames are dispatched to per-reqId sinks in Task 6
@@ -65,7 +65,7 @@ export function createRelay(deps: RelayDeps): Relay {
     const teardown = () => {
       if (sandboxId) {
         sessions.delete(sandboxId);
-        void deps.records.remove(sandboxId);
+        void deps.records.remove(sandboxId).catch((e) => console.error("presence remove failed", e));
       }
     };
     stream.on("end", teardown);
