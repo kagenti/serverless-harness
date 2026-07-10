@@ -84,7 +84,20 @@ export async function selectPoolSandbox(
   // Inertness: when the flag is off, never construct a RedisRecordStore or call .list() —
   // the pod path must stay byte-for-byte identical to today (no extra Redis connection).
   const remoteOn = opts.remoteSandbox === true;
-  const grpcRecs: SandboxRecord[] = remoteOn ? await (deps.records ?? new RedisRecordStore(env.REDIS_URL)).list() : [];
+  let grpcRecs: SandboxRecord[] = [];
+  if (remoteOn) {
+    const injected = deps.records;
+    if (injected) {
+      grpcRecs = await injected.list();
+    } else {
+      // We constructed this store ourselves (it eagerly opens a Redis
+      // connection), so we alone own closing it once we're done listing —
+      // an injected deps.records is the caller's connection to manage.
+      const store = new RedisRecordStore(env.REDIS_URL);
+      grpcRecs = await store.list();
+      await store.close();
+    }
+  }
   const grpcById = new Map(grpcRecs.map((r) => [r.sandboxId, r]));
 
   const candidates = [...pods, ...grpcRecs.map((r) => r.sandboxId)];
