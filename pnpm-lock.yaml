@@ -65,6 +65,21 @@ importers:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@22.19.21)
 
+  packages/ibac-stub:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.21
+      tsx:
+        specifier: ^4.19.0
+        version: 4.22.4
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9(@types/node@22.19.21)
+
   packages/k8s-sandbox:
     dependencies:
       '@bufbuild/protobuf':
