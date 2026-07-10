@@ -143,6 +143,22 @@ live only in identity-keyed egress points. Dependency-ordered:
 
 ---
 
+## Rosso Cortex Integration (`RC`-prefix)
+
+Reframes the Phase-2 credential plane around **Rosso Cortex / AuthBridge** as the concrete injection
+**and** control mechanism, and around the `#89` SandboxTransport seam — for a single-tenant, Kind-first
+PoC. AuthBridge sits on both harness HTTP egress hops as one "egress control-plane, two deployment
+profiles" pattern: a **shared** LLM gateway and a **per-sandbox** egress forward-proxy. This
+**supersedes the mechanism** of Z3 and implements a **static single-tenant slice** of Z5 (per-user /
+RFC 8693 deferred). Distinct from the `Z`-numbered plane it reframes — this is an **integration** track,
+so it takes its own prefix rather than a linear `Z` id.
+
+| ID | Title | Status | Spec / decision |
+|----|-------|--------|-----------------|
+| **RC1** | **AuthBridge egress control-plane PoC** — shared LLM gateway (Profile A) + per-sandbox egress forward-proxy (Profile B); real static-cred `token-broker` injection + stubbed-judge SPARC/IBAC control; BYO sandbox stretch on the `ST` seam (ST5-gated) | design ✅ (proposed) | [`2026-07-10-authbridge-egress-control-plane-poc-design.md`](2026-07-10-authbridge-egress-control-plane-poc-design.md); [ADR-0025](../adrs/0025-authbridge-deployment-topology.md) |
+
+---
+
 ## Lineage & supersessions (explicit)
 
 - The parent research doc's **M7–M12** table is **superseded by this registry.** Its M-numbers are
@@ -155,6 +171,12 @@ live only in identity-keyed egress points. Dependency-ordered:
   and its sidecar placement is refined to a **separate pod** (Z2 H6 — NetworkPolicy granularity).
 - The June-26 re-examination **reframed Z1's harness portion**: the harness gets a SPIFFE identity
   but **no egress waypoint** (its egress is fixed-destination; see Z2 §2.4).
+- **RC1** (own `RC` track) reframes the plane around **AuthBridge (Rosso Cortex)** as the mechanism, plus the `#89`
+  SandboxTransport seam. It **supersedes the *mechanism* of Z3** (the plain Go injector becomes an
+  AuthBridge shared gateway once control plugins share the hop) and **implements a static single-tenant
+  slice of Z5** (per-user / RFC 8693 token-exchange deferred), unifying both under one "egress
+  control-plane, two deployment profiles" pattern. Z3/Z5 are retained as the deployment-profile detail
+  and the home of the deferred per-user work. Topology decision: [ADR-0025](../adrs/0025-authbridge-deployment-topology.md).
 
 ---
 
