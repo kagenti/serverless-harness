@@ -17,14 +17,22 @@ export interface RelayDeps {
 
 interface Parked {
   stream: AttachStream;
-  // per-reqId sinks for in-flight execs (Task 6 populates these)
+  // per-reqId sinks for in-flight execs, populated by routeExec
   sinks: Map<number, (ev: ExecEvent) => void>;
 }
 
 export interface Relay {
   onAttach(stream: AttachStream): void;
   parked(): string[];
-  // routeExec/routeAbort added in Task 6
+  routeExec(
+    sandboxId: string,
+    reqId: number,
+    command: string,
+    stdin: Uint8Array,
+    timeoutS: number,
+    streaming: boolean,
+  ): AsyncIterable<ExecEvent>;
+  routeAbort(sandboxId: string, reqId: number): void;
 }
 
 function bearer(md?: { get: (k: string) => string[] }): string | undefined {
@@ -56,7 +64,7 @@ export function createRelay(deps: RelayDeps): Relay {
         void deps.records.put(rec).catch((e) => console.error("presence put failed", e));
         return;
       }
-      // chunk/end/error frames are dispatched to per-reqId sinks in Task 6
+      // chunk/end/error frames are dispatched to the per-reqId sink registered by routeExec
       const parked = sandboxId ? sessions.get(sandboxId) : undefined;
       if (!parked) return;
       const reqId = frame.chunk?.reqId ?? frame.end?.reqId ?? frame.error?.reqId;
@@ -72,7 +80,48 @@ export function createRelay(deps: RelayDeps): Relay {
     stream.on("error", teardown);
   }
 
-  return { onAttach, parked: () => [...sessions.keys()] };
+  async function* routeExec(
+    sandboxId: string,
+    reqId: number,
+    command: string,
+    stdin: Uint8Array,
+    timeoutS: number,
+    streaming: boolean,
+  ): AsyncGenerator<ExecEvent> {
+    const parked = sessions.get(sandboxId);
+    if (!parked) throw new Error(`no live worker for sandbox '${sandboxId}'`);
+
+    const queue: ExecEvent[] = [];
+    let notify: (() => void) | undefined;
+    let done = false;
+    parked.sinks.set(reqId, (ev) => {
+      queue.push(ev);
+      if (ev.end || ev.error) done = true;
+      notify?.();
+    });
+
+    parked.stream.write({ exec: { reqId, command, stdin, timeoutS, streaming } } as ServerFrame);
+
+    try {
+      while (true) {
+        while (queue.length) {
+          const ev = queue.shift()!;
+          yield ev;
+          if (ev.end || ev.error) return;
+        }
+        if (done) return;
+        await new Promise<void>((r) => (notify = r));
+      }
+    } finally {
+      parked.sinks.delete(reqId);
+    }
+  }
+
+  function routeAbort(sandboxId: string, reqId: number): void {
+    sessions.get(sandboxId)?.stream.write({ abort: { reqId } } as ServerFrame);
+  }
+
+  return { onAttach, parked: () => [...sessions.keys()], routeExec, routeAbort };
 }
 
 /** Map a worker→relay frame to the harness-facing ExecEvent oneof (Task 6 uses this). */
