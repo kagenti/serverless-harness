@@ -1,5 +1,16 @@
-import { listPoolPods, resolveSandboxConfig, type RunKubectl, type K8sSandboxConfig } from "@sh/k8s-sandbox";
+import { credentials } from "@grpc/grpc-js";
+import {
+  listPoolPods,
+  resolveSandboxConfig,
+  GrpcRelayTransport,
+  SandboxExecClient,
+  type RunKubectl,
+  type K8sSandboxConfig,
+  type SandboxTransport,
+  type ExecClientLike,
+} from "@sh/k8s-sandbox";
 import { RedisLeaseStore, type LeaseStore } from "./sandbox-lease.js";
+import { RedisRecordStore, type RecordStore, type SandboxRecord } from "./pool-records.js";
 
 /** Pure: pods ordered ascending by active load (stable — ties keep input order). */
 export function orderByLoad(loads: { pod: string; active: number }[]): string[] {
@@ -19,6 +30,8 @@ export class SandboxPoolSaturatedError extends Error {
 
 export interface SelectedSandbox {
   config: K8sSandboxConfig;
+  /** Present ONLY for a leased grpc presence record; undefined for pods. */
+  transport?: SandboxTransport;
   heartbeat: () => Promise<void>;
   release: () => Promise<void>;
 }
@@ -27,20 +40,31 @@ export interface SelectDeps {
   listPods?: (selector: string, namespace: string, context?: string, run?: RunKubectl) => Promise<string[]>;
   lease?: LeaseStore;
   run?: RunKubectl;
+  /** Mirrored grpc presence records; defaults to a RedisRecordStore. Only consulted when opts.remoteSandbox is true. */
+  records?: RecordStore;
+  /** Builds the exec client for a leased grpc record; defaults to a real SandboxExecClient at SH_RELAY_ADDR. */
+  makeExecClient?: (sandboxId: string) => ExecClientLike;
+}
+
+/** Lazily builds a real gRPC exec client — only reached on the grpc branch when the flag is on. */
+function defaultExecClient(_sandboxId: string, env: NodeJS.ProcessEnv): ExecClientLike {
+  const addr = env.SH_RELAY_ADDR ?? "sandbox-relay.default.svc.cluster.local:8443";
+  return new SandboxExecClient(addr, credentials.createInsecure()) as unknown as ExecClientLike;
 }
 
 /**
  * Choose a sandbox pod for a leaf.
  *  - No `KAGENTI_SANDBOX_POOL_SELECTOR` ⇒ fall back to single-pod resolution
  *    (`KAGENTI_SANDBOX_POD`/`_NAME`); returns null if that too is unset (run local tools).
- *  - Pool configured ⇒ list Running pods, pick least-loaded under the soft cap, acquire a lease.
- *    Throws SandboxPoolSaturatedError if all pods are full.
+ *  - Pool configured ⇒ list Running pods (plus mirrored grpc records when `opts.remoteSandbox`
+ *    is true), pick least-loaded under the soft cap, acquire a lease. Throws
+ *    SandboxPoolSaturatedError if every candidate is full.
  */
 export async function selectPoolSandbox(
   env: NodeJS.ProcessEnv,
   headCwd: string,
   runId: string,
-  opts: { cap: number; ttlMs: number },
+  opts: { cap: number; ttlMs: number; remoteSandbox?: boolean },
   deps: SelectDeps = {},
 ): Promise<SelectedSandbox | null> {
   const selector = env.KAGENTI_SANDBOX_POOL_SELECTOR;
@@ -56,16 +80,42 @@ export async function selectPoolSandbox(
   const lease = deps.lease ?? new RedisLeaseStore(env.REDIS_URL);
 
   const pods = await list(selector, namespace, context, deps.run);
-  if (pods.length === 0) throw new Error(`no Running pods for pool selector '${selector}'`);
 
-  const loads = await Promise.all(pods.map(async (pod) => ({ pod, active: await lease.load(pod) })));
-  for (const pod of orderByLoad(loads)) {
-    if (await lease.acquire(pod, opts.cap, runId, opts.ttlMs)) {
-      const config: K8sSandboxConfig = { pod, namespace, context, podCwd, headCwd };
+  // Inertness: when the flag is off, never construct a RedisRecordStore or call .list() —
+  // the pod path must stay byte-for-byte identical to today (no extra Redis connection).
+  const remoteOn = opts.remoteSandbox === true;
+  let grpcRecs: SandboxRecord[] = [];
+  if (remoteOn) {
+    const injected = deps.records;
+    if (injected) {
+      grpcRecs = await injected.list();
+    } else {
+      // We constructed this store ourselves (it eagerly opens a Redis
+      // connection), so we alone own closing it once we're done listing —
+      // an injected deps.records is the caller's connection to manage.
+      const store = new RedisRecordStore(env.REDIS_URL);
+      grpcRecs = await store.list();
+      await store.close();
+    }
+  }
+  const grpcById = new Map(grpcRecs.map((r) => [r.sandboxId, r]));
+
+  const candidates = [...pods, ...grpcRecs.map((r) => r.sandboxId)];
+  if (candidates.length === 0) throw new Error(`no Running pods for pool selector '${selector}'`);
+
+  const loads = await Promise.all(candidates.map(async (name) => ({ pod: name, active: await lease.load(name) })));
+  for (const name of orderByLoad(loads)) {
+    if (await lease.acquire(name, opts.cap, runId, opts.ttlMs)) {
+      const config: K8sSandboxConfig = { pod: name, namespace, context, podCwd, headCwd };
+      const rec = grpcById.get(name);
+      const transport = rec
+        ? GrpcRelayTransport(name, (deps.makeExecClient ?? ((id: string) => defaultExecClient(id, env)))(name))
+        : undefined;
       return {
         config,
-        heartbeat: () => lease.heartbeat(pod, runId, opts.ttlMs),
-        release: () => lease.release(pod, runId),
+        transport,
+        heartbeat: () => lease.heartbeat(name, runId, opts.ttlMs),
+        release: () => lease.release(name, runId),
       };
     }
   }

@@ -39,6 +39,9 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: link:../pi-fork/packages/coding-agent
         version: link:../pi-fork/packages/coding-agent
+      '@grpc/grpc-js':
+        specifier: ^1.12.0
+        version: 1.14.4
       '@sh/k8s-sandbox':
         specifier: workspace:*
         version: link:../packages/k8s-sandbox
@@ -92,6 +95,34 @@ importers:
       '@sh/work-queue':
         specifier: workspace:*
         version: link:../work-queue
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.21
+      tsx:
+        specifier: ^4.19.0
+        version: 4.22.4
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.0.0
+        version: 2.1.9(@types/node@22.19.21)
+      yaml:
+        specifier: ^2.5.0
+        version: 2.9.0
+
+  packages/sandbox-relay:
+    dependencies:
+      '@grpc/grpc-js':
+        specifier: ^1.12.0
+        version: 1.14.4
+      '@sh/harness':
+        specifier: workspace:*
+        version: link:../../harness
+      '@sh/k8s-sandbox':
+        specifier: workspace:*
+        version: link:../k8s-sandbox
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
