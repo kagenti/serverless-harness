@@ -53,3 +53,69 @@ const grpcFactory = (behavior: FakeBehavior): FakeHandle => {
 };
 
 runConformance("GrpcRelayTransport", grpcFactory);
+
+function manualClient() {
+  let stream!: EventEmitter & { cancel: () => void };
+  // The transport assigns reqId from its own module-scoped counter (shared with
+  // every other exec() call made earlier in this test file, e.g. the
+  // runConformance battery above), so the id it actually uses is whatever that
+  // counter is at, not a literal we can predict. Capture it from the request
+  // GrpcRelayTransport hands to exec() so assertions can compare against the
+  // real id instead of guessing it.
+  let lastReqId: number | undefined;
+  const aborted: number[] = [];
+  const client = {
+    exec(request?: { exec?: { reqId: number } }) {
+      lastReqId = request?.exec?.reqId;
+      stream = Object.assign(new EventEmitter(), { cancel: () => {} });
+      return stream;
+    },
+    abort(req: { reqId: number }, cb: (e: Error | null) => void) {
+      aborted.push(req.reqId);
+      cb(null);
+      return {};
+    },
+  };
+  return {
+    client,
+    emit: (ev: ExecEvent) => stream.emit("data", ev),
+    aborted: () => aborted,
+    reqId: () => lastReqId,
+  };
+}
+
+describe("GrpcRelayTransport extra semantics", () => {
+  it("dedups: a late End for a settled reqId is dropped", async () => {
+    const { client, emit } = manualClient();
+    const t = GrpcRelayTransport("sbx-1", client as never);
+    const p = t.exec("echo hi");
+    emit({ chunk: { reqId: 1, data: Buffer.from("hi"), stream: Stream.STREAM_STDOUT } } as ExecEvent);
+    emit({ end: { reqId: 1, exitCode: 0 } } as ExecEvent);
+    const r = await p;
+    expect(r.stdout.toString()).toBe("hi");
+    // A duplicate terminal frame after settlement must not throw or change the result.
+    expect(() => emit({ end: { reqId: 1, exitCode: 9 } } as ExecEvent)).not.toThrow();
+  });
+
+  it("output cap: aborts, truncates, appends [output truncated]", async () => {
+    const { client, emit, aborted, reqId } = manualClient();
+    const t = GrpcRelayTransport("sbx-1", client as never, { outputCapBytes: 4 });
+    const p = t.exec("cat big");
+    emit({ chunk: { reqId: reqId()!, data: Buffer.from("12345"), stream: Stream.STREAM_STDOUT } } as ExecEvent);
+    const r = await p;
+    expect(r.stdout.toString()).toContain("[output truncated]");
+    expect(r.exitCode).toBeNull();
+    expect(aborted()).toContain(reqId());
+  });
+
+  it("harness deadline fires independently of worker timeout_s", async () => {
+    vi.useFakeTimers();
+    const { client } = manualClient();
+    const t = GrpcRelayTransport("sbx-1", client as never, { deadlineMs: 500 });
+    const p = t.exec("sleep 999"); // no exec opts.timeout ⇒ deadlineMs governs
+    const assertion = expect(p).rejects.toThrow(/^timeout:/);
+    await vi.advanceTimersByTimeAsync(500);
+    await assertion;
+    vi.useRealTimers();
+  });
+});
