@@ -43,12 +43,18 @@ describe("buildConvergeScript", () => {
 
 describe("convergeWorkspace", () => {
   it("returns trimmed stdout as the workspace ref on success", async () => {
-    const exec = async () => ({ stdout: Buffer.from("/workspace/leaves/leaf-1\n"), exitCode: 0 });
-    expect(await convergeWorkspace(exec, "u", "r", "leaf-1")).toBe("/workspace/leaves/leaf-1");
+    const transport = {
+      exec: async () => ({ stdout: Buffer.from("/workspace/leaves/leaf-1\n"), exitCode: 0 }),
+      close: async () => {},
+    };
+    expect(await convergeWorkspace(transport, "u", "r", "leaf-1")).toBe("/workspace/leaves/leaf-1");
   });
   it("throws on non-zero exit", async () => {
-    const exec = async () => ({ stdout: Buffer.from(""), exitCode: 1 });
-    await expect(convergeWorkspace(exec, "u", "r", "leaf-1")).rejects.toThrow(/converge failed/);
+    const transport = {
+      exec: async () => ({ stdout: Buffer.from(""), exitCode: 1 }),
+      close: async () => {},
+    };
+    await expect(convergeWorkspace(transport, "u", "r", "leaf-1")).rejects.toThrow(/converge failed/);
   });
 });
 
