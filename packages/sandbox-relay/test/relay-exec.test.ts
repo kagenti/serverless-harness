@@ -52,4 +52,33 @@ describe("relay Exec/Abort routing", () => {
       for await (const _ of relay.routeExec("ghost", 1, "x", new Uint8Array(), 0, true)) void _;
     }).rejects.toThrow(/no live worker/);
   });
+
+  it("worker disconnect mid-exec fails the in-flight routeExec generator fast", async () => {
+    const relay = createRelay({ records, validateToken: () => true } as never);
+    const s = fakeAttach();
+    relay.onAttach(s as never);
+    s.emitData({ hello: { sandboxId: "sbx-1", labels: {}, capabilities: [], image: "", arch: "amd64", capacityMax: 1, trust: "trusted" } });
+
+    const events: any[] = [];
+    let finished = false;
+    const pump = (async () => {
+      for await (const ev of relay.routeExec("sbx-1", 1, "sleep 100", new Uint8Array(), 0, true)) events.push(ev);
+      finished = true;
+    })();
+
+    // Wait until routeExec has registered its sink and written the ServerFrame{exec}
+    // to the worker -- i.e. the exec is genuinely in-flight and parked awaiting frames.
+    await vi.waitFor(() => expect(s.written.at(-1)?.exec?.reqId).toBe(1));
+
+    // Worker disconnects (stream "end") before ever sending a chunk/end/error frame.
+    s.end();
+
+    // Without the fix, nothing ever notifies the parked generator's internal
+    // await, so this would hang until the test's own timeout.
+    await vi.waitFor(() => expect(finished).toBe(true));
+
+    expect(events.at(-1)?.error?.message).toBe("worker disconnected");
+    // The sink must have been cleaned up (routeExec's finally ran) -- no leak.
+    expect(relay.parked()).not.toContain("sbx-1");
+  });
 });

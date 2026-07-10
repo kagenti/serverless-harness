@@ -72,6 +72,14 @@ export function createRelay(deps: RelayDeps): Relay {
     });
     const teardown = () => {
       if (sandboxId) {
+        // Fail any in-flight execs fast instead of leaving their routeExec
+        // generators parked forever on a frame that will never arrive.
+        const parked = sessions.get(sandboxId);
+        if (parked) {
+          for (const [reqId, sink] of parked.sinks) {
+            sink({ error: { reqId, message: "worker disconnected" } } as ExecEvent);
+          }
+        }
         sessions.delete(sandboxId);
         void deps.records.remove(sandboxId).catch((e) => console.error("presence remove failed", e));
       }
