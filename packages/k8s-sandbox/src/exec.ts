@@ -88,11 +88,3 @@ export function KubectlTransport(
     });
   return { exec, close: async () => {} };
 }
-
-/**
- * @deprecated Back-compat alias retained only during the ST2 migration; use
- * `KubectlTransport(config).exec`. Removed in the final ST2 task.
- */
-export function kubectlExecInPod(config: K8sSandboxConfig): ExecInPod {
-  return KubectlTransport(config).exec;
-}
