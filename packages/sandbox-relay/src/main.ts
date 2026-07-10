@@ -79,13 +79,29 @@ export function buildServer(deps: RelayDeps): { server: Server } {
   return { server };
 }
 
+/**
+ * Default token validator: fail-closed. A sandbox authenticates only against
+ * an exact, non-empty match on its per-sandbox override (`SH_RELAY_TOKEN_<id>`)
+ * or the global `SH_RELAY_TOKEN`. If neither env var is set for a sandbox,
+ * `expected` is `undefined` and every token — including an undefined one from
+ * a tokenless worker — is rejected, instead of the two `undefined`s comparing
+ * equal.
+ */
+export function makeDefaultValidateToken(
+  env: NodeJS.ProcessEnv,
+): (token: string | undefined, sandboxId: string) => boolean {
+  return (token, sandboxId) => {
+    const expected = env[`SH_RELAY_TOKEN_${sandboxId}`] ?? env.SH_RELAY_TOKEN;
+    return expected !== undefined && token === expected;
+  };
+}
+
 export async function startRelay(
   opts: { port?: number; deps?: RelayDeps } = {},
 ): Promise<{ port: number; shutdown: () => Promise<void> }> {
   const deps = opts.deps ?? {
     records: new RedisRecordStore(),
-    validateToken: (token, sandboxId) =>
-      token === process.env[`SH_RELAY_TOKEN_${sandboxId}`] || token === process.env.SH_RELAY_TOKEN,
+    validateToken: makeDefaultValidateToken(process.env),
   };
   const { server } = buildServer(deps);
   const addr = `0.0.0.0:${opts.port ?? Number(process.env.SH_RELAY_PORT ?? 8443)}`;

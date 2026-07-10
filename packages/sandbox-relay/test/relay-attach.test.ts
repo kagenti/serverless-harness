@@ -68,4 +68,36 @@ describe("relay Attach + presence", () => {
     expect(map.get("sbx-1")).toBeUndefined();
     expect(relay.parked()).not.toContain("sbx-1");
   });
+
+  it("rejects a duplicate Attach for an already-parked sandboxId without evicting the first session", async () => {
+    const { store, map } = fakeRecords();
+    const relay = createRelay({ records: store, validateToken: () => true } as never);
+
+    const s1 = fakeAttach("good");
+    relay.onAttach(s1 as never);
+    s1.emitData(hello("sbx-1"));
+    await vi.waitFor(() => expect(map.get("sbx-1")).toBeTruthy());
+    const presenceAfterFirst = map.get("sbx-1");
+
+    // A second worker tries to claim the same sandboxId while worker-1 is still live.
+    const s2 = fakeAttach("good");
+    let s2Ended = false;
+    s2.end = () => {
+      s2Ended = true;
+      s2.emit("end");
+    };
+    relay.onAttach(s2 as never);
+    s2.emitData(hello("sbx-1"));
+
+    // The duplicate is rejected: its stream is ended, no session replacement, presence untouched.
+    expect(s2Ended).toBe(true);
+    expect(relay.parked()).toContain("sbx-1");
+    expect(map.get("sbx-1")).toBe(presenceAfterFirst);
+
+    // Worker-1's teardown (its own "end") still removes the (only, original) session —
+    // proof that worker-2's Hello never replaced it.
+    s1.end();
+    await vi.waitFor(() => expect(map.get("sbx-1")).toBeUndefined());
+    expect(relay.parked()).not.toContain("sbx-1");
+  });
 });

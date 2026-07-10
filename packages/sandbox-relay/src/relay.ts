@@ -52,12 +52,26 @@ export function createRelay(deps: RelayDeps): Relay {
           stream.end(); // reject before parking; no presence written
           return;
         }
+        if (sessions.has(id)) {
+          // Another worker is already live for this sandboxId. Reject the
+          // duplicate rather than overwriting the session map: if we let this
+          // Hello win, worker-1's later disconnect teardown would call
+          // sessions.delete(id) on what is now worker-2's session, evicting
+          // the live worker and removing its presence out from under it. A
+          // genuine reconnect is unaffected — worker-1's own teardown already
+          // ran (removing the old session) before a new Hello can arrive.
+          stream.end();
+          return;
+        }
         sandboxId = id;
         sessions.set(id, { stream, sinks: new Map() });
         const rec: SandboxRecord = {
           sandboxId: id,
           labels: frame.hello.labels,
           capabilities: frame.hello.capabilities,
+          // Advertised by the worker but not yet consulted for leasing —
+          // select-sandbox still leases against its own opts.cap. Wiring
+          // capacityMax into leasing decisions is a later slice.
           capacityMax: frame.hello.capacityMax,
           transport: "grpc",
         };
