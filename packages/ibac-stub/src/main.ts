@@ -6,8 +6,8 @@ import type { DenyRules } from "./decide.js";
 // decide()'s `?? []` default applies, rather than an explicit empty array either way — the
 // distinction doesn't matter to decide(), but keeps rulesFromEnv() honest about "unset" vs "set to
 // nothing".
-function listFromEnv(name: string): string[] | undefined {
-  const raw = process.env[name];
+function listFromEnv(name: string, env: NodeJS.ProcessEnv = process.env): string[] | undefined {
+  const raw = env[name];
   if (raw === undefined) return undefined;
   const entries = raw
     .split(",")
@@ -18,9 +18,9 @@ function listFromEnv(name: string): string[] | undefined {
 
 export function rulesFromEnv(env: NodeJS.ProcessEnv = process.env): DenyRules {
   return {
-    denyTools: listFromEnv("IBAC_STUB_DENY_TOOLS"),
-    denyUrlSubstrings: listFromEnv("IBAC_STUB_DENY_URLS"),
-    denyArgMarkers: listFromEnv("IBAC_STUB_DENY_ARG_MARKERS"),
+    denyTools: listFromEnv("IBAC_STUB_DENY_TOOLS", env),
+    denyUrlSubstrings: listFromEnv("IBAC_STUB_DENY_URLS", env),
+    denyArgMarkers: listFromEnv("IBAC_STUB_DENY_ARG_MARKERS", env),
   };
 }
 

@@ -65,6 +65,18 @@ describe("POST /v1/chat/completions", () => {
     });
     expect(res.status).toBe(400);
   });
+
+  it("returns 200 with an allow verdict for a JSON null body", async () => {
+    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "null",
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const verdict = JSON.parse(body.choices[0].message.content);
+    expect(verdict).toEqual({ verdict: "allow", reason: "no matching deny rule" });
+  });
 });
 
 describe("unknown routes", () => {

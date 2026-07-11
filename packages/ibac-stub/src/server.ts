@@ -19,6 +19,7 @@ function readBody(req: IncomingMessage): Promise<string> {
 // args) in the text of the request's `user` messages. Concatenate them to get the text decide()
 // matches against.
 export function extractActionText(body: ChatCompletionRequest): string {
+  if (typeof body !== "object" || body === null) return "";
   return (body.messages ?? [])
     .filter((m) => m.role === "user")
     .map((m) => (typeof m.content === "string" ? m.content : ""))
@@ -61,7 +62,7 @@ async function handleChatCompletions(req: IncomingMessage, res: ServerResponse, 
   const actionText = extractActionText(parsed);
   const result = decide(actionText, rules);
   const content = JSON.stringify(result);
-  res.writeHead(200, JSON_HEADERS).end(JSON.stringify(chatCompletionEnvelope(parsed.model, content)));
+  res.writeHead(200, JSON_HEADERS).end(JSON.stringify(chatCompletionEnvelope(parsed?.model, content)));
 }
 
 export function buildHandler(rules: DenyRules): (req: IncomingMessage, res: ServerResponse) => void {
