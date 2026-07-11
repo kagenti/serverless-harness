@@ -91,6 +91,10 @@ if [ "${SH_AUTHBRIDGE:-0}" = "1" ]; then
   ab1_set_policy() {
     local target="$1" cur new
     cur="$(kubectl -n "$NS" get configmap "$AB1_CM" -o jsonpath='{.data["config.yaml"]}' 2>>"$AB1_LOG" || true)"
+    if [ -z "$cur" ]; then
+      echo "WARN: ab1_set_policy($target): ConfigMap $AB1_CM read empty; skipping rewrite (would clobber config.yaml)" >>"$AB1_LOG"
+      return 1
+    fi
     case "$target" in
       deny)  new="$(printf '%s' "$cur" | sed 's/no_intent_policy: allow/no_intent_policy: deny/')" ;;
       allow) new="$(printf '%s' "$cur" | sed 's/no_intent_policy: deny/no_intent_policy: allow/')" ;;
@@ -130,13 +134,13 @@ if [ "${SH_AUTHBRIDGE:-0}" = "1" ]; then
   fi
 
   claim H1-deny "AB1 deny-before-inject: flip to deny, prove rejection, revert to allow"
-  ab1_set_policy deny
-  ab1_resp="$(dispatch i2 "$MODEL")"
+  ab1_set_policy deny || true   # || true: an empty-ConfigMap skip must not abort before the revert
+  ab1_resp="$(dispatch i2 "$MODEL" || true)"   # || true: never abort before the unconditional revert below
   ab1_status="$(echo "$ab1_resp" | jq -r '.status // "none"' 2>/dev/null || echo parse_err)"
   ab1_logs="$(kubectl -n "$NS" logs deploy/authbridge-ab1 --tail=200 2>>"$AB1_LOG" || true)"
   ab1_reject_seen=0; echo "$ab1_logs" | grep -qE 'ibac.no_session|status=403|plugin rejected' && ab1_reject_seen=1
   ab1_inject_seen=0; echo "$ab1_logs" | grep -qi 'static-inject' && ab1_inject_seen=1
-  ab1_set_policy allow   # ALWAYS revert before leaving the block, regardless of the outcome above
+  ab1_set_policy allow || true   # ALWAYS revert before leaving the block, regardless of the outcome above
   if [ "$ab1_status" != "done" ] && [ "$ab1_reject_seen" = 1 ] && [ "$ab1_inject_seen" = 0 ]; then
     ok "deny-before-inject proven (leaf failed, AB1 rejected, no injection) — reverted to allow"
   else
