@@ -13,6 +13,33 @@
 
 ---
 
+## Implementation revisions (RC1-0, 2026-07-10)
+
+> During RC1-0 implementation the design points below were refined. The rest of this spec is kept as the
+> point-in-time design; where it conflicts with this list, this list governs. The decisions are recorded
+> permanently in **[ADR-0026](../adrs/0026-rc1-static-inject-plugin.md)** and
+> **[ADR-0027](../adrs/0027-rc1-control-gate-and-hop2-realization.md)**.
+>
+> 1. **Injection mechanism (affects §2 cap #1/#2, §3, §4, §8, §9).** The `static-broker` HTTP service and
+>    the shipped `token-broker` plugin are **replaced by a dedicated, self-contained `static-inject`
+>    AuthBridge plugin** (mounted `secret_dir` / inline `mappings`, host- or static-keyed, fail-closed,
+>    CR/LF/NUL-safe), authored in kagenti-extensions (**PR #655**) with **no dependency on PR #626**. There
+>    is **no `static-broker` service**; the mounted secret is the only place the real credential lives.
+>    → **ADR-0026.**
+> 2. **Control gate (affects §2 cap #3, §3, §4, §6).** The gate is **IBAC only**; the spec's `sparc-stub`
+>    is realized as **`ibac-stub`**, implementing IBAC's documented `POST /v1/chat/completions` →
+>    `{"verdict","reason"}` contract (fail-closed). SPARC's fail-open grounding gate is **deferred**.
+>    → **ADR-0027.**
+> 3. **Hop-2 transport (affects §3, §4 Hop 2).** Hop-2 proves injection against a **plain-HTTP in-cluster
+>    echo** target (the forward proxy reads L7 and swaps the header). The **baked-CA HTTPS MITM** shape is
+>    **deferred** (already noted in §10 as out of PoC scope). → **ADR-0027.**
+> 4. **Plumbing.** The feature flag is **`SH_AUTHBRIDGE`** (off by default, mirroring `SH_REMOTE_SANDBOX`).
+>    The proxy is the **full `authbridge-proxy` image** (the `authbridge-lite` binary drops the parsers);
+>    RC1 builds it from a stacked branch — image ref `dev.local/authbridge-proxy:rc1`.
+>
+> Consequently the §8 RC1-0 deliverable "`static-broker` + `sparc-stub`" is realized as
+> "**`static-inject` plugin + `ibac-stub`**".
+
 ## 1. Goal
 
 Prove, end-to-end and single-tenant, that **Rosso Cortex / AuthBridge** can be the concrete mechanism for
