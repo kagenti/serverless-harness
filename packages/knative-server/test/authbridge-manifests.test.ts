@@ -101,5 +101,10 @@ describe('AB1 manifest', () => {
       expect(staticInject.config.key_by).toBe('static');
       expect(staticInject.config.key).toBe('api.anthropic.com');
     });
+
+    it('static-inject injects the credential into the x-api-key header', () => {
+      const staticInject = config.pipeline.inbound.plugins.find((p: any) => p.name === 'static-inject');
+      expect(staticInject.config.inject_header).toBe('x-api-key');
+    });
   });
 });

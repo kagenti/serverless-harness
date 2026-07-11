@@ -35,6 +35,7 @@ data:
               key_by: static
               key: api.anthropic.com
               placeholder: "AB1-PLACEHOLDER"
+              inject_header: x-api-key
       outbound:
         plugins: []
 ---
