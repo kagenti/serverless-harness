@@ -155,6 +155,16 @@ describe('AB2 manifest', () => {
   describe('embedded AB2 config (ConfigMap data["config.yaml"])', () => {
     const config = parse(configMap.data?.['config.yaml'] ?? '');
 
+    it('sets the boot-critical top-level fields for proxy-sidecar mode', () => {
+      // These are not covered by the pipeline/plugin assertions below, but without them AB2
+      // fails to boot (mode, forward_proxy_addr) or fails config validation (reverse_proxy_addr/
+      // reverse_proxy_backend are required in proxy-sidecar mode even though unused inbound here).
+      expect(config.mode).toBe('proxy-sidecar');
+      expect(config.listener?.forward_proxy_addr).toBe(':8081');
+      expect(config.listener?.reverse_proxy_addr).toBeTruthy();
+      expect(config.listener?.reverse_proxy_backend).toBeTruthy();
+    });
+
     it('runs the plugin chain under pipeline.outbound (not inbound), in order', () => {
       expect(config.pipeline?.outbound?.plugins?.map((p: any) => p.name)).toEqual([
         'mcp-parser',
