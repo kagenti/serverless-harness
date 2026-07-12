@@ -144,14 +144,14 @@ if [ "${SH_AUTHBRIDGE:-0}" = "1" ]; then
     # `|| true` inside the exec: BusyBox wget exits non-zero on a 403, and under
     # `set -o pipefail` that non-zero (relayed by kubectl exec) would fail the whole
     # pipeline even when grep matches — so neutralize it and let grep alone decide.
-    if sexec sh -c 'wget -q -S -T 20 -O /dev/null --header="Authorization: Bearer AB1-PLACEHOLDER" --header="anthropic-version: 2023-06-01" --header="content-type: application/json" --post-data="{\"model\":\"probe\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" http://authbridge-ab1:8080/v1/messages 2>&1 || true' | grep -q '403'; then
+    if sexec sh -c 'wget -q -S -T 20 -O /dev/null --header="Authorization: Bearer AB1-PLACEHOLDER" --header="anthropic-version: 2023-06-01" --header="content-type: application/json" --post-data="{\"model\":\"probe\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" http://authbridge-ab1:8080/v1/messages 2>&1 || true' | grep -qE 'HTTP/[0-9.]+ 403'; then
       ab1_deny_active=1; break
     fi
     sleep 3
   done
   echo "H1-deny: ab1_deny_active=$ab1_deny_active after probe" >>"$AB1_LOG"
   # The direct probe above IS the deny-before-inject proof: a 403 from ibac means the request
-  # was rejected BEFORE static-inject (which runs AFTER ibac in the outbound chain) could inject
+  # was rejected BEFORE static-inject (which runs AFTER ibac in the inbound chain) could inject
   # a credential — the pipeline short-circuits on reject. A full leaf dispatch here proved
   # fragile (harness HTTP connection-pooling + the AB1 restart window let the leaf reach an old
   # allow pod, masking the deny), so assert the probe result directly. inject_seen is
