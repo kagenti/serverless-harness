@@ -238,4 +238,18 @@ describe('sandbox-pool-ab2 manifest (SH_AUTHBRIDGE variant)', () => {
     expect(config?.configMap?.name).toBe('authbridge-ab2-config');
     expect(creds?.secret?.secretName).toBe('ab2-egress-cred');
   });
+
+  it.each(sandboxes.map((s, i) => [i, s]))('sandbox %s: sandbox container does NOT mount the creds secret (secret-free invariant)', (_i, sandbox: any) => {
+    const containers = sandbox.spec?.podTemplate?.spec?.containers ?? [];
+    const sandboxContainer = findContainer(containers, 'sandbox');
+    const mounts = sandboxContainer.volumeMounts ?? [];
+    expect(mounts.some((m: any) => m.name === 'creds' || m.mountPath === '/etc/authbridge/creds')).toBe(false);
+  });
+
+  it.each(sandboxes.map((s, i) => [i, s]))('sandbox %s: authbridge-ab2 sidecar DOES mount the creds secret', (_i, sandbox: any) => {
+    const containers = sandbox.spec?.podTemplate?.spec?.containers ?? [];
+    const ab2 = findContainer(containers, 'authbridge-ab2');
+    const mounts = ab2.volumeMounts ?? [];
+    expect(mounts.some((m: any) => m.name === 'creds' && m.mountPath === '/etc/authbridge/creds')).toBe(true);
+  });
 });
