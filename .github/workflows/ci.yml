@@ -62,6 +62,7 @@ jobs:
           cd packages/k8s-sandbox && pnpm exec tsc --noEmit && cd ../..
           cd packages/knative-server && pnpm exec tsc --noEmit && cd ../..
           cd packages/sandbox-relay && pnpm exec tsc --noEmit && cd ../..
+          cd packages/ibac-stub && pnpm exec tsc --noEmit && cd ../..
           cd experiments && pnpm exec tsc --noEmit && cd ..
 
       - name: Test

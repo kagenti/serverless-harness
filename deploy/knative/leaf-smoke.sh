@@ -77,6 +77,105 @@ kubectl -n "$NS" wait --for=condition=Ready "pod/$SBOX" --timeout=90s >/dev/null
 sexec mkdir -p "$SBOX_REPO"
 kubectl -n "$NS" cp ./fixtures/repo/. "$SBOX:$SBOX_REPO"
 
+# --- Hop-1 AuthBridge claims (RC1-1, SH_AUTHBRIDGE=1 only): prove the harness is
+# secret-free (holds only the AB1 placeholder), the allow-path leaf completes only via
+# AB1 injection, and AB1 rejects before injecting when policy is deny. Self-contained:
+# always reverts AB1 to allow before leaving the block, so Claims 2-8 below run in allow
+# mode regardless of this block's outcome.
+if [ "${SH_AUTHBRIDGE:-0}" = "1" ]; then
+  # The AB1 manifests are pinned to `namespace: default`, but the AuthBridge ops below run via
+  # `-n "$NS"`. If NS were overridden, every AB1 kubectl call would target the wrong namespace
+  # and silently no-op through the `|| true` guards, making the H1 claims fail confusingly.
+  # Fail fast with a clear message instead.
+  if [ "$NS" != "default" ]; then
+    echo "SH_AUTHBRIDGE=1 requires NS=default (AB1 manifests are namespace: default); got NS=$NS" >&2
+    exit 2
+  fi
+  AB1_CM="authbridge-ab1-config"
+  AB1_LOG="$(mktemp)"   # verbose kubectl output goes here, not stdout
+
+  # Set the AB1 ConfigMap's embedded no_intent_policy (allow|deny) and roll the
+  # Deployment so the subPath ConfigMap mount picks up the change.
+  ab1_set_policy() {
+    local target="$1" cur new
+    cur="$(kubectl -n "$NS" get configmap "$AB1_CM" -o jsonpath='{.data.config\.yaml}' 2>>"$AB1_LOG" || true)"
+    if [ -z "$cur" ]; then
+      echo "WARN: ab1_set_policy($target): ConfigMap $AB1_CM read empty; skipping rewrite (would clobber config.yaml)" >>"$AB1_LOG"
+      return 1
+    fi
+    case "$target" in
+      deny)  new="$(printf '%s' "$cur" | sed 's/no_intent_policy: allow/no_intent_policy: deny/')" ;;
+      allow) new="$(printf '%s' "$cur" | sed 's/no_intent_policy: deny/no_intent_policy: allow/')" ;;
+    esac
+    kubectl create configmap "$AB1_CM" --from-literal=config.yaml="$new" \
+      --dry-run=client -o yaml | kubectl -n "$NS" apply -f - >>"$AB1_LOG" 2>&1 || true
+    kubectl -n "$NS" rollout restart deploy/authbridge-ab1 >>"$AB1_LOG" 2>&1 || true
+    kubectl -n "$NS" rollout status deploy/authbridge-ab1 --timeout=120s >>"$AB1_LOG" 2>&1 || true
+  }
+
+  claim H1-secret-free "harness pod holds only the AB1 placeholder, never a real key"
+  if [ "$(harness_running_pods)" = "0" ]; then
+    dispatch i2 "$MODEL" >/dev/null 2>&1 || true   # warm-up: spin up a harness pod
+  fi
+  ab1_pod="$(harness_pods_all | head -1)"
+  if [ -z "$ab1_pod" ]; then
+    ko "no running harness pod found (even after a warm-up dispatch)"
+  else
+    ab1_penv="$(kubectl -n "$NS" exec "$ab1_pod" -c user-container -- printenv 2>>"$AB1_LOG" || true)"
+    ab1_tok_ok=0;  echo "$ab1_penv" | grep -q '^ANTHROPIC_AUTH_TOKEN=AB1-PLACEHOLDER$' && ab1_tok_ok=1
+    ab1_base_ok=0; echo "$ab1_penv" | grep -q '^ANTHROPIC_BASE_URL=http://authbridge-ab1:8080$' && ab1_base_ok=1
+    ab1_leaked=0;  echo "$ab1_penv" | grep -qE 'sk-ant-|sk-[A-Za-z0-9]{20}' && ab1_leaked=1
+    if [ "$ab1_tok_ok" = 1 ] && [ "$ab1_base_ok" = 1 ] && [ "$ab1_leaked" = 0 ]; then
+      ok "harness env holds only the AB1 placeholder + base URL, no real key"
+    else
+      ko "tok_ok=$ab1_tok_ok base_ok=$ab1_base_ok leaked=$ab1_leaked"
+    fi
+  fi
+
+  claim H1-allow "AB1 allow-path: a leaf only completes if AB1 injected the real key"
+  ab1_resp="$(dispatch i2 "$MODEL")"
+  ab1_status="$(echo "$ab1_resp" | jq -r '.status // "none"' 2>/dev/null || echo parse_err)"
+  if [ "$ab1_status" = "done" ]; then
+    ok "allow-path leaf completed (real key injected at AB1)"
+  else
+    ko "allow-path leaf did not complete, status=$ab1_status"
+  fi
+
+  claim H1-deny "AB1 deny-before-inject: flip to deny, prove rejection, revert to allow"
+  ab1_set_policy deny || true   # || true: an empty-ConfigMap skip must not abort before the revert
+  # Deterministically wait until AB1 actually serves the deny config before dispatching the
+  # leaf. The ConfigMap roll + Service endpoint update lag the `rollout status`, and a warm
+  # harness->AB1 connection can briefly still reach the old allow pod — which would let the
+  # leaf complete and mask the deny. Probe AB1 directly (via the sandbox) until it 403s.
+  ab1_deny_active=0
+  for _i in $(seq 1 20); do
+    # `|| true` inside the exec: BusyBox wget exits non-zero on a 403, and under
+    # `set -o pipefail` that non-zero (relayed by kubectl exec) would fail the whole
+    # pipeline even when grep matches — so neutralize it and let grep alone decide.
+    if sexec sh -c 'wget -q -S -T 20 -O /dev/null --header="Authorization: Bearer AB1-PLACEHOLDER" --header="anthropic-version: 2023-06-01" --header="content-type: application/json" --post-data="{\"model\":\"probe\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" http://authbridge-ab1:8080/v1/messages 2>&1 || true' | grep -qE 'HTTP/[0-9.]+ 403'; then
+      ab1_deny_active=1; break
+    fi
+    sleep 3
+  done
+  echo "H1-deny: ab1_deny_active=$ab1_deny_active after probe" >>"$AB1_LOG"
+  # The direct probe above IS the deny-before-inject proof: a 403 from ibac means the request
+  # was rejected BEFORE static-inject (which runs AFTER ibac in the inbound chain) could inject
+  # a credential — the pipeline short-circuits on reject. A full leaf dispatch here proved
+  # fragile (harness HTTP connection-pooling + the AB1 restart window let the leaf reach an old
+  # allow pod, masking the deny), so assert the probe result directly. inject_seen is
+  # informational (static-inject has no success log line).
+  ab1_logs="$(kubectl -n "$NS" logs deploy/authbridge-ab1 --tail=200 2>>"$AB1_LOG" || true)"
+  ab1_inject_seen=0; echo "$ab1_logs" | grep -qi 'static-inject' && ab1_inject_seen=1
+  ab1_set_policy allow || true   # ALWAYS revert before leaving the block, regardless of the outcome above
+  if [ "$ab1_deny_active" = 1 ]; then
+    ok "deny-before-inject proven (AB1 returned 403 at ibac, pre-static-inject; inject_seen=$ab1_inject_seen) — reverted to allow"
+  else
+    ko "deny-before-inject not proven: probe never observed a 403 (deny_active=$ab1_deny_active)"
+  fi
+  rm -f "$AB1_LOG" 2>/dev/null || true
+  unset -f ab1_set_policy
+fi
+
 # --- Claim 1: workspace isolation — repo present in sandbox only ---
 claim 1 "Workspace lives in the sandbox only (FS-free: no /work PVC needed)"
 in_sbox=1; sexec test -f "$SBOX_REPO/risky.py" || in_sbox=0

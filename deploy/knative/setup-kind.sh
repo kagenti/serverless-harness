@@ -133,15 +133,42 @@ if [ "$SKIP_BUILD" != "true" ]; then
 fi
 
 # 8. Create LLM credentials secret (supports direct API key or gateway bridge)
-if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
-  echo "ERROR: Set ANTHROPIC_API_KEY (direct) or ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL (gateway)"
-  exit 1
+if [ "${SH_AUTHBRIDGE:-0}" = "1" ]; then
+  # RC1-1 Hop 1: the harness never holds the real key. AB1 (the reverse-proxy gateway,
+  # see deploy/knative/authbridge/ab1-deployment.yaml) holds it and injects it
+  # per-request; the harness gets only the placeholder + AB1's base URL.
+  REAL_KEY="${ANTHROPIC_API_KEY:?SH_AUTHBRIDGE=1 requires ANTHROPIC_API_KEY (the real key AB1 injects)}"
+  kubectl create secret generic ab1-llm-cred --from-literal=api.anthropic.com="$REAL_KEY" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  kubectl create secret generic llm-credentials \
+    --from-literal=api-key=AB1-PLACEHOLDER \
+    --from-literal=auth-token=AB1-PLACEHOLDER \
+    --from-literal=base-url=http://authbridge-ab1:8080 \
+    --dry-run=client -o yaml | kubectl apply -f -
+else
+  if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
+    echo "ERROR: Set ANTHROPIC_API_KEY (direct) or ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL (gateway)"
+    exit 1
+  fi
+  SECRET_ARGS=(--from-literal=api-key="${ANTHROPIC_API_KEY:-${ANTHROPIC_AUTH_TOKEN}}")
+  [ -n "${ANTHROPIC_BASE_URL:-}" ] && SECRET_ARGS+=(--from-literal=base-url="$ANTHROPIC_BASE_URL")
+  [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ] && SECRET_ARGS+=(--from-literal=auth-token="$ANTHROPIC_AUTH_TOKEN")
+  kubectl create secret generic llm-credentials "${SECRET_ARGS[@]}" \
+    --dry-run=client -o yaml | kubectl apply -f -
 fi
-SECRET_ARGS=(--from-literal=api-key="${ANTHROPIC_API_KEY:-${ANTHROPIC_AUTH_TOKEN}}")
-[ -n "${ANTHROPIC_BASE_URL:-}" ] && SECRET_ARGS+=(--from-literal=base-url="$ANTHROPIC_BASE_URL")
-[ -n "${ANTHROPIC_AUTH_TOKEN:-}" ] && SECRET_ARGS+=(--from-literal=auth-token="$ANTHROPIC_AUTH_TOKEN")
-kubectl create secret generic llm-credentials "${SECRET_ARGS[@]}" \
-  --dry-run=client -o yaml | kubectl apply -f -
+
+# 8b. SH_AUTHBRIDGE=1: deploy the AB1 gateway stack (after the secrets, near where
+# service.yaml is applied below) so the harness's egress is already scoped to AB1 before
+# the Knative Service starts routing traffic.
+if [ "${SH_AUTHBRIDGE:-0}" = "1" ]; then
+  echo "--- Deploying AB1 gateway (ibac-stub + authbridge-ab1) ---"
+  kubectl apply -f "$SCRIPT_DIR/ibac-stub.yaml" -f "$SCRIPT_DIR/authbridge/ab1-deployment.yaml"
+  # Applied AFTER any base egress policy so it overwrites the same NetworkPolicy name
+  # (serverless-harness-egress) rather than stacking with it.
+  kubectl apply -f "$SCRIPT_DIR/authbridge/harness-egress-ab1.yaml"
+  kubectl -n default rollout status deploy/authbridge-ab1 --timeout=120s
+  kubectl -n default rollout status deploy/ibac-stub --timeout=120s
+fi
 
 # 9. Deploy Knative Service
 echo "--- Deploying serverless-harness Knative Service ---"

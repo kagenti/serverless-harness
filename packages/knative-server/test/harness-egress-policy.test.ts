@@ -103,6 +103,70 @@ describe('harness egress NetworkPolicy manifest', () => {
   });
 });
 
+describe('tightened AB1 egress variant', () => {
+  const AB1_POLICY_PATH = resolve(DEPLOY, 'authbridge/harness-egress-ab1.yaml');
+  const policies = networkPolicies(AB1_POLICY_PATH);
+
+  it('defines exactly one NetworkPolicy named serverless-harness-egress', () => {
+    expect(policies).toHaveLength(1);
+    expect(policies[0]?.metadata?.name).toBe('serverless-harness-egress');
+  });
+
+  const np = policies[0] ?? {};
+
+  it('selects the same Knative harness pods as the base policy', () => {
+    expect(np.spec?.podSelector?.matchLabels).toMatchObject({
+      'serving.knative.dev/service': 'serverless-harness',
+    });
+  });
+
+  it('is egress-only', () => {
+    expect(np.spec?.policyTypes).toEqual(['Egress']);
+  });
+
+  it('allows egress to AB1 on TCP 8080', () => {
+    const egress = np.spec?.egress ?? [];
+    const ab1Rule = egress.find((r: any) =>
+      (r.to ?? []).some((peer: any) => peer.podSelector?.matchLabels?.app === 'authbridge-ab1'),
+    );
+    expect(ab1Rule, 'a rule targeting podSelector app=authbridge-ab1').toBeDefined();
+    const hasPort8080 = (ab1Rule.ports ?? []).some(
+      (p: any) => p.protocol === 'TCP' && p.port === 8080,
+    );
+    expect(hasPort8080, 'AB1 rule allows TCP 8080').toBe(true);
+  });
+
+  it('does NOT open public :443 egress (the whole point of the tightened variant)', () => {
+    const egress = np.spec?.egress ?? [];
+    const opensPublic443 = egress.some(
+      (r: any) =>
+        (r.to ?? []).some((peer: any) => peer.ipBlock?.cidr === '0.0.0.0/0') &&
+        (r.ports ?? []).some((p: any) => p.port === 443),
+    );
+    expect(opensPublic443, 'no rule combining ipBlock 0.0.0.0/0 with port 443').toBe(false);
+  });
+
+  it('allows DNS resolution (UDP+TCP 53)', () => {
+    const egress = np.spec?.egress ?? [];
+    const dnsPorts = egress.flatMap((r: any) => r.ports ?? []).filter((p: any) => p.port === 53);
+    const protos = new Set(dnsPorts.map((p: any) => p.protocol));
+    expect(protos.has('UDP')).toBe(true);
+    expect(protos.has('TCP')).toBe(true);
+  });
+
+  it('allows the apiserver / sandbox control channel on 6443', () => {
+    const egress = np.spec?.egress ?? [];
+    const apiserverRule = egress.find((r: any) =>
+      (r.ports ?? []).some((p: any) => p.port === 6443),
+    );
+    expect(apiserverRule, 'a rule allowing 6443').toBeDefined();
+    const targetsAllExternal = (apiserverRule.to ?? []).some(
+      (peer: any) => peer.ipBlock?.cidr === '0.0.0.0/0',
+    );
+    expect(targetsAllExternal, '6443 rule targets ipBlock 0.0.0.0/0').toBe(true);
+  });
+});
+
 describe('kustomizations wire in the egress policy', () => {
   for (const rel of ['kustomization.yaml', 'overlays/ocp/kustomization.yaml']) {
     it(`${rel} lists harness-egress-policy.yaml in resources`, () => {
