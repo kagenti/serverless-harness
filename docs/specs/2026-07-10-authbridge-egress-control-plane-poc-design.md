@@ -34,8 +34,9 @@
 >    echo** target (the forward proxy reads L7 and swaps the header). The **baked-CA HTTPS MITM** shape is
 >    **deferred** (already noted in §10 as out of PoC scope). → **ADR-0027.**
 > 4. **Plumbing.** The feature flag is **`SH_AUTHBRIDGE`** (off by default, mirroring `SH_REMOTE_SANDBOX`).
->    The proxy is the **full `authbridge-proxy` image** (the `authbridge-lite` binary drops the parsers);
->    RC1 builds it from a stacked branch — image ref `dev.local/authbridge-proxy:rc1`.
+>    The proxy is the **full `authbridge` image** (the `authbridge-lite` binary drops the parsers); now
+>    that #655/#657 are on kext main, RC1 uses the official
+>    `ghcr.io/kagenti/kagenti-extensions/authbridge` image (pinned `main-9c131ee`).
 >
 > Consequently the §8 RC1-0 deliverable "`static-broker` + `sparc-stub`" is realized as
 > "**`static-inject` plugin + `ibac-stub`**".
@@ -69,7 +70,7 @@ the outbound request to the LLM/external API carries the real credential injecte
 
 ## 3. Architecture
 
-Two AuthBridge roles, one per hop, each running the standalone `authbridge-lite` proxy binary (no Envoy).
+Two AuthBridge roles, one per hop, each running the standalone `authbridge` proxy binary (no Envoy).
 Their **deployment shapes differ by hop** — see [ADR-0025](../adrs/0025-authbridge-deployment-topology.md)
 for the decision and trade-offs.
 

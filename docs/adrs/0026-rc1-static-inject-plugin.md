@@ -50,11 +50,14 @@ is the only place the real credential lives.
 - Positive: the real credential lives only in AuthBridge's mounted secret (invariant preserved); one small,
   self-contained, unit-tested plugin instead of a broker service; host-keyed resolution works uniformly on
   both hops; zero dependency on the unmerged #626.
-- Negative / accepted: RC1 needs the **full `authbridge-proxy` image** (parsers + our plugin) built from a
-  stacked branch until the plugin lands upstream (kagenti-extensions **#655**); the plugin is
-  single-tenant/static by design — **per-user issuance and RFC 8693 token-exchange remain deferred to Z5**;
-  this **refines** the injection-mechanism clause of ADR-0025 and spec §3.
-- Follow-up: land #655 upstream; a Z5 per-user / token-exchange source replaces the static `secret_dir`.
+- Negative / accepted: the plugin (and the reverse-proxy SSE/Host/header fidelity fixes,
+  kagenti-extensions **#657**) are now **merged to kext main**; RC1 consumes the official
+  `ghcr.io/kagenti/kagenti-extensions/authbridge` image (pinned `main-9c131ee`) — no stacked-branch
+  build. The plugin is still single-tenant/static by design — **per-user issuance and RFC 8693
+  token-exchange remain deferred to Z5**; this **refines** the injection-mechanism clause of
+  ADR-0025 and spec §3.
+- Follow-up: **#655 is DONE** (landed upstream on kext main); only the Z5 per-user / token-exchange
+  source (replacing the static `secret_dir`) remains.
 
 ---
 

@@ -72,7 +72,9 @@ spec:
             limits:
               memory: "256Mi"
         - name: authbridge-ab2
-          image: dev.local/authbridge-proxy:rc1
+          # Official kext image built from kext main (#655 static-inject + #657 reverse-proxy
+          # fidelity fixes), digest sha256:c809d5edad2ae41d132328a8e9cdcf5e1924008830f0e73782b1d110154e362a.
+          image: ghcr.io/kagenti/kagenti-extensions/authbridge:main-9c131ee
           imagePullPolicy: IfNotPresent
           args: ["--config", "/etc/authbridge/config.yaml"]
           volumeMounts:
@@ -161,7 +163,7 @@ spec:
             limits:
               memory: "256Mi"
         - name: authbridge-ab2
-          image: dev.local/authbridge-proxy:rc1
+          image: ghcr.io/kagenti/kagenti-extensions/authbridge:main-9c131ee
           imagePullPolicy: IfNotPresent
           args: ["--config", "/etc/authbridge/config.yaml"]
           volumeMounts:
@@ -250,7 +252,7 @@ spec:
             limits:
               memory: "256Mi"
         - name: authbridge-ab2
-          image: dev.local/authbridge-proxy:rc1
+          image: ghcr.io/kagenti/kagenti-extensions/authbridge:main-9c131ee
           imagePullPolicy: IfNotPresent
           args: ["--config", "/etc/authbridge/config.yaml"]
           volumeMounts:
