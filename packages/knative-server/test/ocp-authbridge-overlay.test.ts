@@ -168,9 +168,9 @@ describe('patch-echo-target.yaml (echo-target Deployment patch)', () => {
   const patch = readYaml(resolve(OVERLAY, 'patch-echo-target.yaml'));
   assertDeploymentPatchShape(patch, 'echo-target', 'echo-target', 'serverless-harness');
 
-  it('does NOT pin runAsUser (the `node` user is already non-root)', () => {
+  it('pins runAsUser 1000 (image USER `node` is non-numeric; kubelet needs a numeric UID to verify non-root)', () => {
     const sc = patch.spec?.template?.spec?.securityContext ?? {};
-    expect(sc.runAsUser).toBeUndefined();
+    expect(sc.runAsUser).toBe(1000);
   });
 });
 
