@@ -85,8 +85,8 @@ describe('AB1 manifest', () => {
   const configMap = docs.find((d) => d?.kind === 'ConfigMap' && d?.metadata?.name === 'authbridge-ab1-config') ?? {};
   const container = deployment.spec?.template?.spec?.containers?.[0] ?? {};
 
-  it("the Deployment container image is dev.local/authbridge-proxy:rc1", () => {
-    expect(container.image).toBe('dev.local/authbridge-proxy:rc1');
+  it("the Deployment container image is the official kext authbridge image", () => {
+    expect(container.image).toBe('ghcr.io/kagenti/kagenti-extensions/authbridge:main-9c131ee');
   });
 
   describe('embedded AB1 config (ConfigMap data["config.yaml"])', () => {
@@ -200,7 +200,7 @@ describe('sandbox-pool-ab2 manifest (SH_AUTHBRIDGE variant)', () => {
   it.each(sandboxes.map((s, i) => [i, s]))('sandbox %s: pod has an authbridge-ab2 sidecar container', (_i, sandbox: any) => {
     const containers = sandbox.spec?.podTemplate?.spec?.containers ?? [];
     const ab2 = findContainer(containers, 'authbridge-ab2');
-    expect(ab2.image).toBe('dev.local/authbridge-proxy:rc1');
+    expect(ab2.image).toBe('ghcr.io/kagenti/kagenti-extensions/authbridge:main-9c131ee');
     expect(ab2.args).toEqual(['--config', '/etc/authbridge/config.yaml']);
   });
 

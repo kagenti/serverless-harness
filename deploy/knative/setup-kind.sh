@@ -162,6 +162,17 @@ fi
 # the Knative Service starts routing traffic.
 if [ "${SH_AUTHBRIDGE:-0}" = "1" ]; then
   echo "--- Deploying AB1 gateway (ibac-stub + authbridge-ab1) ---"
+
+  if [ "$SKIP_BUILD" != "true" ]; then
+    # Official kext image (main #655 static-inject + #657 reverse-proxy fidelity fixes) —
+    # multi-arch (linux/amd64 + linux/arm64), so it runs natively on any kind node. Pinned to
+    # the kext main sha; one pull+load here covers both AB1 (below) and the 3 AB2 sidecars
+    # applied later in this script, since AB1 runs first.
+    echo "--- Pulling + loading AuthBridge proxy image (official kext image, #655/#657 on main) ---"
+    docker pull ghcr.io/kagenti/kagenti-extensions/authbridge:main-9c131ee
+    kind load docker-image ghcr.io/kagenti/kagenti-extensions/authbridge:main-9c131ee --name "$CLUSTER_NAME"
+  fi
+
   kubectl apply -f "$SCRIPT_DIR/ibac-stub.yaml" -f "$SCRIPT_DIR/authbridge/ab1-deployment.yaml"
   # Applied AFTER any base egress policy so it overwrites the same NetworkPolicy name
   # (serverless-harness-egress) rather than stacking with it.
