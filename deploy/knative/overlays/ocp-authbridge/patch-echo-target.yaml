@@ -1,0 +1,21 @@
+# Strategic-merge patch onto the echo-target Deployment (deploy/knative/echo-target.yaml).
+# The echo-target image runs as the `node` user (already non-root) — no runAsUser pin needed,
+# just runAsNonRoot to satisfy the restricted/nonroot-v2 SCC.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-target
+spec:
+  template:
+    spec:
+      serviceAccountName: serverless-harness
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: echo-target
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
