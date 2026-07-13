@@ -52,6 +52,12 @@ spec:
               value: "http://localhost:8081"
             - name: https_proxy
               value: "http://localhost:8081"
+            # NO_PROXY empty on purpose: ALL sandbox HTTP egress transits AB2. Only echo-target
+            # egress happens in this PoC. NOTE: any future DIRECT in-cluster egress from the
+            # sandbox (e.g. redis, the apiserver) would also be routed through AB2, whose
+            # host-keyed static-inject has no credential for those hosts and would fail-closed —
+            # such hosts must be added to NO_PROXY (this is why the H1-deny probe in leaf-smoke.sh
+            # clears the proxy vars to reach AB1 directly).
             - name: NO_PROXY
               value: ""
             - name: ECHO_CRED
@@ -135,6 +141,12 @@ spec:
               value: "http://localhost:8081"
             - name: https_proxy
               value: "http://localhost:8081"
+            # NO_PROXY empty on purpose: ALL sandbox HTTP egress transits AB2. Only echo-target
+            # egress happens in this PoC. NOTE: any future DIRECT in-cluster egress from the
+            # sandbox (e.g. redis, the apiserver) would also be routed through AB2, whose
+            # host-keyed static-inject has no credential for those hosts and would fail-closed —
+            # such hosts must be added to NO_PROXY (this is why the H1-deny probe in leaf-smoke.sh
+            # clears the proxy vars to reach AB1 directly).
             - name: NO_PROXY
               value: ""
             - name: ECHO_CRED
@@ -218,6 +230,12 @@ spec:
               value: "http://localhost:8081"
             - name: https_proxy
               value: "http://localhost:8081"
+            # NO_PROXY empty on purpose: ALL sandbox HTTP egress transits AB2. Only echo-target
+            # egress happens in this PoC. NOTE: any future DIRECT in-cluster egress from the
+            # sandbox (e.g. redis, the apiserver) would also be routed through AB2, whose
+            # host-keyed static-inject has no credential for those hosts and would fail-closed —
+            # such hosts must be added to NO_PROXY (this is why the H1-deny probe in leaf-smoke.sh
+            # clears the proxy vars to reach AB1 directly).
             - name: NO_PROXY
               value: ""
             - name: ECHO_CRED

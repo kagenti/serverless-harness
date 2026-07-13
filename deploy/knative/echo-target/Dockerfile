@@ -4,4 +4,7 @@
 FROM node:20-alpine
 COPY echo.js /echo.js
 EXPOSE 8080
+# Run as the non-root uid-1000 `node` user shipped by node:20-alpine (matches echo.js's
+# "non-root" note). The server binds :8080, so no privileged port / root is needed.
+USER node
 CMD ["node", "/echo.js"]
