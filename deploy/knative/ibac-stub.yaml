@@ -22,8 +22,14 @@ spec:
       containers:
         - name: ibac-stub
           image: dev.local/serverless-harness
-          workingDir: /app
-          command: ["node", "--import", "tsx", "packages/ibac-stub/src/main.ts"]
+          # Run from the knative-server package dir (which the published image links tsx into) and load
+          # ibac-stub's entrypoint by absolute path: the published GHCR image does not link tsx into
+          # packages/ibac-stub (see the Dockerfile COPY-manifest fix below), and there is no root-hoisted
+          # tsx. ibac-stub has zero runtime deps (only node builtins + relative imports), so tsx resolved
+          # from knative-server's node_modules loads it fine. Works on the current image, on Kind, and after
+          # the Dockerfile fix republishes.
+          workingDir: /app/packages/knative-server
+          command: ["node", "--import", "tsx", "/app/packages/ibac-stub/src/main.ts"]
           env:
             - name: IBAC_STUB_PORT
               value: "8080"
