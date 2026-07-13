@@ -16,7 +16,7 @@
 # E6/E7 sharing-ratio experiments converge a repo in-sandbox.
 FROM alpine:3.20
 
-RUN apk add --no-cache bash coreutils findutils grep ripgrep git
+RUN apk add --no-cache bash coreutils findutils grep ripgrep git curl
 
 # OpenShift assigns the pod a non-root UID; the OCP overlay pins runAsUser/fsGroup
 # 65532 and backs /workspace with the Sandbox CR's durable PVC (fsGroup-owned, so
