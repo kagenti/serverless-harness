@@ -83,6 +83,14 @@ kubectl -n "$NS" cp ./fixtures/repo/. "$SBOX:$SBOX_REPO"
 # always reverts AB1 to allow before leaving the block, so Claims 2-8 below run in allow
 # mode regardless of this block's outcome.
 if [ "${SH_AUTHBRIDGE:-0}" = "1" ]; then
+  # The AB1 manifests are pinned to `namespace: default`, but the AuthBridge ops below run via
+  # `-n "$NS"`. If NS were overridden, every AB1 kubectl call would target the wrong namespace
+  # and silently no-op through the `|| true` guards, making the H1 claims fail confusingly.
+  # Fail fast with a clear message instead.
+  if [ "$NS" != "default" ]; then
+    echo "SH_AUTHBRIDGE=1 requires NS=default (AB1 manifests are namespace: default); got NS=$NS" >&2
+    exit 2
+  fi
   AB1_CM="authbridge-ab1-config"
   AB1_LOG="$(mktemp)"   # verbose kubectl output goes here, not stdout
 
