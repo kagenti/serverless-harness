@@ -89,15 +89,15 @@ EOF
 # Preflight
 # ----------------------------------------------------------------------------
 preflight() {
-  command -v kubectl &>/dev/null || { log_error "kubectl not found in PATH"; exit 1; }
-  kubectl cluster-info &>/dev/null || { log_error "Cannot reach a cluster (check KUBECONFIG / kubectl context)"; exit 1; }
+  command -v kubectl &>/dev/null || { log_error "kubectl not found in PATH"; return 1; }
+  kubectl cluster-info &>/dev/null || { log_error "Cannot reach a cluster (check KUBECONFIG / kubectl context)"; return 1; }
   kubectl -n "$NS" get ksvc "$KSVC" &>/dev/null || {
     log_error "ksvc/$KSVC not found in namespace $NS — this wrapper targets an ALREADY-DEPLOYED stack (run setup-ocp.sh first)"
-    exit 1
+    return 1
   }
   kubectl -n "$NS" get deploy redis &>/dev/null || {
     log_error "deploy/redis not found in namespace $NS — base stack does not look deployed (run setup-ocp.sh first)"
-    exit 1
+    return 1
   }
   log_success "Preflight: cluster reachable, ksvc/$KSVC and deploy/redis present in $NS"
 }
@@ -106,7 +106,7 @@ preflight() {
 # mode: up
 # ----------------------------------------------------------------------------
 mode_up() {
-  preflight
+  preflight || return 1
 
   log_info "Reading current llm-credentials api-key in $NS"
   local real_key
@@ -121,7 +121,7 @@ mode_up() {
   if [ -f "$STATE_DIR/real-api-key" ]; then
     log_info "Saved real-api-key already present at $STATE_DIR/real-api-key — leaving it as-is (not overwriting)"
   else
-    printf '%s' "$real_key" > "$STATE_DIR/real-api-key"
+    ( umask 077; printf '%s' "$real_key" > "$STATE_DIR/real-api-key" )
     chmod 600 "$STATE_DIR/real-api-key"
     log_success "Saved original llm-credentials api-key to $STATE_DIR/real-api-key (mode 600)"
   fi
@@ -176,14 +176,14 @@ mode_up() {
 # mode: smoke
 # ----------------------------------------------------------------------------
 mode_smoke() {
-  preflight
+  preflight || return 1
 
   log_info "Resolving Route for ksvc/$KSVC in $NS"
   local ksvc_url
   ksvc_url="$(kubectl -n "$NS" get ksvc "$KSVC" -o jsonpath='{.status.url}' 2>/dev/null || true)"
   if [ -z "$ksvc_url" ]; then
     log_error "Could not resolve ksvc/$KSVC status.url in $NS"
-    exit 1
+    return 1
   fi
   log_success "KSVC_URL=$ksvc_url"
 
@@ -197,7 +197,7 @@ mode_smoke() {
 # mode: restore
 # ----------------------------------------------------------------------------
 mode_restore() {
-  preflight
+  preflight || return 1
 
   if [ -f "$STATE_DIR/real-api-key" ]; then
     log_info "Restoring llm-credentials to direct mode (api-key only) from $STATE_DIR/real-api-key"
@@ -247,17 +247,26 @@ mode_restore() {
 mode_gate() {
   mode_up
 
-  local smoke_exit=0
-  if ! mode_smoke; then
-    smoke_exit=$?
-  fi
-
+  # Arm the restore as an EXIT trap (not a sequential call) so it fires on
+  # ANY way this shell exits after the gate is up — an internal `exit` from
+  # deeper in mode_smoke/preflight, a `set -e` abort, or the normal `exit
+  # "$smoke_exit"` below. A sequential "if ! mode_smoke; then ...; fi"
+  # cannot catch an `exit` call made inside mode_smoke's call graph, because
+  # `exit` terminates the process immediately without returning control to
+  # the caller. The trap is the only mechanism that is guaranteed to run
+  # regardless of how the process exits.
   if [ "$RC1_GATE_KEEP" = "1" ]; then
     log_warn "RC1_GATE_KEEP=1 — skipping automatic restore; gate left applied in $NS for debugging"
   else
-    log_info "Restoring pre-gate state (always, regardless of smoke result)"
-    mode_restore
+    log_info "Arming restore-on-exit trap (restore runs no matter how the smoke step exits)"
+    trap 'mode_restore || true' EXIT
   fi
+
+  local smoke_exit=0
+  set +e
+  mode_smoke
+  smoke_exit=$?
+  set -e
 
   echo "SMOKE_EXIT:$smoke_exit"
   exit "$smoke_exit"
