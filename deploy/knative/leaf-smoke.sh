@@ -166,8 +166,12 @@ if [ "${SH_AUTHBRIDGE:-0}" = "1" ]; then
       }
 
       claim H2-inject "AB2 allow-path: egress through the proxy gets the real cred injected"
+      # sh -c (not a bare curl exec) so $ECHO_CRED expands INSIDE the pod, using the sandbox
+      # container's own configured placeholder instead of a hardcoded copy of it. The bash
+      # source is single-quoted so $ECHO_CRED is passed through literally to the pod's sh.
+      # shellcheck disable=SC2016 # intentional: expands in the pod's sh, not this host shell
       h2_resp="$(h2_exec_curl_retry kubectl -n "$NS" exec "$SBOX" -c sandbox -- \
-        curl -s http://echo-target/ -H "Authorization: Bearer PLACEHOLDER-TOKEN")"
+        sh -c 'curl -s http://echo-target/ -H "Authorization: Bearer $ECHO_CRED"')"
       h2_inject_ok=0
       if echo "$h2_resp" | grep -qF "$REAL" && ! echo "$h2_resp" | grep -qF "PLACEHOLDER-TOKEN"; then
         h2_inject_ok=1
@@ -179,9 +183,14 @@ if [ "${SH_AUTHBRIDGE:-0}" = "1" ]; then
       fi
 
       claim H2-deny "AB2 deny-before-inject: a tools/call-shaped request is blocked pre-egress"
-      h2_deny_resp="$(h2_exec_curl_retry kubectl -n "$NS" exec "$SBOX" -c sandbox -- curl -s -X POST http://echo-target/ \
-        -H "Authorization: Bearer PLACEHOLDER-TOKEN" -H "Content-Type: application/json" \
-        -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x"}}')"
+      # Same sh -c / $ECHO_CRED expand-in-pod treatment as H2-inject above. The JSON -d body
+      # keeps its own single quotes as literal characters passed through the bash source via
+      # the standard '\''...'\'' embed-a-literal-quote idiom, so it survives the sh -c wrapping
+      # intact (verified: sh -c receives the JSON with its quoting unchanged).
+      # shellcheck disable=SC2016 # intentional: expands in the pod's sh, not this host shell
+      h2_deny_resp="$(h2_exec_curl_retry kubectl -n "$NS" exec "$SBOX" -c sandbox -- sh -c 'curl -s -X POST http://echo-target/ \
+        -H "Authorization: Bearer $ECHO_CRED" -H "Content-Type: application/json" \
+        -d '\''{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x"}}'\''')"
       h2_deny_ok=0
       if echo "$h2_deny_resp" | grep -qE 'ibac\.(no_session|no_intent)' && ! echo "$h2_deny_resp" | grep -qF "$REAL"; then
         h2_deny_ok=1
