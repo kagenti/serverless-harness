@@ -112,6 +112,10 @@ Run the smoke suite (requires the Kourier port-forward to be active):
 
 See [`SMOKE.md`](SMOKE.md) for detailed results and what each claim proves.
 
+For the **AuthBridge two-hop egress-control** demo (`SH_AUTHBRIDGE=1`) — credential
+injection + allow/deny control on both harness egress hops — see
+[`README-authbridge.md`](README-authbridge.md).
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |
