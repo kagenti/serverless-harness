@@ -124,9 +124,9 @@ live only in identity-keyed egress points. Dependency-ordered:
 |----|-------|--------|---------------|-------|
 | **Z1** | Identity spine — per-session SPIFFE bound to user; `CredentialInjector` interface; orchestrator + reconstruct-on-wake | **design ✅** | [`2026-06-26-identity-spine-design.md`](2026-06-26-identity-spine-design.md) | parent M7 (reframed) |
 | **Z2** | **Harness lock-down** — fail-closed redirection, secret-free container, default-deny egress, distroless, scoped RBAC; argues the harness needs **no** egress proxy | **design ✅** | [`2026-06-26-harness-lockdown-design.md`](2026-06-26-harness-lockdown-design.md) | — |
-| **Z3** | **Inference injector** — shared provider-key chokepoint; multi-provider table, `x-sh-provider` routing, strip-then-set, mTLS, streaming, audit-only | **design ✅** | [`2026-06-26-inference-injector-design.md`](2026-06-26-inference-injector-design.md) | parent M8 |
+| **Z3** | **Inference injector** — shared provider-key chokepoint; multi-provider table, `x-sh-provider` routing, strip-then-set, mTLS, streaming, audit-only | **design ✅** · mechanism superseded by RC1 | [`2026-06-26-inference-injector-design.md`](2026-06-26-inference-injector-design.md) | parent M8 |
 | **Z4** | MCP code-mode in the sandbox (placeholder-swap; **supersedes** the parent's MCP *gateway*) | design ✅ | [`2026-06-18-m10-mcp-code-mode-design.md`](2026-06-18-m10-mcp-code-mode-design.md) | M10 (spec); parent M10 (superseded) |
-| **Z5** | Generalized credentialed egress (sandbox forward proxy + baked CA; subsumes the parent's sandbox-credential milestone; generalizes Z4's mechanism) | design ✅ | [`2026-06-19-m13-generalized-credentialed-egress-design.md`](2026-06-19-m13-generalized-credentialed-egress-design.md) | M13; parent M9 |
+| **Z5** | Generalized credentialed egress (sandbox forward proxy + baked CA; subsumes the parent's sandbox-credential milestone; generalizes Z4's mechanism) | design ✅ · static slice implemented by RC1 | [`2026-06-19-m13-generalized-credentialed-egress-design.md`](2026-06-19-m13-generalized-credentialed-egress-design.md) | M13; parent M9 |
 | **Z6** | Subagents — first-class child sessions; fresh-isolated default + `SandboxPolicy`; CoW workspace seed; `mail`/`subagent_*` log types | design (no spec yet) | parent research doc §3.4, §M11 | parent M11 |
 | **Z7** | Validation — secret-leak red-team across all paths; multi-agent fan-out; blast-radius containment | design (no spec yet) | parent research doc §M12 | parent M12 |
 
@@ -155,7 +155,7 @@ so it takes its own prefix rather than a linear `Z` id.
 
 | ID | Title | Status | Spec / decision |
 |----|-------|--------|-----------------|
-| **RC1** | **AuthBridge egress control-plane PoC** — shared LLM gateway (Profile A) + per-sandbox egress forward-proxy (Profile B); real static-cred `token-broker` injection + stubbed-judge SPARC/IBAC control; BYO sandbox stretch on the `ST` seam (ST5-gated) | design ✅ (proposed) | [`2026-07-10-authbridge-egress-control-plane-poc-design.md`](2026-07-10-authbridge-egress-control-plane-poc-design.md); [ADR-0025](../adrs/0025-authbridge-deployment-topology.md) |
+| **RC1** | **AuthBridge egress control-plane PoC** — shared LLM gateway (Profile A) + per-sandbox egress forward-proxy (Profile B); real static-cred `token-broker` injection + stubbed-judge SPARC/IBAC control; BYO sandbox stretch on the `ST` seam (ST5-gated) | **accepted ✅** (2026-07-14) · RC1-0/1/2/4 implemented (Kind + OCP); RC1-3 stretch deferred (ST5) | [`2026-07-10-authbridge-egress-control-plane-poc-design.md`](2026-07-10-authbridge-egress-control-plane-poc-design.md); [ADR-0025](../adrs/0025-authbridge-deployment-topology.md) |
 
 ---
 
