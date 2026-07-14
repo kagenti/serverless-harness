@@ -253,3 +253,54 @@ describe('sandbox-pool-ab2 manifest (SH_AUTHBRIDGE variant)', () => {
     expect(mounts.some((m: any) => m.name === 'creds' && m.mountPath === '/etc/authbridge/creds')).toBe(true);
   });
 });
+
+// Cross-file invariant (issue #103): setup-ocp.sh's SH_AUTHBRIDGE=1 pool pre-poll computes its
+// target container count `ab2_want` from `kubectl get sandbox -l <selector>`. A `get sandbox` label
+// selector matches the Sandbox CR's OWN metadata.labels — NOT the podTemplate labels. So if the
+// selector names a podTemplate-only label (e.g. sh.kagenti.io/sandbox-pool=default, which lives on
+// podTemplate.metadata.labels for pod discovery), the count is always 0, `ab2_want` stays 0, the
+// loop's `[ "$ab2_want" -gt 0 ]` early-break never fires, and the poll burns its full ~150×2s ≈ 5m
+// budget before the authoritative `kubectl wait` gates. Pin the count selector to a label the
+// Sandbox CRs actually carry. Pure file parsing — no cluster, no kubectl — runs in `pnpm -r test`.
+describe('setup-ocp.sh AB2 pool pre-poll sandbox count (issue #103)', () => {
+  const script = readFileSync(resolve(DEPLOY, 'setup-ocp.sh'), 'utf8');
+  const lines = script.split('\n');
+  const sandboxes = readDocs(resolve(DEPLOY, 'sandbox-pool-ab2.yaml')).filter((d) => d?.kind === 'Sandbox');
+
+  /** Resolve a shell selector token to its literal value, following one level of `VAR=...`. */
+  function resolveSelectorToken(token: string): string {
+    const varName = token.match(/^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/)?.[1];
+    if (!varName) return token;
+    const assign = lines.find((l) => new RegExp(`^\\s*${varName}=`).test(l));
+    return assign?.match(new RegExp(`^\\s*${varName}=["']?([^"']*)["']?`))?.[1] ?? token;
+  }
+
+  // The line that derives ab2_want from a `kubectl get sandbox -l <token>` count.
+  const ab2WantLine = lines.find((l) => /ab2_want=/.test(l) && /get sandbox/.test(l));
+
+  it('computes ab2_want from a `get sandbox -l <selector>` count', () => {
+    expect(ab2WantLine, 'setup-ocp.sh must compute ab2_want from `get sandbox -l`').toBeDefined();
+  });
+
+  it('counts Sandbox CRs by a label the CRs actually carry (not a podTemplate-only label)', () => {
+    const rawToken = ab2WantLine!.match(/get sandbox\b.*?-l\s+(\S+)/)?.[1]?.replace(/["']/g, '');
+    expect(rawToken, 'could not extract the -l selector from the ab2_want line').toBeTruthy();
+    const selector = resolveSelectorToken(rawToken!);
+    const eq = selector.indexOf('=');
+    expect(eq, `selector '${selector}' is not a key=value form`).toBeGreaterThan(0);
+    const key = selector.slice(0, eq);
+    const value = selector.slice(eq + 1);
+
+    expect(sandboxes.length).toBeGreaterThan(0);
+    for (const s of sandboxes) {
+      const crLabels = s.metadata?.labels ?? {};
+      expect(
+        crLabels[key],
+        `Sandbox ${s.metadata?.name} carries no metadata.label '${key}', so ` +
+          `\`kubectl get sandbox -l ${selector}\` returns 0 rows → ab2_want stays 0 → the pre-poll ` +
+          `spins its full ~5m timeout (issue #103). A get-sandbox selector must match a CR label, ` +
+          `not a podTemplate label.`,
+      ).toBe(value);
+    }
+  });
+});
