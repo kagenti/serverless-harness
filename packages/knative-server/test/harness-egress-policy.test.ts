@@ -59,10 +59,20 @@ describe('harness egress NetworkPolicy manifest', () => {
     expect(catchAll).toEqual([]);
   });
 
-  it('allows DNS resolution (UDP+TCP 53)', () => {
+  it('allows DNS resolution (UDP+TCP 5353 to openshift-dns — OVN-K enforces post-DNAT, issue #102)', () => {
+    // OVN-Kubernetes enforces egress against the POST-DNAT packet: the dns-default
+    // Service (:53) DNATs to the CoreDNS pods on their real container port 5353, so a
+    // `port: 53` rule never matches and DNS times out. The rule must allow 5353 and be
+    // scoped to the openshift-dns namespace.
     const egress = np.spec?.egress ?? [];
-    const dnsPorts = egress.flatMap((r: any) => r.ports ?? []).filter((p: any) => p.port === 53);
-    const protos = new Set(dnsPorts.map((p: any) => p.protocol));
+    const dnsRule = egress.find((r: any) =>
+      (r.to ?? []).some(
+        (peer: any) =>
+          peer.namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name'] === 'openshift-dns',
+      ),
+    );
+    expect(dnsRule, 'a rule scoped to the openshift-dns namespace').toBeDefined();
+    const protos = new Set((dnsRule.ports ?? []).filter((p: any) => p.port === 5353).map((p: any) => p.protocol));
     expect(protos.has('UDP')).toBe(true);
     expect(protos.has('TCP')).toBe(true);
   });
@@ -146,10 +156,16 @@ describe('tightened AB1 egress variant', () => {
     expect(opensPublic443, 'no rule combining ipBlock 0.0.0.0/0 with port 443').toBe(false);
   });
 
-  it('allows DNS resolution (UDP+TCP 53)', () => {
+  it('allows DNS resolution (UDP+TCP 5353 to openshift-dns — OVN-K enforces post-DNAT, issue #102)', () => {
     const egress = np.spec?.egress ?? [];
-    const dnsPorts = egress.flatMap((r: any) => r.ports ?? []).filter((p: any) => p.port === 53);
-    const protos = new Set(dnsPorts.map((p: any) => p.protocol));
+    const dnsRule = egress.find((r: any) =>
+      (r.to ?? []).some(
+        (peer: any) =>
+          peer.namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name'] === 'openshift-dns',
+      ),
+    );
+    expect(dnsRule, 'a rule scoped to the openshift-dns namespace').toBeDefined();
+    const protos = new Set((dnsRule.ports ?? []).filter((p: any) => p.port === 5353).map((p: any) => p.protocol));
     expect(protos.has('UDP')).toBe(true);
     expect(protos.has('TCP')).toBe(true);
   });

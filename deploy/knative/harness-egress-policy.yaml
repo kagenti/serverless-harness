@@ -41,12 +41,23 @@ spec:
   policyTypes:
     - Egress
   egress:
-    # DNS — resolve the external LLM hostname. Broad by destination, narrow by port.
+    # DNS — resolve the LLM hostname and in-cluster names (redis, K8s API).
+    # On OVN-Kubernetes, egress NetworkPolicy is enforced against the POST-DNAT
+    # packet: the dns-default Service (172.30.0.10:53) DNATs to the CoreDNS pods,
+    # whose real container port is 5353 (NOT 53). A bare `port: 53` rule therefore
+    # never matches the translated DNS traffic, so every lookup hits default-deny
+    # and times out (issue #102). Scope to the openshift-dns namespace and allow
+    # the CoreDNS target port 5353. kindnet does not enforce egress, so this is a
+    # no-op on Kind; the enforcing target is OCP/OVN-K.
     # Removed entirely at M8 (harness targets the injector by IP), closing the
     # DNS-tunnel exfil channel.
-    - ports:
-        - { protocol: UDP, port: 53 }
-        - { protocol: TCP, port: 53 }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-dns
+      ports:
+        - { protocol: UDP, port: 5353 }
+        - { protocol: TCP, port: 5353 }
     # Redis — the durable log. Scoped to the in-cluster redis pod by label.
     - to:
         - podSelector:
