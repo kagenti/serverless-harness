@@ -79,4 +79,4 @@ git commit -s -m "feat: Add new feature"
 
 ## Code of Conduct
 
-This project follows the [Kagenti Code of Conduct](https://github.com/kagenti/.github/blob/main/CODE_OF_CONDUCT.md).
+This project follows the [Kagenti Code of Conduct](https://github.com/kagenti/kagenti/blob/main/CODE_OF_CONDUCT.md).
