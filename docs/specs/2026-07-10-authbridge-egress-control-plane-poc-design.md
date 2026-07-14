@@ -1,7 +1,7 @@
 # RC1 — AuthBridge (Rosso Cortex) Egress Control-Plane PoC
 
 - **Version:** 1.0
-- **Status:** Proposed
+- **Status:** Accepted (2026-07-14) — RC1-0/1/2/4 implemented and live-verified on Kind + OCP 4.20 (PRs #94–#104; OCP gate 6/6). RC1-3 (BYO sandbox, stretch) deferred pending the SandboxTransport live gate ST5 (#88).
 - **Scope:** Single-tenant, Kind-first PoC. Real static-credential injection + real (stubbed-judge) control
   plugins on both harness HTTP egress hops; bring-your-own sandbox as a marked stretch.
 - **Builds-on:** Z2 (harness lock-down, [`2026-06-26-harness-lockdown-design.md`](2026-06-26-harness-lockdown-design.md)),
@@ -244,8 +244,8 @@ Z3 and Z5 are, mechanically, the **same thing**: an AuthBridge instance on an eg
 and Z5 are marked *superseded by RC1*, while Z3/Z5 are retained as the **deployment-profile detail** and the
 home of the **deferred per-user / token-exchange** work. This removes the duplicated "how injection works"
 prose across two specs and gives one pattern with two profiles. (Recorded in the registry lineage section
-of [`README.md`](README.md); the actual `Superseded-by` header edits to Z3/Z5 are left for when RC1 is
-accepted, so this spec does not retro-edit them yet.)
+of [`README.md`](README.md); with RC1 now **Accepted** (2026-07-14), the mechanism-superseded
+annotations on the Z3/Z5 status lines are applied.)
 
 ## 8. Milestones
 
