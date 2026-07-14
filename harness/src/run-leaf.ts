@@ -9,7 +9,7 @@ import {
 import { RedisSessionBackend } from "@sh/session-backend";
 import { k8sSandboxExtension, kubectlExecInPod } from "@sh/k8s-sandbox";
 import { selectPoolSandbox, SandboxPoolSaturatedError } from "./select-sandbox.js";
-import { convergeWorkspace, cleanupWorkspace } from "./converge.js";
+import { convergeWorkspace, cleanupWorkspace, captureWorkspaceDiff } from "./converge.js";
 import { resolveModelSelection, requireModel, applyModelGateway, type TurnConfig } from "./run-turn.js";
 import { BufferedRedisBackend } from "./buffered-redis-backend.js";
 import { flushExtension } from "./flush-extension.js";
@@ -202,9 +202,74 @@ export async function runSolveLeaf(
   return { status: "solved", patch: capture.patch ?? "" };
 }
 
-// Real solve runner — implemented in Task 4. Exercised by the Kind smoke, not unit tests.
-export const realProduceSolve: ProduceSolve = async () => {
-  throw new Error("realProduceSolve not implemented");
+// Real solve runner: lease a sandbox, converge the per-leaf worktree, run the agent with ONLY the
+// sandbox tools (no verdict/gate extensions), then capture the staged diff. Mirrors realProduceVerdict's
+// session/pool wiring. Exercised by the Kind smoke, not unit tests.
+export const realProduceSolve: ProduceSolve = async (env, config, capture) => {
+  const cwd = config?.cwd ?? process.cwd();
+  const { provider, modelId } = resolveModelSelection({
+    model: env.model ?? config?.model,
+    provider: env.provider ?? config?.provider,
+  });
+  const baseModel = requireModel(provider, modelId);
+  const model = applyModelGateway(baseModel as { headers?: Record<string, unknown> }, config);
+
+  const sid = leafSessionId(env);
+
+  // A solve leaf MUST have a real sandbox worktree — fail fast (before any Redis/session work) if the
+  // pool is unconfigured. selectPoolSandbox returns null when no sandbox is configured (run-leaf.ts:209).
+  const selected = await selectPoolSandbox(process.env, cwd, sid, {
+    cap: Number(process.env.KAGENTI_SANDBOX_CAP ?? "20"),
+    ttlMs: Number(process.env.KAGENTI_SANDBOX_LEASE_TTL_MS ?? "60000"),
+  });
+  if (!selected) throw new Error("solve leaf requires a configured sandbox pool");
+
+  const store = new RedisSessionBackend<FileEntry>(config?.redisUrl ?? "redis://localhost:6379");
+  const backend = new BufferedRedisBackend(store);
+  const prior = await store.read(sid);
+  const sessionManager = prior.length > 0
+    ? await SessionManager.openFromCheckpoint(sid, backend, cwd)
+    : SessionManager.create(cwd, undefined, { id: sid }, backend);
+
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  try {
+    const exec = kubectlExecInPod(selected.config);
+    const workspaceRef = await convergeWorkspace(exec, env.repoUrl!, env.ref!, sid);
+    const hbMs = Number(process.env.KAGENTI_SANDBOX_HEARTBEAT_MS ?? "20000");
+    heartbeat = setInterval(() => { void selected.heartbeat(); }, hbMs);
+
+    const agentDir = getAgentDir();
+    const settingsManager = SettingsManager.create(cwd, agentDir);
+    const resourceLoader = new DefaultResourceLoader({
+      cwd,
+      agentDir,
+      settingsManager,
+      extensionFactories: [
+        k8sSandboxExtension({ config: selected.config }),
+        flushExtension(backend),
+        checkpointExtension(store, sessionManager),
+      ],
+    });
+    await resourceLoader.reload();
+
+    const { session } = await createAgentSession({
+      sessionManager,
+      model: model as never,
+      resourceLoader,
+      settingsManager,
+    });
+
+    try {
+      await session.prompt(buildSolvePrompt(env.problemStatement!, workspaceRef));
+      capture.patch = await captureWorkspaceDiff(exec, sid);
+    } finally {
+      await backend.flush();
+    }
+  } finally {
+    if (heartbeat) clearInterval(heartbeat);
+    await cleanupWorkspace(kubectlExecInPod(selected.config), sid);
+    await selected.release();
+  }
 };
 
 // Real Pi session runner — mirrors harness/src/run-turn.ts session setup, made resumable
