@@ -25,18 +25,32 @@ describe("toResultRecord", () => {
     const r: LeafResult = { status: "done", verdict: { item_id: "i1", verdict: "FLAGGED", reason: "x" } };
     expect(toResultRecord(r, "run-1/i1", "T")).toEqual({
       status: "done", verdict: { item_id: "i1", verdict: "FLAGGED", reason: "x" },
-      gate: null, reason: null, sessionId: "run-1/i1", ts: "T",
+      gate: null, reason: null, patch: null, sessionId: "run-1/i1", ts: "T",
     });
   });
   it("maps paused → gate-bearing record", () => {
     const r: LeafResult = { status: "paused", gateId: 1, gate: { summary: "s", proposed_action: "a" } };
     expect(toResultRecord(r, "run-1/i1", "T")).toMatchObject({
-      status: "paused", gate: { gateId: 1, summary: "s", proposed_action: "a" }, verdict: null,
+      status: "paused", gate: { gateId: 1, summary: "s", proposed_action: "a" }, verdict: null, patch: null,
     });
   });
   it("maps failed → reason-bearing record", () => {
     const r: LeafResult = { status: "failed", reason: "no_verdict" };
-    expect(toResultRecord(r, "s", "T")).toMatchObject({ status: "failed", reason: "no_verdict" });
+    expect(toResultRecord(r, "s", "T")).toMatchObject({ status: "failed", reason: "no_verdict", patch: null });
+  });
+});
+
+describe("toResultRecord — solved", () => {
+  it("carries the patch and sets status solved", () => {
+    const rec = toResultRecord({ status: "solved", patch: "diff --git a/x b/x\n" }, "run-1", "2026-07-14T00:00:00Z");
+    expect(rec.status).toBe("solved");
+    expect(rec.patch).toBe("diff --git a/x b/x\n");
+    expect(rec.verdict).toBeNull();
+    expect(rec.sessionId).toBe("run-1");
+  });
+  it("defaults patch to null for non-solve results", () => {
+    const rec = toResultRecord({ status: "aborted" }, "run-1", "t");
+    expect(rec.patch).toBeNull();
   });
 });
 
