@@ -531,7 +531,11 @@ if [ "${SH_AUTHBRIDGE:-0}" = "1" ]; then
     # Section 6) would otherwise keep its OLD 1-container spec (no authbridge-ab2 sidecar)
     # forever. Force-delete the pool pods so the controller recreates them from the
     # just-applied AB2 spec.
-    AB_POOL_SELECTOR="sh.kagenti.io/sandbox-pool=default"
+    AB_POOL_SELECTOR="sh.kagenti.io/sandbox-pool=default"   # on the pods (podTemplate.metadata.labels)
+    # The pool label above lives ONLY on the pod template, not on the Sandbox CR itself (whose only
+    # label is app=sandbox). A `kubectl get sandbox -l ...` selector matches the CR's own labels, so
+    # the pool label would count 0 CRs there; use the CR's real label for the sandbox count below.
+    AB_SANDBOX_SELECTOR="app=sandbox"                        # on the Sandbox CRs (metadata.labels)
     log_info "Force-rolling the sandbox pool onto the AB2-sidecar variant..."
     $KUBECTL -n "$NAMESPACE" delete pod -l "$AB_POOL_SELECTOR" --ignore-not-found \
       >"$LOG_DIR/ab2-pool-delete.log" 2>&1 || true
@@ -548,7 +552,7 @@ if [ "${SH_AUTHBRIDGE:-0}" = "1" ]; then
       ab2_ready=$($KUBECTL -n "$NAMESPACE" get pods -l "$AB_POOL_SELECTOR" \
         -o jsonpath='{range .items[*]}{range .status.containerStatuses[*]}{.ready}{"\n"}{end}{end}' \
         2>/dev/null | grep -c '^true$' || true)
-      ab2_want=$(( $($KUBECTL -n "$NAMESPACE" get sandbox -l "$AB_POOL_SELECTOR" --no-headers 2>/dev/null | wc -l | tr -d ' ') * 2 ))
+      ab2_want=$(( $($KUBECTL -n "$NAMESPACE" get sandbox -l "$AB_SANDBOX_SELECTOR" --no-headers 2>/dev/null | wc -l | tr -d ' ') * 2 ))
       [ "$ab2_want" -gt 0 ] && [ "$ab2_ready" -ge "$ab2_want" ] && break
       sleep 2
     done
