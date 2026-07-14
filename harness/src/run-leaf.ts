@@ -235,6 +235,9 @@ export const realProduceSolve: ProduceSolve = async (env, config, capture) => {
   try {
     const exec = kubectlExecInPod(selected.config);
     const workspaceRef = await convergeWorkspace(exec, env.repoUrl!, env.ref!, sid);
+    // A solve leaf edits files in its worktree; point the agent's sandbox cwd at that worktree so the
+    // model's edits (relative or absolute) land where captureWorkspaceDiff reads them.
+    const agentConfig = { ...selected.config, podCwd: workspaceRef };
     const hbMs = Number(process.env.KAGENTI_SANDBOX_HEARTBEAT_MS ?? "20000");
     heartbeat = setInterval(() => { void selected.heartbeat(); }, hbMs);
 
@@ -245,7 +248,7 @@ export const realProduceSolve: ProduceSolve = async (env, config, capture) => {
       agentDir,
       settingsManager,
       extensionFactories: [
-        k8sSandboxExtension({ config: selected.config }),
+        k8sSandboxExtension({ config: agentConfig }),
         flushExtension(backend),
         checkpointExtension(store, sessionManager),
       ],
