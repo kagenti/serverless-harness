@@ -71,6 +71,7 @@ export type LeafResult =
   | { status: "done"; verdict: Verdict }
   | { status: "paused"; gateId: number; gate: { summary: string; proposed_action: string } }
   | { status: "aborted" }
+  | { status: "solved"; patch: string }
   | { status: "failed"; reason: "no_verdict" | "invalid_verdict" | "bad_inputs" | "error" | "saturated"; message?: string };
 
 export function buildLeafPrompt(item: LeafItem, workspaceRef?: string): string {
@@ -129,6 +130,13 @@ export type ProduceVerdict = (
   capture: LeafCapture,
 ) => Promise<void>;
 
+export type SolveCapture = { patch?: string };
+export type ProduceSolve = (
+  env: LeafEnvelope,
+  config: TurnConfig | undefined,
+  capture: SolveCapture,
+) => Promise<void>;
+
 export function validateItem(o: unknown): LeafItem | null {
   if (typeof o !== "object" || o === null) return null;
   const x = o as Record<string, unknown>;
@@ -141,8 +149,9 @@ export function validateItem(o: unknown): LeafItem | null {
 export async function runLeaf(
   env: LeafEnvelope,
   config?: TurnConfig,
-  deps?: { produceVerdict?: ProduceVerdict },
+  deps?: { produceVerdict?: ProduceVerdict; produceSolve?: ProduceSolve },
 ): Promise<LeafResult> {
+  if (env.kind === "solve") return runSolveLeaf(env, config, deps);
   const item = validateItem(env.item);
   if (!item) return { status: "failed", reason: "bad_inputs" };
 
@@ -175,6 +184,28 @@ export async function runLeaf(
   if (!v.ok) return { status: "failed", reason: "invalid_verdict", message: v.error };
   return { status: "done", verdict: v.value };
 }
+
+export async function runSolveLeaf(
+  env: LeafEnvelope,
+  config?: TurnConfig,
+  deps?: { produceSolve?: ProduceSolve },
+): Promise<LeafResult> {
+  if (!env.problemStatement || !env.repoUrl || !env.ref) return { status: "failed", reason: "bad_inputs" };
+  const capture: SolveCapture = {};
+  const produce = deps?.produceSolve ?? realProduceSolve;
+  try {
+    await produce(env, config, capture);
+  } catch (err) {
+    if (err instanceof SandboxPoolSaturatedError) return { status: "failed", reason: "saturated", message: err.message };
+    return { status: "failed", reason: "error", message: err instanceof Error ? err.message : String(err) };
+  }
+  return { status: "solved", patch: capture.patch ?? "" };
+}
+
+// Real solve runner — implemented in Task 4. Exercised by the Kind smoke, not unit tests.
+export const realProduceSolve: ProduceSolve = async () => {
+  throw new Error("realProduceSolve not implemented");
+};
 
 // Real Pi session runner — mirrors harness/src/run-turn.ts session setup, made resumable
 // (MVP spec §7 gate 7, §2.4 idempotency). The session is persisted to Redis under env.sessionId;

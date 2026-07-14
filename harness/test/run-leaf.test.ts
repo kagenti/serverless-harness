@@ -130,3 +130,29 @@ describe("buildLeafPrompt with require_approval", () => {
     expect(p).not.toContain("request_approval");
   });
 });
+
+describe("runLeaf — solve routing", () => {
+  const base: LeafEnvelope = {
+    sessionId: "run-1", item: { item_id: "x", file: "f", pattern: "p" },
+    kind: "solve", problemStatement: "do the thing", repoUrl: "git://x/repo.git", ref: "work",
+  };
+  it("maps a captured patch to status solved", async () => {
+    const r = await runLeaf(base, undefined, { produceSolve: async (_e, _c, cap) => { cap.patch = "PATCH"; } });
+    expect(r).toEqual({ status: "solved", patch: "PATCH" });
+  });
+  it("treats an unset patch as an empty (still solved) patch", async () => {
+    const r = await runLeaf(base, undefined, { produceSolve: async () => { /* no edits */ } });
+    expect(r).toEqual({ status: "solved", patch: "" });
+  });
+  it("fails bad_inputs when problemStatement/repoUrl/ref are missing", async () => {
+    const r = await runLeaf({ sessionId: "s", item: base.item, kind: "solve" });
+    expect(r).toEqual({ status: "failed", reason: "bad_inputs" });
+  });
+  it("maps pool saturation to a saturated failure", async () => {
+    const r = await runLeaf(base, undefined, {
+      produceSolve: async () => { throw new SandboxPoolSaturatedError("full"); },
+    });
+    expect(r.status).toBe("failed");
+    expect((r as { reason?: string }).reason).toBe("saturated");
+  });
+});
