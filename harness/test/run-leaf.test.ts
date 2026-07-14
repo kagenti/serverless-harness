@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { runLeaf, buildLeafPrompt, leafSessionId, validateItem } from "../src/run-leaf";
+import { runLeaf, buildLeafPrompt, buildSolvePrompt, leafSessionId, validateItem } from "../src/run-leaf.js";
 import type { LeafEnvelope } from "../src/run-leaf.js";
 import { SandboxPoolSaturatedError } from "../src/select-sandbox.js";
 
@@ -32,6 +32,18 @@ describe("buildLeafPrompt", () => {
     expect(p).toContain("a.py");
     expect(p).toContain("eval(");
     expect(p).toContain("submit_verdict");
+  });
+});
+
+describe("buildSolvePrompt", () => {
+  it("embeds the problem statement and the absolute worktree root", () => {
+    const p = buildSolvePrompt("Fix the off-by-one in paginate().", "/workspace/leaves/run-1/");
+    expect(p).toContain("Fix the off-by-one in paginate().");
+    // trailing slash trimmed; root given as an absolute path
+    expect(p).toContain("/workspace/leaves/run-1");
+    expect(p).not.toContain("/workspace/leaves/run-1/\n");
+    // solve prompt must NOT instruct submit_verdict (that is the converge path)
+    expect(p).not.toContain("submit_verdict");
   });
 });
 

@@ -58,6 +58,8 @@ export interface LeafEnvelope {
   maxTurns?: number;
   async?: boolean;            // when true, the HTTP layer enqueues instead of running inline
   tenant?: string;            // namespaces the session id
+  kind?: "converge" | "solve"; // absent/"converge" => existing behavior; "solve" => runSolveLeaf
+  problemStatement?: string;   // required when kind === "solve": the task the agent must implement
 }
 
 /** The Pi/Redis session id for a leaf: tenant-prefixed (if any), then sanitized. */
@@ -98,6 +100,24 @@ export function buildLeafPrompt(item: LeafItem, workspaceRef?: string): string {
     );
   }
   return lines.join("\n");
+}
+
+export function buildSolvePrompt(problemStatement: string, workspaceRef: string): string {
+  // The agent's tools run in the sandbox pod and its session cwd is a harness-local path, so the
+  // worktree root must be given as an absolute in-pod path the model edits under (cf. buildLeafPrompt).
+  const root = workspaceRef.replace(/\/+$/, "");
+  return [
+    `You are fixing a software issue in a checked-out repository.`,
+    `Repository root (an absolute path in your sandbox): ${root}`,
+    `Use your bash, read, and edit tools with absolute paths under that root. You may run the`,
+    `project's own tests to check your work.`,
+    ``,
+    `## Issue`,
+    problemStatement,
+    ``,
+    `Implement a fix by editing files under ${root}. When you are confident the fix is complete,`,
+    `stop — do not ask questions and do not call any reporting tool.`,
+  ].join("\n");
 }
 
 export type LeafCapture = VerdictCapture & GateCapture;
