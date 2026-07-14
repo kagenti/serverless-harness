@@ -21,8 +21,9 @@ BODY="$(jq -nc --arg s "$SID" --arg p "$PROMPT" --arg r "$REPO" \
   '{sessionId:$s, kind:"solve", problemStatement:$p, repoUrl:$r, ref:"work"}')"
 
 echo "--- solve-smoke: POST /runs (sid=$SID) ---"
-RESP="$(curl -s "${CURL_OPTS[@]}" "${CURL_HDR[@]}" -X POST "$BASE/runs" \
-  -H 'Content-Type: application/json' --max-time 300 -d "$BODY")"
+# shellcheck disable=SC2086  # CURL_OPTS is intentionally word-split (matches lib.sh)
+RESP="$(curl -s $CURL_OPTS --max-time 300 ${CURL_HDR[@]+"${CURL_HDR[@]}"} \
+  -H 'Content-Type: application/json' -X POST -d "$BODY" "$BASE/runs")"
 
 STATUS="$(jq -r '.status // empty' <<<"$RESP")"
 PATCH="$(jq -r '.patch // empty' <<<"$RESP")"
