@@ -57,7 +57,7 @@ describe("toResultRecord — solved", () => {
 describe("writeResult / readResult", () => {
   it("round-trips a record and sets the TTL", async () => {
     const redis = fakeRedis();
-    const rec: LeafResultRecord = { status: "done", verdict: { item_id: "i1", verdict: "CLEAR", reason: "ok" }, gate: null, reason: null, sessionId: "run-1/i1", ts: "T" };
+    const rec: LeafResultRecord = { status: "done", verdict: { item_id: "i1", verdict: "CLEAR", reason: "ok" }, gate: null, reason: null, patch: null, sessionId: "run-1/i1", ts: "T" };
     await writeResult(redis, "run-1-i1", rec, 3600);
     expect(redis.ttl.get("leaf:result:run-1-i1")).toBe(3600);
     expect(await readResult(redis, "run-1-i1")).toEqual(rec);
