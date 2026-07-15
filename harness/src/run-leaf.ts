@@ -217,7 +217,7 @@ export const realProduceSolve: ProduceSolve = async (env, config, capture) => {
   const sid = leafSessionId(env);
 
   // A solve leaf MUST have a real sandbox worktree — fail fast (before any Redis/session work) if the
-  // pool is unconfigured. selectPoolSandbox returns null when no sandbox is configured (run-leaf.ts:209).
+  // pool is unconfigured. selectPoolSandbox returns null when no sandbox is configured (see select-sandbox.ts).
   const selected = await selectPoolSandbox(process.env, cwd, sid, {
     cap: Number(process.env.KAGENTI_SANDBOX_CAP ?? "20"),
     ttlMs: Number(process.env.KAGENTI_SANDBOX_LEASE_TTL_MS ?? "60000"),

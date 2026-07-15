@@ -81,4 +81,8 @@ describe("captureWorkspaceDiff", () => {
     const exec: ExecInPod = async () => ({ stdout: Buffer.from(""), exitCode: 3 });
     await expect(captureWorkspaceDiff(exec, "run-1")).rejects.toThrow(/exit 3/);
   });
+  it("returns an empty string when the worktree has no changes (exit 0, empty stdout)", async () => {
+    const exec: ExecInPod = async () => ({ stdout: Buffer.from(""), exitCode: 0 });
+    expect(await captureWorkspaceDiff(exec, "run-1")).toBe("");
+  });
 });
