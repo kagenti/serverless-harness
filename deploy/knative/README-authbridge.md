@@ -39,8 +39,10 @@ The real credentials live only in the `ab1-llm-cred` / `ab2-egress-cred` secrets
 - A real Anthropic API key exported as `ANTHROPIC_API_KEY` — AB1 injects it on Hop 1.
 - **Kind:** the [`README-kind.md`](README-kind.md) prerequisites (Docker, `kind`, `kubectl`).
 - **OpenShift:** the [`README-ocp.md`](README-ocp.md) prerequisites (`oc` logged in, an
-  OCP 4.x cluster). The enforcing CNI (OVN-Kubernetes) is where the tightened egress
-  policy is actually enforced; on Kind (kindnet) NetworkPolicy egress is a no-op.
+  OCP 4.x cluster). Both OVN-Kubernetes (OCP) and modern kindnet (Kind) enforce the
+  tightened egress `NetworkPolicy`, so the harness DNS rule must cover both CoreDNS
+  backends — `openshift-dns:5353` (OCP, post-DNAT) and `kube-system:53` (Kind); see
+  [`authbridge/harness-egress-ab1.yaml`](authbridge/harness-egress-ab1.yaml) and #126.
 
 ## Quick start
 
@@ -132,9 +134,12 @@ kubectl -n default get secret ab2-egress-cred -o jsonpath='{.data.echo-target}' 
 
 # Allow-path: a request through the sandbox's proxy reaches echo-target, which reflects
 # the Authorization it received = the REAL token, injected at AB2 — the sandbox never had it.
+# The request must carry the placeholder token ($ECHO_CRED) for AB2's static-inject to swap,
+# and must use the short host `echo-target` — static-inject keys the credential off the Host
+# (key_by: host), which matches the secret key `echo-target`, NOT the FQDN.
 kubectl -n default exec sandbox-0 -c sandbox -- \
-  sh -c 'curl -s http://echo-target.default.svc.cluster.local/ | grep -i authorization'
-# => authorization: Bearer REAL-ECHO-EGRESS-CRED-rc1demo
+  sh -c 'curl -s http://echo-target/ -H "Authorization: Bearer $ECHO_CRED" | grep -i authorization'
+# => {"method":"GET","path":"/","authorization":"Bearer REAL-ECHO-EGRESS-CRED-rc1demo"}
 ```
 
 **Hop 1 — the harness never holds the real provider key:**
@@ -164,7 +169,7 @@ clusters.)
 
 | Symptom | Cause / fix |
 |---------|-------------|
-| Harness can't resolve `authbridge-ab1` / DNS times out on OCP | OVN-Kubernetes enforces egress **post-DNAT**; the DNS rule must allow CoreDNS port **5353** (to `openshift-dns`), not 53. Fixed in [`authbridge/harness-egress-ab1.yaml`](authbridge/harness-egress-ab1.yaml) — see issue #102. |
+| Harness can't resolve `authbridge-ab1` / DNS times out; LLM calls fail with `Connection timeout` | The egress `NetworkPolicy` is enforced on **both** Kind (modern kindnet) and OCP (OVN-K), so its DNS rule must cover both CoreDNS backends: `kube-system:53` (Kind) and `openshift-dns:5353` (OCP — OVN-K enforces post-DNAT, so 5353 not 53). Both entries are present in [`authbridge/harness-egress-ab1.yaml`](authbridge/harness-egress-ab1.yaml) — see #102 (OCP) and #126 (Kind). |
 | `leaf-smoke.sh` exits `SKIP` | Set `LEAF_LIVE_SMOKE=1`. |
 | Smoke aborts with an `NS` error | The AuthBridge path requires `NS=default` (AB1 manifests are namespace-pinned). |
 | H2 checks see the old sandbox image / no sidecar | The sandbox controller does not roll pods on CR change; the setup/gate force-`delete pod`s the pool and waits. If stale, `kubectl -n default delete pod -l sh.kagenti.io/sandbox-pool=default`. |
