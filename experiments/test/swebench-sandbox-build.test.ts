@@ -51,51 +51,52 @@ describe("swebench-sandbox Dockerfile emitter (build-swebench-sandbox.sh --emit 
     });
   });
 
-  it("packs each env with the Task-1-verified conda-pack recipe, never pip", () => {
-    // docs/notes/swebench-image-facts.md §4 verified `conda install ... conda-pack`
-    // end-to-end against a real swebench/sweb.eval.* image; `pip install conda-pack`
-    // was never verified. Guard against silent regression to the pip form.
-    const packInstalls = [
-      ...dockerfile.matchAll(/conda install -n base -c conda-forge conda-pack/g),
+  it("clones the shared testbed env to each env-key's env_dir (conda create --clone)", () => {
+    // conda-pack was abandoned: it shipped a corrupt numpy for mixed conda+pip
+    // envs (matplotlib/sklearn numpy import failed) per the Task-3b verify gate.
+    // 'conda create --clone' copies all files faithfully with self-consistent
+    // prefixes at the same /opt/miniconda3 base.
+    const cloneCmds = [
+      ...dockerfile.matchAll(/conda create --clone testbed -n \S+ -y/g),
     ];
-    expect(packInstalls).toHaveLength(3); // one per env stage
-    expect(dockerfile).toContain(
-      "/opt/miniconda3/bin/conda pack -n testbed --ignore-editable-packages --ignore-missing-files -o /tmp/env.tar.gz",
-    );
-    expect(dockerfile).not.toMatch(/pip install conda-pack/);
-  });
-
-  it("tolerates the dirty conda+pip testbed env in every env stage's conda pack", () => {
-    // SWE-bench testbed envs are mixed conda+pip: the repo is installed editable
-    // (pip install -e /testbed) and pip clobbers conda-managed files. conda pack
-    // needs BOTH tolerances or the OCP build dies on the matplotlib env stage —
-    // --ignore-editable-packages (editable check) and --ignore-missing-files
-    // (consistency check). The runtime worktree re-installs the repo (Task 5 /
-    // Plan C), so a best-effort pack of the env as-is is what we want.
-    const packCmds = [...dockerfile.matchAll(/conda pack -n testbed[^\n]*/g)];
-    expect(packCmds).toHaveLength(3); // one per env stage
-    for (const m of packCmds) {
-      expect(m[0]).toContain("--ignore-editable-packages");
-      expect(m[0]).toContain("--ignore-missing-files");
-    }
-  });
-
-  it("unpacks each env-key to a distinct /opt/miniconda3/envs/<env_dir> path and runs conda-unpack via the relocated env python", () => {
-    // conda-unpack MUST be invoked via the relocated env's own python, not
-    // directly: conda-pack writes its shebang against the original
-    // /opt/miniconda3/envs/testbed/bin/python (absent in the ubuntu assembled
-    // base), so a direct call follows a dead shebang and exits 127. Calling the
-    // new prefix's python explicitly runs from the correct sys.prefix.
-    const dirs = new Set<string>();
+    expect(cloneCmds).toHaveLength(3); // one per env stage
     for (const env of selected) {
       const dir = envDir(env.env_key);
-      dirs.add(dir);
-      expect(dockerfile).toContain(`/opt/miniconda3/envs/${dir}`);
       expect(dockerfile).toContain(
-        `/opt/miniconda3/envs/${dir}/bin/python /opt/miniconda3/envs/${dir}/bin/conda-unpack`,
+        `/opt/miniconda3/bin/conda create --clone testbed -n ${dir} -y`,
       );
     }
+  });
+
+  it("COPYs each cloned env to the exact same /opt/miniconda3/envs/<env_dir> path (no relocation)", () => {
+    // conda clone already wrote correct prefixes for this path, so source==dest
+    // and the env is usable as-is (activatable via
+    // 'source /opt/miniconda3/envs/<env_dir>/bin/activate').
+    const dirs = new Set<string>();
+    selected.forEach((env: any, i: number) => {
+      const dir = envDir(env.env_key);
+      dirs.add(dir);
+      expect(dockerfile).toContain(
+        `COPY --from=env_${i} /opt/miniconda3/envs/${dir} /opt/miniconda3/envs/${dir}`,
+      );
+    });
     expect(dirs.size).toBe(3);
+  });
+
+  it("git config --system --add safe.directory is present (root-cloned repos, non-root pod)", () => {
+    expect(dockerfile).toContain("git config --system --add safe.directory '*'");
+  });
+
+  it("contains NONE of the abandoned conda-pack machinery (regression guard)", () => {
+    for (const banned of [
+      "conda pack",
+      "conda-unpack",
+      "--ignore-editable-packages",
+      "--ignore-missing-files",
+      "tar -xzf",
+    ]) {
+      expect(dockerfile).not.toContain(banned);
+    }
   });
 
   it("mirrors every unique slice repo with git clone --mirror", () => {

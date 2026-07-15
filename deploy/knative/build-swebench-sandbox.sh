@@ -2,16 +2,18 @@
 # deploy/knative/build-swebench-sandbox.sh
 #
 # Emits (and, in a follow-up live gate, drives the OCP build of) the baked
-# SWE-bench sandbox image: one relocated conda env per selected env-key plus
-# bare repo mirrors, assembled into a single sandbox image.
+# SWE-bench sandbox image: one conda env per selected env-key plus bare repo
+# mirrors, assembled into a single sandbox image.
 #
 # SWE-bench publishes ONLY per-instance eval images (no per-env images) — see
 # docs/notes/swebench-image-facts.md. So instead of `FROM <env-image>`, each
 # generated stage pulls that env-key's REPRESENTATIVE per-instance image
-# (bake-list.json envs[].instance_image_key) and conda-packs the shared
-# `testbed` conda env out of it into a portable tarball; the assembled stage
-# unpacks each tarball to its own env-key-derived path so the envs coexist
-# side by side, self-contained (conda-unpack rewrites embedded prefixes).
+# (bake-list.json envs[].instance_image_key) and `conda create --clone`s the
+# shared `testbed` conda env to an env-key-derived name at the same
+# /opt/miniconda3 base; the assembled stage COPYs each cloned env to the exact
+# same path so the envs coexist side by side. (An earlier conda-pack/unpack
+# approach was abandoned: it shipped a corrupt numpy for mixed conda+pip envs
+# — matplotlib/sklearn numpy import failed — per the Task-3b verify gate.)
 #
 # This script is offline/pure in --emit mode: it only reads the committed
 # experiments/swebench/bake-list.json and prints a Dockerfile to stdout. It
@@ -101,9 +103,9 @@ emit_dockerfile() {
 # Do not hand-edit; re-run the emitter to regenerate.
 #
 # env_dir(env_key) sanitizer rule: strip the trailing ":<tag>" suffix, then
-# replace any remaining "/" or ":" with "-" (dots left as-is). Applied
-# consistently for every env unpack path below — see env_dir() in this
-# script for the authoritative implementation and rationale.
+# replace any remaining "/" or ":" with "-" (dots left as-is). Used as the
+# cloned conda env name and its /opt/miniconda3/envs/<env_dir> path — see
+# env_dir() in this script for the authoritative implementation and rationale.
 #
 # Deck hash: ${deck_hash}   Slice: ${n_selected}of${total}
 
@@ -112,27 +114,19 @@ EOF
 
   local i=0
   while IFS= read -r row; do
-    local image
+    local image key dir
     image="$(jq -r '.instance_image_key' <<<"$row")"
+    key="$(jq -r '.env_key' <<<"$row")"
+    dir="$(env_dir "$key")"
     cat <<EOF
 FROM ${image} AS env_${i}
-# Task-1-verified recipe (docs/notes/swebench-image-facts.md §4): install
-# conda-pack into the base env via conda (NOT pip — the pip path was never
-# verified against a real swebench/sweb.eval.* image), then pack the shared
-# 'testbed' conda env to a portable tarball. Full binary paths so this does
-# not depend on any conda shell hook being active in the build stage.
-# SWE-bench testbed envs are dirty conda+pip envs, so conda pack needs two
-# tolerances (the standard combo for a best-effort pack of the env as-is):
-#  --ignore-editable-packages: the repo is installed editable
-#    (pip install -e /testbed) inside testbed; conda pack refuses editable
-#    packages by default. We intentionally drop that dangling /testbed link —
-#    the repo is reprovided at runtime via the worktree (Task 5 / Plan C
-#    re-runs pip install -e <worktree>).
-#  --ignore-missing-files: pip installs clobber conda-managed files (numpy-base,
-#    packaging, pillow, ...), tripping conda pack's consistency check. Observed
-#    on the matplotlib env stage; both flags are needed for the pack to succeed.
-RUN /opt/miniconda3/bin/conda install -n base -c conda-forge conda-pack -y -q \\
- && /opt/miniconda3/bin/conda pack -n testbed --ignore-editable-packages --ignore-missing-files -o /tmp/env.tar.gz
+# Clone the shared 'testbed' conda env to <env_dir> at the SAME /opt/miniconda3
+# base. 'conda create --clone' rewrites prefixes to the new env name in place
+# (self-consistent) and copies ALL files faithfully, including pip-installed
+# ones. This replaces the earlier conda-pack approach, which shipped a
+# corrupt numpy for mixed conda+pip envs (matplotlib/sklearn: numpy import
+# failed post-relocation) — see the Task-3b verify gate. No pack/unpack/tar.
+RUN /opt/miniconda3/bin/conda create --clone testbed -n ${dir} -y
 
 EOF
     i=$((i + 1))
@@ -146,8 +140,11 @@ USER 0
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ripgrep ca-certificates \
  && rm -rf /var/lib/apt/lists/*
+# Repos are cloned as root below, but the pod runs as UID 65532; without this
+# git refuses to operate on them with 'detected dubious ownership'.
+RUN git config --system --add safe.directory '*'
 
-# --- BEGIN GENERATED ENV UNPACKS ---
+# --- BEGIN GENERATED ENV COPIES ---
 EOF
 
   i=0
@@ -155,24 +152,17 @@ EOF
     local key dir
     key="$(jq -r '.env_key' <<<"$row")"
     dir="$(env_dir "$key")"
+    # Copy the cloned env to the EXACT SAME path it was created at in the env
+    # stage (/opt/miniconda3/envs/<env_dir>). No relocation: conda clone already
+    # wrote correct prefixes for this path, so the env is usable as-is and
+    # activatable via 'source /opt/miniconda3/envs/<env_dir>/bin/activate'.
     cat <<EOF
-COPY --from=env_${i} /tmp/env.tar.gz /tmp/${dir}.tar.gz
-# conda-unpack is invoked via the RELOCATED env's own python, NOT directly:
-# conda-pack writes bin/conda-unpack with a shebang pointing at the ORIGINAL
-# prefix (/opt/miniconda3/envs/testbed/bin/python), which does not exist in
-# this fresh ubuntu base — running the script directly follows that dead
-# shebang and exits 127. Calling the new prefix's python explicitly resolves
-# sys.prefix from its own location, then conda-unpack rewrites the remaining
-# stale prefix references.
-RUN mkdir -p /opt/miniconda3/envs/${dir} \\
- && tar -xzf /tmp/${dir}.tar.gz -C /opt/miniconda3/envs/${dir} \\
- && /opt/miniconda3/envs/${dir}/bin/python /opt/miniconda3/envs/${dir}/bin/conda-unpack \\
- && rm /tmp/${dir}.tar.gz
+COPY --from=env_${i} /opt/miniconda3/envs/${dir} /opt/miniconda3/envs/${dir}
 
 EOF
     i=$((i + 1))
   done < <(jq -c '.[]' <<<"$selected")
-  echo "# --- END GENERATED ENV UNPACKS ---"
+  echo "# --- END GENERATED ENV COPIES ---"
   echo
 
   echo "# --- BEGIN GENERATED REPO MIRRORS ---"
