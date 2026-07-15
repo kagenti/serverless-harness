@@ -38,6 +38,27 @@ def env_key_and_instance_key(row: dict, arch: str) -> tuple[str, str]:
 
 
 def load_rows(input_path: str | None) -> list[dict]:
+    """Load SWE-bench instance rows, from a local JSONL fixture or the HuggingFace dataset.
+
+    When ``input_path`` is given it must be JSONL, one full SWE-bench_Verified instance row
+    per line, mirroring the ``princeton-nlp/SWE-bench_Verified`` "test" split schema. Fields
+    consumed downstream (see main()):
+
+        instance_id                str  e.g. "django__django-11555"
+        repo                       str  "owner/name", e.g. "django/django"
+        base_commit                str  40-char SHA
+        environment_setup_commit   str  40-char SHA (optional; falls back to base_commit)
+        version                    str  e.g. "3.0"
+        problem_statement          str
+        test_patch                 str  (optional)
+        FAIL_TO_PASS               str|list  JSON-encoded list or list of test ids
+        PASS_TO_PASS               str|list  JSON-encoded list or list of test ids
+
+    NOTE: env_key derivation calls make_test_spec, which resolves each row's per-repo
+    environment against ``environment_setup_commit`` (cache hit or GitHub fetch). A fixture
+    with synthetic SHAs is therefore an input-shape example only; it cannot produce a real
+    deck offline without a populated swebench environment cache.
+    """
     if input_path:
         return [json.loads(line) for line in Path(input_path).read_text().splitlines() if line.strip()]
     from datasets import load_dataset
