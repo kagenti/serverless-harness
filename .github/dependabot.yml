@@ -4,6 +4,12 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      # All codeql-action sub-actions (init, analyze, upload-sarif) must be
+      # bumped together — they fail CI if versions diverge across steps.
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
 
   - package-ecosystem: npm
     directory: /
