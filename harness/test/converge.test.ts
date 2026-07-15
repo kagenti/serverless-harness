@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   leafWorkspaceRef, buildConvergeScript, buildCleanupScript, convergeWorkspace,
+  buildDiffCaptureScript, captureWorkspaceDiff,
 } from "../src/converge.js";
 
 describe("leafWorkspaceRef", () => {
@@ -64,5 +65,38 @@ describe("buildCleanupScript", () => {
     expect(c).toContain("worktree remove");
     expect(c).toContain("/workspace/leaves/leaf-1");
     expect(c).toContain("worktree prune");
+  });
+});
+
+describe("buildDiffCaptureScript", () => {
+  it("stages all edits then emits the cached diff, scoped to the leaf worktree", () => {
+    const s = buildDiffCaptureScript("run-1");
+    expect(s).toContain("/workspace/leaves/run-1");
+    expect(s).toContain('git -C "$LEAF" add -A');
+    expect(s).toContain('git -C "$LEAF" diff --cached');
+  });
+});
+
+describe("captureWorkspaceDiff", () => {
+  it("returns stdout as the patch on exit 0", async () => {
+    const transport = {
+      exec: async () => ({ stdout: Buffer.from("diff --git a/x b/x\n"), exitCode: 0 }),
+      close: async () => {},
+    };
+    expect(await captureWorkspaceDiff(transport, "run-1")).toBe("diff --git a/x b/x\n");
+  });
+  it("throws on non-zero exit", async () => {
+    const transport = {
+      exec: async () => ({ stdout: Buffer.from(""), exitCode: 3 }),
+      close: async () => {},
+    };
+    await expect(captureWorkspaceDiff(transport, "run-1")).rejects.toThrow(/exit 3/);
+  });
+  it("returns an empty string when the worktree has no changes (exit 0, empty stdout)", async () => {
+    const transport = {
+      exec: async () => ({ stdout: Buffer.from(""), exitCode: 0 }),
+      close: async () => {},
+    };
+    expect(await captureWorkspaceDiff(transport, "run-1")).toBe("");
   });
 });

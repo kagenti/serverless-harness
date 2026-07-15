@@ -9,7 +9,7 @@ import {
 import { RedisSessionBackend } from "@sh/session-backend";
 import { k8sSandboxExtension, KubectlTransport } from "@sh/k8s-sandbox";
 import { selectPoolSandbox, SandboxPoolSaturatedError } from "./select-sandbox.js";
-import { convergeWorkspace, cleanupWorkspace } from "./converge.js";
+import { convergeWorkspace, cleanupWorkspace, captureWorkspaceDiff } from "./converge.js";
 import { resolveModelSelection, requireModel, applyModelGateway, type TurnConfig } from "./run-turn.js";
 import { BufferedRedisBackend } from "./buffered-redis-backend.js";
 import { flushExtension } from "./flush-extension.js";
@@ -40,8 +40,16 @@ export function verdictFromCustomEntry(entry: unknown): Verdict | null {
  * so a retry/resume of the same envelope id maps to the same session.
  */
 export function toSessionId(sessionId: string): string {
-  const cleaned = sessionId.replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "");
-  return cleaned || "leaf";
+  const cleaned = sessionId.replace(/[^A-Za-z0-9._-]/g, "-");
+  // Trim leading/trailing non-alphanumerics with a linear scan instead of a `^…+|…+$` trim regex,
+  // which CodeQL flags as polynomial (js/polynomial-redos) on inputs with many separators.
+  const isAlnum = (c: number) =>
+    (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+  let start = 0;
+  let end = cleaned.length;
+  while (start < end && !isAlnum(cleaned.charCodeAt(start))) start++;
+  while (end > start && !isAlnum(cleaned.charCodeAt(end - 1))) end--;
+  return cleaned.slice(start, end) || "leaf";
 }
 
 export interface LeafItem { item_id: string; file: string; pattern: string; require_approval?: boolean }
@@ -58,6 +66,8 @@ export interface LeafEnvelope {
   maxTurns?: number;
   async?: boolean;            // when true, the HTTP layer enqueues instead of running inline
   tenant?: string;            // namespaces the session id
+  kind?: "converge" | "solve"; // absent/"converge" => existing behavior; "solve" => runSolveLeaf
+  problemStatement?: string;   // required when kind === "solve": the task the agent must implement
 }
 
 /** The Pi/Redis session id for a leaf: tenant-prefixed (if any), then sanitized. */
@@ -69,6 +79,7 @@ export type LeafResult =
   | { status: "done"; verdict: Verdict }
   | { status: "paused"; gateId: number; gate: { summary: string; proposed_action: string } }
   | { status: "aborted" }
+  | { status: "solved"; patch: string }
   | { status: "failed"; reason: "no_verdict" | "invalid_verdict" | "bad_inputs" | "error" | "saturated"; message?: string };
 
 export function buildLeafPrompt(item: LeafItem, workspaceRef?: string): string {
@@ -100,6 +111,28 @@ export function buildLeafPrompt(item: LeafItem, workspaceRef?: string): string {
   return lines.join("\n");
 }
 
+export function buildSolvePrompt(problemStatement: string, workspaceRef: string): string {
+  // The agent's tools run in the sandbox pod and its session cwd is a harness-local path, so the
+  // worktree root must be given as an absolute in-pod path the model edits under (cf. buildLeafPrompt).
+  // Strip trailing slashes with a linear scan instead of `/\/+$/`, which CodeQL flags as polynomial
+  // (js/polynomial-redos) on strings with many trailing '/'.
+  let rootEnd = workspaceRef.length;
+  while (rootEnd > 0 && workspaceRef.charCodeAt(rootEnd - 1) === 47 /* "/" */) rootEnd--;
+  const root = workspaceRef.slice(0, rootEnd);
+  return [
+    `You are fixing a software issue in a checked-out repository.`,
+    `Repository root (an absolute path in your sandbox): ${root}`,
+    `Use your bash, read, and edit tools with absolute paths under that root. You may run the`,
+    `project's own tests to check your work.`,
+    ``,
+    `## Issue`,
+    problemStatement,
+    ``,
+    `Implement a fix by editing files under ${root}. When you are confident the fix is complete,`,
+    `stop — do not ask questions and do not call any reporting tool.`,
+  ].join("\n");
+}
+
 export type LeafCapture = VerdictCapture & GateCapture;
 
 export type ProduceVerdict = (
@@ -107,6 +140,13 @@ export type ProduceVerdict = (
   env: LeafEnvelope,
   config: TurnConfig | undefined,
   capture: LeafCapture,
+) => Promise<void>;
+
+export type SolveCapture = { patch?: string };
+export type ProduceSolve = (
+  env: LeafEnvelope,
+  config: TurnConfig | undefined,
+  capture: SolveCapture,
 ) => Promise<void>;
 
 export function validateItem(o: unknown): LeafItem | null {
@@ -121,8 +161,9 @@ export function validateItem(o: unknown): LeafItem | null {
 export async function runLeaf(
   env: LeafEnvelope,
   config?: TurnConfig,
-  deps?: { produceVerdict?: ProduceVerdict },
+  deps?: { produceVerdict?: ProduceVerdict; produceSolve?: ProduceSolve },
 ): Promise<LeafResult> {
+  if (env.kind === "solve") return runSolveLeaf(env, config, deps);
   const item = validateItem(env.item);
   if (!item) return { status: "failed", reason: "bad_inputs" };
 
@@ -155,6 +196,96 @@ export async function runLeaf(
   if (!v.ok) return { status: "failed", reason: "invalid_verdict", message: v.error };
   return { status: "done", verdict: v.value };
 }
+
+export async function runSolveLeaf(
+  env: LeafEnvelope,
+  config?: TurnConfig,
+  deps?: { produceSolve?: ProduceSolve },
+): Promise<LeafResult> {
+  if (!env.problemStatement || !env.repoUrl || !env.ref) return { status: "failed", reason: "bad_inputs" };
+  const capture: SolveCapture = {};
+  const produce = deps?.produceSolve ?? realProduceSolve;
+  try {
+    await produce(env, config, capture);
+  } catch (err) {
+    if (err instanceof SandboxPoolSaturatedError) return { status: "failed", reason: "saturated", message: err.message };
+    return { status: "failed", reason: "error", message: err instanceof Error ? err.message : String(err) };
+  }
+  return { status: "solved", patch: capture.patch ?? "" };
+}
+
+// Real solve runner: lease a sandbox, converge the per-leaf worktree, run the agent with ONLY the
+// sandbox tools (no verdict/gate extensions), then capture the staged diff. Mirrors realProduceVerdict's
+// session/pool wiring. Exercised by the Kind smoke, not unit tests.
+export const realProduceSolve: ProduceSolve = async (env, config, capture) => {
+  const cwd = config?.cwd ?? process.cwd();
+  const { provider, modelId } = resolveModelSelection({
+    model: env.model ?? config?.model,
+    provider: env.provider ?? config?.provider,
+  });
+  const baseModel = requireModel(provider, modelId);
+  const model = applyModelGateway(baseModel as { headers?: Record<string, unknown> }, config);
+
+  const sid = leafSessionId(env);
+
+  // A solve leaf MUST have a real sandbox worktree — fail fast (before any Redis/session work) if the
+  // pool is unconfigured. selectPoolSandbox returns null when no sandbox is configured (see select-sandbox.ts).
+  const selected = await selectPoolSandbox(process.env, cwd, sid, {
+    cap: Number(process.env.KAGENTI_SANDBOX_CAP ?? "20"),
+    ttlMs: Number(process.env.KAGENTI_SANDBOX_LEASE_TTL_MS ?? "60000"),
+  });
+  if (!selected) throw new Error("solve leaf requires a configured sandbox pool");
+
+  const store = new RedisSessionBackend<FileEntry>(config?.redisUrl ?? "redis://localhost:6379");
+  const backend = new BufferedRedisBackend(store);
+  const prior = await store.read(sid);
+  const sessionManager = prior.length > 0
+    ? await SessionManager.openFromCheckpoint(sid, backend, cwd)
+    : SessionManager.create(cwd, undefined, { id: sid }, backend);
+
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  try {
+    const transport = KubectlTransport(selected.config);
+    const workspaceRef = await convergeWorkspace(transport, env.repoUrl!, env.ref!, sid);
+    // A solve leaf edits files in its worktree; point the agent's sandbox cwd at that worktree so the
+    // model's edits (relative or absolute) land where captureWorkspaceDiff reads them.
+    const agentConfig = { ...selected.config, podCwd: workspaceRef };
+    const hbMs = Number(process.env.KAGENTI_SANDBOX_HEARTBEAT_MS ?? "20000");
+    heartbeat = setInterval(() => { void selected.heartbeat(); }, hbMs);
+
+    const agentDir = getAgentDir();
+    const settingsManager = SettingsManager.create(cwd, agentDir);
+    const resourceLoader = new DefaultResourceLoader({
+      cwd,
+      agentDir,
+      settingsManager,
+      extensionFactories: [
+        k8sSandboxExtension({ config: agentConfig }),
+        flushExtension(backend),
+        checkpointExtension(store, sessionManager),
+      ],
+    });
+    await resourceLoader.reload();
+
+    const { session } = await createAgentSession({
+      sessionManager,
+      model: model as never,
+      resourceLoader,
+      settingsManager,
+    });
+
+    try {
+      await session.prompt(buildSolvePrompt(env.problemStatement!, workspaceRef));
+      capture.patch = await captureWorkspaceDiff(transport, sid);
+    } finally {
+      await backend.flush();
+    }
+  } finally {
+    if (heartbeat) clearInterval(heartbeat);
+    await cleanupWorkspace(KubectlTransport(selected.config), sid);
+    await selected.release();
+  }
+};
 
 // Real Pi session runner — mirrors harness/src/run-turn.ts session setup, made resumable
 // (MVP spec §7 gate 7, §2.4 idempotency). The session is persisted to Redis under env.sessionId;

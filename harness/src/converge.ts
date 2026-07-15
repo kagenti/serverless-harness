@@ -64,3 +64,21 @@ export async function convergeWorkspace(
 export async function cleanupWorkspace(transport: SandboxTransport, runId: string): Promise<void> {
   try { await transport.exec(buildCleanupScript(runId), { timeout: 60 }); } catch { /* ignore */ }
 }
+
+/** Stage every edit in the leaf worktree and print the resulting unified diff (vs the pinned base). */
+export function buildDiffCaptureScript(runId: string): string {
+  const LEAF = leafWorkspaceRef(runId);
+  return [
+    `set -eu`,
+    `LEAF=${sq(LEAF)}`,
+    `git -C "$LEAF" add -A`,
+    `git -C "$LEAF" diff --cached`,
+  ].join("\n");
+}
+
+/** Run the diff-capture script in the pod; return the patch (possibly empty). Throws on non-zero exit. */
+export async function captureWorkspaceDiff(transport: SandboxTransport, runId: string): Promise<string> {
+  const { stdout, exitCode } = await transport.exec(buildDiffCaptureScript(runId), { timeout: 120 });
+  if (exitCode !== 0) throw new Error(`diff capture failed (exit ${exitCode})`);
+  return stdout.toString();
+}

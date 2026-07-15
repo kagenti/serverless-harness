@@ -91,8 +91,18 @@ async function handleTurn(req: IncomingMessage, res: ServerResponse): Promise<vo
   }
 }
 
-function isLeafEnvelope(o: any): o is LeafEnvelope {
+export function isLeafEnvelope(o: any): o is LeafEnvelope {
   return o && typeof o.sessionId === "string" && validateItem(o.item) !== null;
+}
+
+export function isSolveEnvelope(o: any): boolean {
+  return o && typeof o.sessionId === "string" && o.kind === "solve"
+    && typeof o.problemStatement === "string"
+    && typeof o.repoUrl === "string" && typeof o.ref === "string";
+}
+
+export function isRunEnvelope(o: any): boolean {
+  return isLeafEnvelope(o) || isSolveEnvelope(o);
 }
 
 let queue: RedisWorkQueue | undefined;
@@ -108,7 +118,7 @@ function getResultStore(): RedisResultStore {
 }
 
 async function handleEnqueueLeafParsed(body: any, res: ServerResponse): Promise<void> {
-  if (!isLeafEnvelope(body)) { res.writeHead(400, JSON_HEADERS).end(JSON.stringify({ error: "envelope_invalid" })); return; }
+  if (!isRunEnvelope(body)) { res.writeHead(400, JSON_HEADERS).end(JSON.stringify({ error: "envelope_invalid" })); return; }
   const q = getQueue();
   await q.ensureGroup();
   await q.enqueue(body);
@@ -116,7 +126,7 @@ async function handleEnqueueLeafParsed(body: any, res: ServerResponse): Promise<
 }
 
 async function handleRunLeafParsed(body: any, _raw: string, res: ServerResponse): Promise<void> {
-  if (!isLeafEnvelope(body)) { res.writeHead(400, JSON_HEADERS).end(JSON.stringify({ error: "envelope_invalid" })); return; }
+  if (!isRunEnvelope(body)) { res.writeHead(400, JSON_HEADERS).end(JSON.stringify({ error: "envelope_invalid" })); return; }
 
   // Spec §4.3: on pool saturation the sync path bounded-waits with backoff, then 503 Retry-After.
   // selectPoolSandbox throws before taking any lease or doing agent work, so re-running runLeaf on a
@@ -151,6 +161,7 @@ async function handleLeafStatus(url: URL, res: ServerResponse): Promise<void> {
   const record = await readResult(getResultStore(), leafSessionId({ sessionId, tenant }));
   if (!record) { res.writeHead(200, JSON_HEADERS).end(JSON.stringify({ status: "queued" })); return; }
   if (record.status === "done") { res.writeHead(200, JSON_HEADERS).end(JSON.stringify({ status: "done", verdict: record.verdict })); return; }
+  if (record.status === "solved") { res.writeHead(200, JSON_HEADERS).end(JSON.stringify({ status: "solved", patch: record.patch })); return; }
   if (record.status === "paused") { res.writeHead(200, JSON_HEADERS).end(JSON.stringify({ status: "paused", gateId: record.gate?.gateId, gate: record.gate })); return; }
   if (record.status === "failed") { res.writeHead(200, JSON_HEADERS).end(JSON.stringify({ status: "failed", reason: record.reason ?? undefined })); return; }
   res.writeHead(200, JSON_HEADERS).end(JSON.stringify({ status: record.status }));

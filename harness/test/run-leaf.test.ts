@@ -75,7 +75,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   SettingsManager: { create: () => ({}) },
 }));
 
-import { runLeaf, buildLeafPrompt, leafSessionId, validateItem } from "../src/run-leaf";
+import { runLeaf, buildLeafPrompt, buildSolvePrompt, leafSessionId, validateItem } from "../src/run-leaf.js";
 import type { LeafEnvelope } from "../src/run-leaf.js";
 import { SandboxPoolSaturatedError } from "../src/select-sandbox.js";
 
@@ -108,6 +108,18 @@ describe("buildLeafPrompt", () => {
     expect(p).toContain("a.py");
     expect(p).toContain("eval(");
     expect(p).toContain("submit_verdict");
+  });
+});
+
+describe("buildSolvePrompt", () => {
+  it("embeds the problem statement and the absolute worktree root", () => {
+    const p = buildSolvePrompt("Fix the off-by-one in paginate().", "/workspace/leaves/run-1/");
+    expect(p).toContain("Fix the off-by-one in paginate().");
+    // trailing slash trimmed; root given as an absolute path
+    expect(p).toContain("/workspace/leaves/run-1");
+    expect(p).not.toContain("/workspace/leaves/run-1/\n");
+    // solve prompt must NOT instruct submit_verdict (that is the converge path)
+    expect(p).not.toContain("submit_verdict");
   });
 });
 
@@ -255,5 +267,31 @@ describe("buildLeafPrompt with require_approval", () => {
   it("omits the gate instruction by default", () => {
     const p = buildLeafPrompt({ item_id: "i1", file: "a.py", pattern: "eval(" });
     expect(p).not.toContain("request_approval");
+  });
+});
+
+describe("runLeaf — solve routing", () => {
+  const base: LeafEnvelope = {
+    sessionId: "run-1", item: { item_id: "x", file: "f", pattern: "p" },
+    kind: "solve", problemStatement: "do the thing", repoUrl: "git://x/repo.git", ref: "work",
+  };
+  it("maps a captured patch to status solved", async () => {
+    const r = await runLeaf(base, undefined, { produceSolve: async (_e, _c, cap) => { cap.patch = "PATCH"; } });
+    expect(r).toEqual({ status: "solved", patch: "PATCH" });
+  });
+  it("treats an unset patch as an empty (still solved) patch", async () => {
+    const r = await runLeaf(base, undefined, { produceSolve: async () => { /* no edits */ } });
+    expect(r).toEqual({ status: "solved", patch: "" });
+  });
+  it("fails bad_inputs when problemStatement/repoUrl/ref are missing", async () => {
+    const r = await runLeaf({ sessionId: "s", item: base.item, kind: "solve" });
+    expect(r).toEqual({ status: "failed", reason: "bad_inputs" });
+  });
+  it("maps pool saturation to a saturated failure", async () => {
+    const r = await runLeaf(base, undefined, {
+      produceSolve: async () => { throw new SandboxPoolSaturatedError("full"); },
+    });
+    expect(r.status).toBe("failed");
+    expect((r as { reason?: string }).reason).toBe("saturated");
   });
 });
