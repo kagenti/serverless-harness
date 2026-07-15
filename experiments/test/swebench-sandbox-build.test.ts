@@ -133,3 +133,87 @@ describe("swebench-sandbox Dockerfile emitter (build-swebench-sandbox.sh --emit 
     expect(dockerfile).not.toMatch(/\bdocker build\b/);
   });
 });
+
+describe("swebench-sandbox emitter — iterative accumulation (--offset / --base / base-tools)", () => {
+  const bake = load("../swebench/bake-list.json");
+  const sorted = [...bake.envs].sort((a: any, b: any) =>
+    a.env_key < b.env_key ? -1 : a.env_key > b.env_key ? 1 : 0,
+  );
+  const total = bake.envs.length;
+
+  const emit = (args: string) =>
+    execSync(`bash deploy/knative/build-swebench-sandbox.sh --emit ${args}`, {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+  const printTag = (args: string) =>
+    execSync(`bash deploy/knative/build-swebench-sandbox.sh --print-tag ${args}`, {
+      cwd: repoRoot,
+      encoding: "utf8",
+    }).trim();
+
+  it("--offset 5 --limit 5 selects envs[5:10] (correct instance_image_keys)", () => {
+    const df = emit("--offset 5 --limit 5 --base prior");
+    const stages = [...df.matchAll(/^FROM (\S+) AS env_(\d+)$/gm)];
+    expect(stages).toHaveLength(5);
+    const byIndex = new Map(stages.map((m) => [Number(m[2]), m[1]]));
+    sorted.slice(5, 10).forEach((env: any, i: number) => {
+      expect(byIndex.get(i)).toBe(env.instance_image_key);
+    });
+  });
+
+  it("--base sets the assembled FROM image", () => {
+    expect(emit("--offset 5 --limit 5 --base my/prior:img")).toContain(
+      "FROM my/prior:img AS assembled",
+    );
+  });
+
+  it("batch-2 style (base set, no base tools) OMITS apt + safe.directory", () => {
+    const df = emit("--offset 5 --limit 5 --base prior");
+    expect(df).not.toContain("apt-get install");
+    expect(df).not.toContain("safe.directory");
+    // still switches to root for the COPY/RUN steps and back to 65532 at the end
+    expect(df).toContain("FROM prior AS assembled\nUSER 0");
+    expect(df).toContain("USER 65532");
+  });
+
+  it("batch-1 default base still emits apt + safe.directory (auto base-tools)", () => {
+    const df = emit("--offset 0 --limit 5");
+    expect(df).toContain("FROM ubuntu:22.04 AS assembled");
+    expect(df).toContain("apt-get install -y --no-install-recommends git ripgrep ca-certificates");
+    expect(df).toContain("git config --system --add safe.directory '*'");
+  });
+
+  it("--no-base-tools force-skips tooling even on the default ubuntu base", () => {
+    const df = emit("--offset 0 --limit 5 --no-base-tools");
+    expect(df).toContain("FROM ubuntu:22.04 AS assembled");
+    expect(df).not.toContain("apt-get install");
+    expect(df).not.toContain("safe.directory");
+  });
+
+  it("repo clones use the idempotent 'test -d ... ||' form", () => {
+    const df = emit("--offset 5 --limit 5 --base prior");
+    const uniqueRepos = [...new Set(sorted.slice(5, 10).map((e: any) => e.repo))];
+    expect(uniqueRepos.length).toBeGreaterThan(0);
+    for (const repo of uniqueRepos) {
+      expect(df).toContain(
+        `RUN test -d /repos/${repo}.git || git clone --mirror https://github.com/${repo}.git /repos/${repo}.git`,
+      );
+    }
+  });
+
+  it("deck-slice label is CUMULATIVE (offset + selected) coverage", () => {
+    expect(emit("--offset 5 --limit 5 --base prior")).toContain(
+      `LABEL sh.kagenti.io/deck-slice="10of${total}"`,
+    );
+    expect(emit("--offset 10 --limit 5 --base prior")).toContain(
+      `LABEL sh.kagenti.io/deck-slice="${total}of${total}"`,
+    );
+  });
+
+  it("--print-tag honors --offset (cumulative)", () => {
+    expect(printTag("--offset 0 --limit 5")).toBe(`${bake.deckHash}-5of${total}`);
+    expect(printTag("--offset 5 --limit 5")).toBe(`${bake.deckHash}-10of${total}`);
+    expect(printTag("--offset 10 --limit 5")).toBe(`${bake.deckHash}-${total}of${total}`);
+  });
+});
