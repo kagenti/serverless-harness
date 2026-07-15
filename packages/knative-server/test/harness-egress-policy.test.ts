@@ -77,6 +77,24 @@ describe('harness egress NetworkPolicy manifest', () => {
     expect(protos.has('TCP')).toBe(true);
   });
 
+  it('allows DNS resolution (UDP+TCP 53 to kube-system — Kind/vanilla CoreDNS, modern kindnet enforces)', () => {
+    // Modern kindnet enforces egress. Kind's CoreDNS runs in kube-system on the standard
+    // port 53 (no post-DNAT remap as on OVN-K), so without this rule DNS is blocked on
+    // Kind and the harness cannot resolve authbridge-ab1/redis (every LLM call then fails
+    // with "Connection timeout"). The rule must allow 53 scoped to the kube-system namespace.
+    const egress = np.spec?.egress ?? [];
+    const dnsRule = egress.find((r: any) =>
+      (r.to ?? []).some(
+        (peer: any) =>
+          peer.namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name'] === 'kube-system',
+      ),
+    );
+    expect(dnsRule, 'a rule scoped to the kube-system namespace').toBeDefined();
+    const protos = new Set((dnsRule.ports ?? []).filter((p: any) => p.port === 53).map((p: any) => p.protocol));
+    expect(protos.has('UDP')).toBe(true);
+    expect(protos.has('TCP')).toBe(true);
+  });
+
   it('allows Redis egress scoped to the redis pod on 6379', () => {
     const egress = np.spec?.egress ?? [];
     const redisRule = egress.find((r: any) => (r.ports ?? []).some((p: any) => p.port === 6379));
@@ -166,6 +184,24 @@ describe('tightened AB1 egress variant', () => {
     );
     expect(dnsRule, 'a rule scoped to the openshift-dns namespace').toBeDefined();
     const protos = new Set((dnsRule.ports ?? []).filter((p: any) => p.port === 5353).map((p: any) => p.protocol));
+    expect(protos.has('UDP')).toBe(true);
+    expect(protos.has('TCP')).toBe(true);
+  });
+
+  it('allows DNS resolution (UDP+TCP 53 to kube-system — Kind/vanilla CoreDNS, modern kindnet enforces)', () => {
+    // Modern kindnet enforces egress. Kind's CoreDNS runs in kube-system on the standard
+    // port 53 (no post-DNAT remap as on OVN-K), so without this rule DNS is blocked on
+    // Kind and the harness cannot resolve authbridge-ab1/redis (every LLM call then fails
+    // with "Connection timeout"). The rule must allow 53 scoped to the kube-system namespace.
+    const egress = np.spec?.egress ?? [];
+    const dnsRule = egress.find((r: any) =>
+      (r.to ?? []).some(
+        (peer: any) =>
+          peer.namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name'] === 'kube-system',
+      ),
+    );
+    expect(dnsRule, 'a rule scoped to the kube-system namespace').toBeDefined();
+    const protos = new Set((dnsRule.ports ?? []).filter((p: any) => p.port === 53).map((p: any) => p.protocol));
     expect(protos.has('UDP')).toBe(true);
     expect(protos.has('TCP')).toBe(true);
   });
