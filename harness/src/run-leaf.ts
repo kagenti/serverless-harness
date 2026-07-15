@@ -40,8 +40,16 @@ export function verdictFromCustomEntry(entry: unknown): Verdict | null {
  * so a retry/resume of the same envelope id maps to the same session.
  */
 export function toSessionId(sessionId: string): string {
-  const cleaned = sessionId.replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "");
-  return cleaned || "leaf";
+  const cleaned = sessionId.replace(/[^A-Za-z0-9._-]/g, "-");
+  // Trim leading/trailing non-alphanumerics with a linear scan instead of a `^…+|…+$` trim regex,
+  // which CodeQL flags as polynomial (js/polynomial-redos) on inputs with many separators.
+  const isAlnum = (c: number) =>
+    (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+  let start = 0;
+  let end = cleaned.length;
+  while (start < end && !isAlnum(cleaned.charCodeAt(start))) start++;
+  while (end > start && !isAlnum(cleaned.charCodeAt(end - 1))) end--;
+  return cleaned.slice(start, end) || "leaf";
 }
 
 export interface LeafItem { item_id: string; file: string; pattern: string; require_approval?: boolean }
@@ -106,7 +114,11 @@ export function buildLeafPrompt(item: LeafItem, workspaceRef?: string): string {
 export function buildSolvePrompt(problemStatement: string, workspaceRef: string): string {
   // The agent's tools run in the sandbox pod and its session cwd is a harness-local path, so the
   // worktree root must be given as an absolute in-pod path the model edits under (cf. buildLeafPrompt).
-  const root = workspaceRef.replace(/\/+$/, "");
+  // Strip trailing slashes with a linear scan instead of `/\/+$/`, which CodeQL flags as polynomial
+  // (js/polynomial-redos) on strings with many trailing '/'.
+  let rootEnd = workspaceRef.length;
+  while (rootEnd > 0 && workspaceRef.charCodeAt(rootEnd - 1) === 47 /* "/" */) rootEnd--;
+  const root = workspaceRef.slice(0, rootEnd);
   return [
     `You are fixing a software issue in a checked-out repository.`,
     `Repository root (an absolute path in your sandbox): ${root}`,
