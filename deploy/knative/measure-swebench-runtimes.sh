@@ -7,9 +7,10 @@
 # MEASURE_LIVE=1 (default: print usage and exit 0, like the sibling *-smoke.sh / e*-*.sh drivers).
 #
 # Forced per-instance mechanism (from the live spike -- do not deviate):
-#   1. git clone --local (NOT worktree -- worktree-from-baked-mirror fails as uid 65532, /repos is
-#      read-only root-owned) the baked bare mirror at /repos/<repo>.git into a scratch checkout,
-#      then checkout base_commit.
+#   1. git clone --no-hardlinks (NOT --local: /repos is a different filesystem from /workspace,
+#      so hardlinking objects fails cross-device; NOT worktree -- worktree-from-baked-mirror fails
+#      as uid 65532, /repos is read-only root-owned) the baked bare mirror at /repos/<repo>.git
+#      into a scratch checkout, then checkout base_commit.
 #   2. A per-instance venv --system-site-packages over the baked conda env
 #      (/opt/miniconda3/envs/<env_dir>, env_dir = env_key with the trailing ":latest" tag
 #      stripped, dots kept).
@@ -178,7 +179,7 @@ VENV="${venv}"
 ENV_PY="/opt/miniconda3/envs/${env_dir}/bin/python"
 rm -rf "\$CO" "\$VENV"
 trap 'rm -rf "\$CO" "\$VENV"' EXIT
-if ! git clone --local "/repos/${repo}.git" "\$CO"; then
+if ! git clone --no-hardlinks "/repos/${repo}.git" "\$CO"; then
   echo "RESULT ${instance_id} setupfail NA"
   exit 0
 fi
