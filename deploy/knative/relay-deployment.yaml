@@ -20,7 +20,8 @@ spec:
     spec:
       containers:
         - name: sandbox-relay
-          image: dev.local/serverless-harness
+          image: dev.local/serverless-harness:local
+          imagePullPolicy: IfNotPresent
           # Run from the relay's own package dir. `node --import tsx` resolves the tsx
           # loader relative to the CWD, and the published image links tsx (a devDep) into
           # packages/sandbox-relay/node_modules — NOT a root-hoisted /app/node_modules — so

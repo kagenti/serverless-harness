@@ -21,7 +21,8 @@ spec:
     spec:
       containers:
         - name: ibac-stub
-          image: dev.local/serverless-harness
+          image: dev.local/serverless-harness:local
+          imagePullPolicy: IfNotPresent
           # Run from the knative-server package dir (which the published image links tsx into) and load
           # ibac-stub's entrypoint by absolute path: the published GHCR image does not link tsx into
           # packages/ibac-stub (see the Dockerfile COPY-manifest fix below), and there is no root-hoisted
