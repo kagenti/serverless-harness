@@ -233,8 +233,8 @@ export const realProduceSolve: ProduceSolve = async (env, config, capture) => {
 
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   try {
-    const exec = kubectlExecInPod(selected.config);
-    const workspaceRef = await convergeWorkspace(exec, env.repoUrl!, env.ref!, sid);
+    const transport = KubectlTransport(selected.config);
+    const workspaceRef = await convergeWorkspace(transport, env.repoUrl!, env.ref!, sid);
     // A solve leaf edits files in its worktree; point the agent's sandbox cwd at that worktree so the
     // model's edits (relative or absolute) land where captureWorkspaceDiff reads them.
     const agentConfig = { ...selected.config, podCwd: workspaceRef };
@@ -264,13 +264,13 @@ export const realProduceSolve: ProduceSolve = async (env, config, capture) => {
 
     try {
       await session.prompt(buildSolvePrompt(env.problemStatement!, workspaceRef));
-      capture.patch = await captureWorkspaceDiff(exec, sid);
+      capture.patch = await captureWorkspaceDiff(transport, sid);
     } finally {
       await backend.flush();
     }
   } finally {
     if (heartbeat) clearInterval(heartbeat);
-    await cleanupWorkspace(kubectlExecInPod(selected.config), sid);
+    await cleanupWorkspace(KubectlTransport(selected.config), sid);
     await selected.release();
   }
 };

@@ -77,8 +77,8 @@ export function buildDiffCaptureScript(runId: string): string {
 }
 
 /** Run the diff-capture script in the pod; return the patch (possibly empty). Throws on non-zero exit. */
-export async function captureWorkspaceDiff(exec: ExecInPod, runId: string): Promise<string> {
-  const { stdout, exitCode } = await exec(buildDiffCaptureScript(runId), { timeout: 120 });
+export async function captureWorkspaceDiff(transport: SandboxTransport, runId: string): Promise<string> {
+  const { stdout, exitCode } = await transport.exec(buildDiffCaptureScript(runId), { timeout: 120 });
   if (exitCode !== 0) throw new Error(`diff capture failed (exit ${exitCode})`);
   return stdout.toString();
 }

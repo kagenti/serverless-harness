@@ -3,7 +3,6 @@ import {
   leafWorkspaceRef, buildConvergeScript, buildCleanupScript, convergeWorkspace,
   buildDiffCaptureScript, captureWorkspaceDiff,
 } from "../src/converge.js";
-import type { ExecInPod } from "@sh/k8s-sandbox";
 
 describe("leafWorkspaceRef", () => {
   it("is /workspace/leaves/<runId>", () => {
@@ -80,15 +79,24 @@ describe("buildDiffCaptureScript", () => {
 
 describe("captureWorkspaceDiff", () => {
   it("returns stdout as the patch on exit 0", async () => {
-    const exec: ExecInPod = async () => ({ stdout: Buffer.from("diff --git a/x b/x\n"), exitCode: 0 });
-    expect(await captureWorkspaceDiff(exec, "run-1")).toBe("diff --git a/x b/x\n");
+    const transport = {
+      exec: async () => ({ stdout: Buffer.from("diff --git a/x b/x\n"), exitCode: 0 }),
+      close: async () => {},
+    };
+    expect(await captureWorkspaceDiff(transport, "run-1")).toBe("diff --git a/x b/x\n");
   });
   it("throws on non-zero exit", async () => {
-    const exec: ExecInPod = async () => ({ stdout: Buffer.from(""), exitCode: 3 });
-    await expect(captureWorkspaceDiff(exec, "run-1")).rejects.toThrow(/exit 3/);
+    const transport = {
+      exec: async () => ({ stdout: Buffer.from(""), exitCode: 3 }),
+      close: async () => {},
+    };
+    await expect(captureWorkspaceDiff(transport, "run-1")).rejects.toThrow(/exit 3/);
   });
   it("returns an empty string when the worktree has no changes (exit 0, empty stdout)", async () => {
-    const exec: ExecInPod = async () => ({ stdout: Buffer.from(""), exitCode: 0 });
-    expect(await captureWorkspaceDiff(exec, "run-1")).toBe("");
+    const transport = {
+      exec: async () => ({ stdout: Buffer.from(""), exitCode: 0 }),
+      close: async () => {},
+    };
+    expect(await captureWorkspaceDiff(transport, "run-1")).toBe("");
   });
 });
