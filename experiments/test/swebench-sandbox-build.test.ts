@@ -42,6 +42,17 @@ describe("swebench-sandbox Dockerfile emitter (build-swebench-sandbox.sh --emit 
     expect(new Set(selected.map((e: any) => e.env_key)).size).toBe(3);
   });
 
+  it("--print-tag derives <deckHash>-<N>of<total> from the bake-list for each --limit", () => {
+    const printTag = (limit: number) =>
+      execSync(`bash deploy/knative/build-swebench-sandbox.sh --print-tag --limit ${limit}`, {
+        cwd: repoRoot,
+        encoding: "utf8",
+      }).trim();
+    const total = bake.envs.length;
+    expect(printTag(3)).toBe(`${bake.deckHash}-3of${total}`);
+    expect(printTag(total)).toBe(`${bake.deckHash}-${total}of${total}`);
+  });
+
   it("emits exactly 3 env_N build stages, each FROM the correct instance_image_key", () => {
     const stageMatches = [...dockerfile.matchAll(/^FROM (\S+) AS env_(\d+)$/gm)];
     expect(stageMatches).toHaveLength(3);

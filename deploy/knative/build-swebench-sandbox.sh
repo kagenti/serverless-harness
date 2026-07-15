@@ -31,12 +31,16 @@ usage() {
   cat <<'EOF'
 Usage:
   build-swebench-sandbox.sh --emit [--limit N]
+  build-swebench-sandbox.sh --print-tag [--limit N]
   build-swebench-sandbox.sh --build ...   (Task 3b live gate; NOT implemented here)
 
-  --emit     Print the generated multi-stage Dockerfile to stdout. Pure,
-             offline: reads only bake-list.json, invokes no docker/oc.
-  --limit N  Select the first N env-keys, sorted lexicographically by
-             env_key (deterministic). Default: 3.
+  --emit       Print the generated multi-stage Dockerfile to stdout. Pure,
+               offline: reads only bake-list.json, invokes no docker/oc.
+  --print-tag  Print the slice image tag "<deckHash>-<N>of<total>" (deckHash
+               and total from bake-list.json). The build driver uses this to
+               patch the BuildConfig output tag so it always matches the slice.
+  --limit N    Select the first N env-keys, sorted lexicographically by
+               env_key (deterministic). Default: 3.
 EOF
 }
 
@@ -44,6 +48,10 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --emit)
       MODE="emit"
+      shift
+      ;;
+    --print-tag)
+      MODE="print-tag"
       shift
       ;;
     --build)
@@ -87,6 +95,18 @@ env_dir() {
   key="${key//\//-}"
   key="${key//:/-}"
   printf '%s' "$key"
+}
+
+# slice_tag -> "<deckHash>-<N>of<total>", the single source of truth for the
+# image tag. N is the ACTUAL selected count (capped at total), so a tag can
+# never over-claim coverage. The build driver reads this to patch the
+# BuildConfig output tag per build.
+slice_tag() {
+  local deck_hash total n_selected
+  deck_hash="$(jq -r '.deckHash' "$BAKE_LIST")"
+  total="$(jq -r '.envs | length' "$BAKE_LIST")"
+  n_selected="$(jq --argjson n "$LIMIT" '.envs | sort_by(.env_key) | .[0:$n] | length' "$BAKE_LIST")"
+  printf '%s-%sof%s' "$deck_hash" "$n_selected" "$total"
 }
 
 emit_dockerfile() {
@@ -189,6 +209,10 @@ EOF
 case "$MODE" in
   emit)
     emit_dockerfile
+    ;;
+  print-tag)
+    slice_tag
+    echo
     ;;
   build)
     # Task 3b (live gate) is controller-driven, not this script, and is out of

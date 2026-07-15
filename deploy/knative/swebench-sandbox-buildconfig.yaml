@@ -47,5 +47,9 @@ spec:
   output:
     to:
       kind: ImageStreamTag
+      # Tag is set per-build by the driver from
+      # `build-swebench-sandbox.sh --print-tag --limit N` so it always matches
+      # the slice actually built (e.g. -15of15 at --limit 15). The committed
+      # value below is a valid default for the 3-env-key proof slice.
       name: swebench-sandbox:ff962cb83fe5c624-3of15
   resources: {}
