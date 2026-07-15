@@ -145,15 +145,13 @@ for d in json.loads(base64.b64decode(sys.argv[1])):
     print(d)
 ' "$directives_b64")
 
-  # Build the single-quoted, space-joined test invocation: test_cmd tokens (word-split -- none of
-  # the known test_cmd values quote their own arguments) followed by each directive, each wrapped
-  # individually via qq() so brackets/dashes/dots/colons in either can never be re-interpreted by
-  # the pod shell as a glob or option boundary.
-  cmd_line=""
-  # shellcheck disable=SC2086  # intentional word-splitting of the test_cmd string into tokens
-  for tok in $test_cmd; do
-    cmd_line="$cmd_line $(qq "$tok")"
-  done
+  # Build the test invocation: test_cmd is spliced VERBATIM (unquoted, un-tokenized) so that
+  # inline shell syntax such as sympy's `PYTHONWARNINGS='...' bin/test -C --verbose` env-var
+  # prefix is parsed by the pod shell as intended, rather than being word-split and re-quoted
+  # into a bogus argv[0]. Only each directive (a file/node path that may contain "[param]"
+  # globs) is individually single-quoted via qq() so it can never be re-interpreted as a glob
+  # or option boundary.
+  cmd_line="$test_cmd"
   for d in "${directives[@]+"${directives[@]}"}"; do
     cmd_line="$cmd_line $(qq "$d")"
   done
@@ -192,14 +190,16 @@ if ! "\$ENV_PY" -m venv --system-site-packages "\$VENV"; then
   exit 0
 fi
 if ! HOME=/workspace "\$VENV/bin/pip" install -e "\$CO" --no-build-isolation --no-cache-dir; then
-  echo "RESULT ${instance_id} setupfail NA"
-  exit 0
+  if ! HOME=/workspace "\$VENV/bin/pip" install -e "\$CO" --no-cache-dir; then
+    echo "RESULT ${instance_id} setupfail NA"
+    exit 0
+  fi
 fi
 export PATH="\$VENV/bin:/opt/miniconda3/envs/${env_dir}/bin:\$PATH"
 cd "\$CO"
 set -f
 START=\$(date +%s%3N)
-timeout ${MEASURE_TIMEOUT_SEC} ${cmd_line} >/dev/null 2>&1
+timeout ${MEASURE_TIMEOUT_SEC} bash -c $(qq "set -f; ${cmd_line}") >/dev/null 2>&1
 RC=\$?
 END=\$(date +%s%3N)
 set +f
