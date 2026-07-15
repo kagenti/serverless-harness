@@ -214,8 +214,11 @@ EOF
   # the '*' literal.
   if [ "$tools_enabled" = "1" ]; then
     cat <<'EOF'
+# build-essential/python3-dev/pkg-config/libfreetype6-dev/libpng-dev: C/Cython
+# build toolchain needed for editable installs of scikit-learn and matplotlib
+# (proven live on the pool pod).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ripgrep ca-certificates \
+ && apt-get install -y --no-install-recommends git ripgrep ca-certificates build-essential python3-dev pkg-config libfreetype6-dev libpng-dev \
  && rm -rf /var/lib/apt/lists/*
 # Repos are cloned as root below, but the pod runs as UID 65532; without this
 # git refuses to operate on them with 'detected dubious ownership'.
