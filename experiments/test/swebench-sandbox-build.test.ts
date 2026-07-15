@@ -80,13 +80,20 @@ describe("swebench-sandbox Dockerfile emitter (build-swebench-sandbox.sh --emit 
     }
   });
 
-  it("unpacks each env-key to a distinct /opt/miniconda3/envs/<env_dir> path and runs conda-unpack", () => {
+  it("unpacks each env-key to a distinct /opt/miniconda3/envs/<env_dir> path and runs conda-unpack via the relocated env python", () => {
+    // conda-unpack MUST be invoked via the relocated env's own python, not
+    // directly: conda-pack writes its shebang against the original
+    // /opt/miniconda3/envs/testbed/bin/python (absent in the ubuntu assembled
+    // base), so a direct call follows a dead shebang and exits 127. Calling the
+    // new prefix's python explicitly runs from the correct sys.prefix.
     const dirs = new Set<string>();
     for (const env of selected) {
       const dir = envDir(env.env_key);
       dirs.add(dir);
       expect(dockerfile).toContain(`/opt/miniconda3/envs/${dir}`);
-      expect(dockerfile).toContain(`/opt/miniconda3/envs/${dir}/bin/conda-unpack`);
+      expect(dockerfile).toContain(
+        `/opt/miniconda3/envs/${dir}/bin/python /opt/miniconda3/envs/${dir}/bin/conda-unpack`,
+      );
     }
     expect(dirs.size).toBe(3);
   });

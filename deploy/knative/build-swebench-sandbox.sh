@@ -157,9 +157,16 @@ EOF
     dir="$(env_dir "$key")"
     cat <<EOF
 COPY --from=env_${i} /tmp/env.tar.gz /tmp/${dir}.tar.gz
+# conda-unpack is invoked via the RELOCATED env's own python, NOT directly:
+# conda-pack writes bin/conda-unpack with a shebang pointing at the ORIGINAL
+# prefix (/opt/miniconda3/envs/testbed/bin/python), which does not exist in
+# this fresh ubuntu base — running the script directly follows that dead
+# shebang and exits 127. Calling the new prefix's python explicitly resolves
+# sys.prefix from its own location, then conda-unpack rewrites the remaining
+# stale prefix references.
 RUN mkdir -p /opt/miniconda3/envs/${dir} \\
  && tar -xzf /tmp/${dir}.tar.gz -C /opt/miniconda3/envs/${dir} \\
- && /opt/miniconda3/envs/${dir}/bin/conda-unpack \\
+ && /opt/miniconda3/envs/${dir}/bin/python /opt/miniconda3/envs/${dir}/bin/conda-unpack \\
  && rm /tmp/${dir}.tar.gz
 
 EOF
