@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { K8sSandboxConfig } from "../src/config.js";
-import type { ExecInPod } from "../src/exec.js";
+import type { ExecInPod } from "../src/transport.js";
 import { buildPersistentKubectlArgs, persistentExecInPod } from "../src/persistent-exec.js";
 
 const cfg: K8sSandboxConfig = {
@@ -65,9 +65,9 @@ describe("persistentExecInPod", () => {
     const { child, writes } = makeFakeChild();
     const { spawn, calls } = fakeSpawn([child]);
     const { fallback } = recordingFallback();
-    const exec = persistentExecInPod(cfg, { fallback, spawn });
+    const t = persistentExecInPod(cfg, { fallback, spawn });
 
-    const p = exec("cat '/workspace/a.txt'");
+    const p = t.exec("cat '/workspace/a.txt'");
     expect(calls).toHaveLength(1); // lazy spawn happened
     expect(writes[0]).toContain("cat '/workspace/a.txt'");
     child.stdout.emit("data", frameFor("n1", "hello", 0));
@@ -77,12 +77,12 @@ describe("persistentExecInPod", () => {
   it("reuses one child across sequential calls (no second spawn)", async () => {
     const { child } = makeFakeChild();
     const { spawn, calls } = fakeSpawn([child]);
-    const exec = persistentExecInPod(cfg, { fallback: recordingFallback().fallback, spawn });
+    const t = persistentExecInPod(cfg, { fallback: recordingFallback().fallback, spawn });
 
-    const p1 = exec("echo a");
+    const p1 = t.exec("echo a");
     child.stdout.emit("data", frameFor("n1", "a", 0));
     await p1;
-    const p2 = exec("echo b");
+    const p2 = t.exec("echo b");
     child.stdout.emit("data", frameFor("n2", "b", 0));
     await p2;
     expect(calls).toHaveLength(1);
@@ -91,10 +91,10 @@ describe("persistentExecInPod", () => {
   it("serializes: the second command is not written until the first frame arrives", async () => {
     const { child, writes } = makeFakeChild();
     const { spawn } = fakeSpawn([child]);
-    const exec = persistentExecInPod(cfg, { fallback: recordingFallback().fallback, spawn });
+    const t = persistentExecInPod(cfg, { fallback: recordingFallback().fallback, spawn });
 
-    const p1 = exec("first");
-    const p2 = exec("second");
+    const p1 = t.exec("first");
+    const p2 = t.exec("second");
     expect(writes).toHaveLength(1); // only first in flight
     child.stdout.emit("data", frameFor("n1", "", 0));
     await p1;
@@ -107,9 +107,9 @@ describe("persistentExecInPod", () => {
     const { child } = makeFakeChild();
     const { spawn } = fakeSpawn([child, makeFakeChild().child]);
     const { fallback, calls } = recordingFallback();
-    const exec = persistentExecInPod(cfg, { fallback, spawn });
+    const t = persistentExecInPod(cfg, { fallback, spawn });
 
-    const p = exec("cat '/workspace/a.txt'");
+    const p = t.exec("cat '/workspace/a.txt'");
     child.emit("error", new Error("broken pipe"));
     expect(await p).toEqual({ stdout: Buffer.from("FB"), exitCode: 7 });
     expect(calls).toEqual(["cat '/workspace/a.txt'"]);
@@ -119,9 +119,9 @@ describe("persistentExecInPod", () => {
     vi.useFakeTimers();
     const { child } = makeFakeChild();
     const { spawn } = fakeSpawn([child]);
-    const exec = persistentExecInPod(cfg, { fallback: recordingFallback().fallback, spawn });
+    const t = persistentExecInPod(cfg, { fallback: recordingFallback().fallback, spawn });
 
-    const p = exec("sleep 999", { timeout: 2 });
+    const p = t.exec("sleep 999", { timeout: 2 });
     const assertion = expect(p).rejects.toThrow("timeout:2");
     await vi.advanceTimersByTimeAsync(2000);
     await assertion;
@@ -131,28 +131,28 @@ describe("persistentExecInPod", () => {
   it("aborts: kills the child and rejects with 'aborted'", async () => {
     const { child } = makeFakeChild();
     const { spawn } = fakeSpawn([child]);
-    const exec = persistentExecInPod(cfg, { fallback: recordingFallback().fallback, spawn });
+    const t = persistentExecInPod(cfg, { fallback: recordingFallback().fallback, spawn });
     const ac = new AbortController();
 
-    const p = exec("sleep 999", { signal: ac.signal });
+    const p = t.exec("sleep 999", { signal: ac.signal });
     ac.abort();
     await expect(p).rejects.toThrow("aborted");
     expect(child.kill).toHaveBeenCalled();
   });
 
-  it("dispose() kills the child and routes later calls to the fallback", async () => {
+  it("close() kills the child and routes later calls to the fallback", async () => {
     const { child } = makeFakeChild();
     const { spawn } = fakeSpawn([child]);
     const { fallback, calls } = recordingFallback();
-    const exec = persistentExecInPod(cfg, { fallback, spawn });
+    const t = persistentExecInPod(cfg, { fallback, spawn });
 
-    const p1 = exec("echo a");
+    const p1 = t.exec("echo a");
     child.stdout.emit("data", frameFor("n1", "a", 0));
     await p1;
-    exec.dispose();
+    await t.close();
     expect(child.stdin.end).toHaveBeenCalled();
     expect(child.kill).toHaveBeenCalled();
-    expect(await exec("echo later")).toEqual({ stdout: Buffer.from("FB"), exitCode: 7 });
+    expect(await t.exec("echo later")).toEqual({ stdout: Buffer.from("FB"), exitCode: 7 });
     expect(calls).toEqual(["echo later"]);
   });
 });

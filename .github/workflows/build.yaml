@@ -36,6 +36,14 @@ jobs:
           - image: ghcr.io/kagenti/serverless-harness-sandbox
             context: deploy/knative
             file: deploy/knative/sandbox.Dockerfile
+          # RC1-2 (Hop 2) plain-HTTP echo target for the AuthBridge egress smoke.
+          # Published so OpenShift (deploy/knative/setup-ocp.sh, RC1-4) can pull it
+          # from GHCR instead of a local dev.local build; the OCP overlay remaps
+          # dev.local/echo-target:rc1 -> this image. Context is echo-target/ because
+          # its Dockerfile COPYs echo.js.
+          - image: ghcr.io/kagenti/serverless-harness-echo-target
+            context: deploy/knative/echo-target
+            file: deploy/knative/echo-target/Dockerfile
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0

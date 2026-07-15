@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { K8sSandboxConfig } from "../src/config.js";
-import type { ExecInPod } from "../src/exec.js";
+import type { SandboxTransport } from "../src/transport.js";
 import { k8sSandboxExtension } from "../src/extension.js";
 
 const cfg: K8sSandboxConfig = {
@@ -24,24 +24,27 @@ function fakePi() {
   return { pi, tools, handlers };
 }
 
+const okTransport = (close = vi.fn(async () => {})): SandboxTransport => ({
+  exec: async () => ({ stdout: Buffer.from(""), exitCode: 0 }),
+  close,
+});
+
 describe("k8sSandboxExtension", () => {
   it("registers the seven pod tools and wires the lifecycle handlers", () => {
-    const exec: ExecInPod = async () => ({ stdout: Buffer.from(""), exitCode: 0 });
     const { pi, tools, handlers } = fakePi();
-    k8sSandboxExtension({ config: cfg, exec })(pi);
+    k8sSandboxExtension({ config: cfg, transport: okTransport() })(pi);
     expect(tools).toHaveLength(7);
     expect(typeof handlers.user_bash).toBe("function");
     expect(typeof handlers.before_agent_start).toBe("function");
     expect(typeof handlers.session_shutdown).toBe("function");
   });
 
-  it("disposes the fast channel on session_shutdown when it exposes dispose()", () => {
-    const dispose = vi.fn();
-    const exec = Object.assign(async () => ({ stdout: Buffer.from(""), exitCode: 0 }), { dispose }) as ExecInPod;
+  it("closes the fast channel on session_shutdown", async () => {
+    const close = vi.fn(async () => {});
     const { pi, handlers } = fakePi();
-    k8sSandboxExtension({ config: cfg, exec })(pi);
-    handlers.session_shutdown();
-    expect(dispose).toHaveBeenCalledTimes(1);
+    k8sSandboxExtension({ config: cfg, transport: okTransport(close) })(pi);
+    await handlers.session_shutdown();
+    expect(close).toHaveBeenCalledTimes(1);
   });
 
   it("is inert (registers nothing) when config is null", () => {

@@ -1,7 +1,7 @@
 # M13 Design: Generalized Credentialed Egress — non-MCP HTTP APIs
 
 Version: 2.0 — June 19, 2026
-Status: Design (approved for implementation planning)
+Status: Design (approved for implementation planning). **Mechanism realized as a static single-tenant slice by [RC1 — AuthBridge egress control-plane PoC](2026-07-10-authbridge-egress-control-plane-poc-design.md)** (2026-07-14): RC1 implements the forward-proxy + baked-CA + header-swap mechanism (RC1 "Profile B") with a static credential. This spec is retained as the home of the deferred per-user / RFC 8693 token-exchange core.
 Scope: How the sandbox reaches **any** HTTP API (GitHub, internal REST, arbitrary
 allowlisted hosts) under the same zero-trust credential spine M10 established for MCP —
 with per-user credentials resolved and injected **only at the egress proxy**, never held by

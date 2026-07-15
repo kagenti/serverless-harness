@@ -21,12 +21,16 @@
 #   - `oc login` to an OpenShift 4.20+ cluster as cluster-admin.
 #   - ANTHROPIC_API_KEY (direct) or ANTHROPIC_AUTH_TOKEN [+ ANTHROPIC_BASE_URL] (gateway).
 #
+# SH_AUTHBRIDGE=1 (env, off by default): deploys the RC1 AuthBridge two-hop egress-control
+# path (AB1 LLM gateway + AB2 sandbox forward-proxy) via the ocp-authbridge overlay.
+#
 # Usage: ./deploy/knative/setup-ocp.sh [OPTIONS]   (see --help)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OVERLAY_DIR="$SCRIPT_DIR/overlays/ocp"
+AB_OVERLAY_DIR="$SCRIPT_DIR/overlays/ocp-authbridge"  # only rendered/applied when SH_AUTHBRIDGE=1
 
 # ----------------------------------------------------------------------------
 # Defaults (all overridable via flags)
@@ -82,6 +86,7 @@ Environment:
   ANTHROPIC_API_KEY       Direct Anthropic key, OR
   ANTHROPIC_AUTH_TOKEN    Gateway token (+ ANTHROPIC_BASE_URL for the gateway URL)
   LOG_DIR                 Where build logs are written (default: ${LOG_DIR})
+  SH_AUTHBRIDGE           1 to deploy the RC1 AuthBridge two-hop path (default: off)
 
 Examples:
   $0                                   # default namespace, GHCR harness + sandbox images
@@ -322,26 +327,47 @@ fi
 # 3. LLM credentials secret
 # ============================================================================
 echo
-create_secret() {
-  local args=(--from-literal=api-key="${ANTHROPIC_API_KEY:-${ANTHROPIC_AUTH_TOKEN:-}}")
-  [ -n "${ANTHROPIC_BASE_URL:-}" ]   && args+=(--from-literal=base-url="$ANTHROPIC_BASE_URL")
-  [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ] && args+=(--from-literal=auth-token="$ANTHROPIC_AUTH_TOKEN")
-  $KUBECTL create secret generic llm-credentials -n "$NAMESPACE" "${args[@]}" \
-    --dry-run=client -o yaml | $KUBECTL apply -f -
-}
-if [ -n "${ANTHROPIC_API_KEY:-}" ] || [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
+if [ "${SH_AUTHBRIDGE:-0}" = "1" ]; then
+  # RC1 Hop 1 (mirrors setup-kind.sh): the harness never holds the real key. AB1 (the
+  # reverse-proxy gateway applied in Section 6c below) holds it and injects it per-request;
+  # the harness gets only the placeholder + AB1's in-cluster base URL.
+  REAL_KEY="${ANTHROPIC_API_KEY:?SH_AUTHBRIDGE=1 requires ANTHROPIC_API_KEY (the real key AB1 injects)}"
   if $DRY_RUN; then
-    log_info "[dry-run] would create/update secret llm-credentials in $NAMESPACE (values redacted)"
+    log_info "[dry-run] would create/update secret ab1-llm-cred in $NAMESPACE (value redacted)"
+    log_info "[dry-run] would repoint secret llm-credentials in $NAMESPACE to AB1 placeholders"
   else
-    create_secret >/dev/null
-    log_success "Secret llm-credentials ready (from environment)"
+    $KUBECTL create secret generic ab1-llm-cred -n "$NAMESPACE" \
+      --from-literal=api.anthropic.com="$REAL_KEY" \
+      --dry-run=client -o yaml | $KUBECTL apply -f - >/dev/null
+    $KUBECTL create secret generic llm-credentials -n "$NAMESPACE" \
+      --from-literal=api-key=AB1-PLACEHOLDER \
+      --from-literal=auth-token=AB1-PLACEHOLDER \
+      --from-literal=base-url=http://authbridge-ab1:8080 \
+      --dry-run=client -o yaml | $KUBECTL apply -f - >/dev/null
+    log_success "Secrets ab1-llm-cred + llm-credentials (AB1 placeholders) ready in $NAMESPACE"
   fi
-elif $KUBECTL get secret llm-credentials -n "$NAMESPACE" &>/dev/null; then
-  log_success "Secret llm-credentials already present in $NAMESPACE — using it"
 else
-  log_error "No ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN in env and no llm-credentials secret in $NAMESPACE."
-  log_error "Provide one, or pre-create: oc create secret generic llm-credentials -n $NAMESPACE --from-literal=api-key=..."
-  $DRY_RUN || exit 1
+  create_secret() {
+    local args=(--from-literal=api-key="${ANTHROPIC_API_KEY:-${ANTHROPIC_AUTH_TOKEN:-}}")
+    [ -n "${ANTHROPIC_BASE_URL:-}" ]   && args+=(--from-literal=base-url="$ANTHROPIC_BASE_URL")
+    [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ] && args+=(--from-literal=auth-token="$ANTHROPIC_AUTH_TOKEN")
+    $KUBECTL create secret generic llm-credentials -n "$NAMESPACE" "${args[@]}" \
+      --dry-run=client -o yaml | $KUBECTL apply -f -
+  }
+  if [ -n "${ANTHROPIC_API_KEY:-}" ] || [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
+    if $DRY_RUN; then
+      log_info "[dry-run] would create/update secret llm-credentials in $NAMESPACE (values redacted)"
+    else
+      create_secret >/dev/null
+      log_success "Secret llm-credentials ready (from environment)"
+    fi
+  elif $KUBECTL get secret llm-credentials -n "$NAMESPACE" &>/dev/null; then
+    log_success "Secret llm-credentials already present in $NAMESPACE — using it"
+  else
+    log_error "No ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN in env and no llm-credentials secret in $NAMESPACE."
+    log_error "Provide one, or pre-create: oc create secret generic llm-credentials -n $NAMESPACE --from-literal=api-key=..."
+    $DRY_RUN || exit 1
+  fi
 fi
 
 # ============================================================================
@@ -400,8 +426,12 @@ log_info "Rendering + applying OCP overlay"
 # references the shared base YAMLs one level up, so render with `oc kustomize`
 # (--load-restrictor LoadRestrictionsNone) and post-process image/namespace
 # overrides before applying.
-render_overlay() {
-  $KUBECTL kustomize --load-restrictor LoadRestrictionsNone "$OVERLAY_DIR" \
+# render_overlay_dir <dir>: kustomize-render an overlay dir with the same image/namespace
+# post-processing used for the base overlay. Parameterized so the AB overlay (Section 6c)
+# can reuse it without duplicating the sed pipeline.
+render_overlay_dir() {
+  local dir="$1"
+  $KUBECTL kustomize --load-restrictor LoadRestrictionsNone "$dir" \
     | sed \
         -e "s#ghcr.io/kagenti/serverless-harness:latest#${HARNESS_IMAGE}#g" \
         -e "s#ghcr.io/kagenti/serverless-harness-sandbox:latest#${SANDBOX_IMAGE}#g" \
@@ -410,6 +440,7 @@ render_overlay() {
             -e "s#redis.default.svc#redis.${NAMESPACE}.svc#g"
       else cat; fi
 }
+render_overlay() { render_overlay_dir "$OVERLAY_DIR"; }
 if $DRY_RUN; then
   echo "  [dry-run] render_overlay | $KUBECTL apply -f -   (manifest preview:)"
   render_overlay | sed 's/^/    /'
@@ -441,6 +472,103 @@ if ! $DRY_RUN; then
     log_error "Sandbox sandbox-0 never published .status.selector — is the controller running?"
     exit 1
   fi
+fi
+
+# ============================================================================
+# 6c. SH_AUTHBRIDGE=1: deploy the RC1 AuthBridge two-hop stack (AB1 gateway + AB2 egress)
+# ============================================================================
+# Mirrors setup-kind.sh steps 8b/8c, adapted for OCP: no docker build / kind load — the
+# ocp-authbridge overlay (Task A) is already image-remapped to the published GHCR images
+# and carries the SCC/nonroot patches the ibac-stub/AB1/echo-target/AB2-sandbox workloads
+# need under restricted-v2. Off ⇒ none of this runs; the base overlay + pool from
+# Sections 6/6b are left as-is.
+if [ "${SH_AUTHBRIDGE:-0}" = "1" ]; then
+  echo
+  log_info "Deploying RC1 AuthBridge stack (ocp-authbridge overlay)"
+
+  # Real egress credential: seeded ONLY into this Secret; the sandbox container only ever
+  # holds the placeholder (ECHO_CRED=PLACEHOLDER-TOKEN in sandbox-pool-ab2.yaml). AB2's
+  # static-inject plugin resolves the real value by destination host. Synthetic demo value —
+  # echo doesn't authenticate.
+  RC1_ECHO_REAL_CRED="${RC1_ECHO_REAL_CRED:-REAL-ECHO-EGRESS-CRED-rc1demo}"
+  if $DRY_RUN; then
+    log_info "[dry-run] would create/update secret ab2-egress-cred in $NAMESPACE (value redacted)"
+  else
+    $KUBECTL create secret generic ab2-egress-cred -n "$NAMESPACE" \
+      --from-literal=echo-target="$RC1_ECHO_REAL_CRED" \
+      --dry-run=client -o yaml | $KUBECTL apply -f - >/dev/null
+    log_success "Secret ab2-egress-cred ready in $NAMESPACE"
+  fi
+
+  log_info "Rendering + applying ocp-authbridge overlay"
+  if $DRY_RUN; then
+    echo "  [dry-run] render_overlay_dir \"$AB_OVERLAY_DIR\" | $KUBECTL apply -f -   (manifest preview:)"
+    render_overlay_dir "$AB_OVERLAY_DIR" | sed 's/^/    /'
+  else
+    render_overlay_dir "$AB_OVERLAY_DIR" | $KUBECTL apply -f - >"$LOG_DIR/authbridge-overlay-apply.log" 2>&1 \
+      && log_success "AuthBridge overlay applied (log: $LOG_DIR/authbridge-overlay-apply.log)" \
+      || { log_error "AuthBridge overlay apply failed — see $LOG_DIR/authbridge-overlay-apply.log"; \
+           cat "$LOG_DIR/authbridge-overlay-apply.log"; exit 1; }
+  fi
+
+  if ! $DRY_RUN; then
+    log_info "Waiting for authbridge-ab1 / ibac-stub / echo-target rollouts..."
+    $KUBECTL -n "$NAMESPACE" rollout status deploy/authbridge-ab1 --timeout=180s \
+      >"$LOG_DIR/authbridge-ab1-rollout.log" 2>&1 \
+      && log_success "authbridge-ab1 ready" \
+      || { log_error "authbridge-ab1 not ready (see $LOG_DIR/authbridge-ab1-rollout.log)"; exit 1; }
+    $KUBECTL -n "$NAMESPACE" rollout status deploy/ibac-stub --timeout=180s \
+      >"$LOG_DIR/ibac-stub-rollout.log" 2>&1 \
+      && log_success "ibac-stub ready" \
+      || { log_error "ibac-stub not ready (see $LOG_DIR/ibac-stub-rollout.log)"; exit 1; }
+    $KUBECTL -n "$NAMESPACE" rollout status deploy/echo-target --timeout=180s \
+      >"$LOG_DIR/echo-target-rollout.log" 2>&1 \
+      && log_success "echo-target ready" \
+      || { log_error "echo-target not ready (see $LOG_DIR/echo-target-rollout.log)"; exit 1; }
+
+    # The agent-sandbox controller does NOT roll existing pods when a Sandbox CR's spec
+    # changes — a pre-existing pod (e.g. sandbox-0 created by the base pool apply in
+    # Section 6) would otherwise keep its OLD 1-container spec (no authbridge-ab2 sidecar)
+    # forever. Force-delete the pool pods so the controller recreates them from the
+    # just-applied AB2 spec.
+    AB_POOL_SELECTOR="sh.kagenti.io/sandbox-pool=default"   # on the pods (podTemplate.metadata.labels)
+    # The pool label above lives ONLY on the pod template, not on the Sandbox CR itself (whose only
+    # label is app=sandbox). A `kubectl get sandbox -l ...` selector matches the CR's own labels, so
+    # the pool label would count 0 CRs there; use the CR's real label for the sandbox count below.
+    AB_SANDBOX_SELECTOR="app=sandbox"                        # on the Sandbox CRs (metadata.labels)
+    log_info "Force-rolling the sandbox pool onto the AB2-sidecar variant..."
+    $KUBECTL -n "$NAMESPACE" delete pod -l "$AB_POOL_SELECTOR" --ignore-not-found \
+      >"$LOG_DIR/ab2-pool-delete.log" 2>&1 || true
+    # Wait for the OLD pods to be fully gone before readiness-checking the new ones.
+    $KUBECTL -n "$NAMESPACE" wait --for=delete pod -l "$AB_POOL_SELECTOR" --timeout=180s \
+      >>"$LOG_DIR/ab2-pool-delete.log" 2>&1 || true
+
+    # Poll per-container readiness (2 containers/pod: sandbox + authbridge-ab2) before the
+    # authoritative wait, since the old pods must terminate and the new sandbox containers
+    # have to pull + start.
+    for _ in $(seq 1 150); do
+      # `|| true`: under `set -euo pipefail`, `grep -c` exits 1 when the count is 0, and
+      # there IS a guaranteed zero-ready window during the rollover.
+      ab2_ready=$($KUBECTL -n "$NAMESPACE" get pods -l "$AB_POOL_SELECTOR" \
+        -o jsonpath='{range .items[*]}{range .status.containerStatuses[*]}{.ready}{"\n"}{end}{end}' \
+        2>/dev/null | grep -c '^true$' || true)
+      ab2_want=$(( $($KUBECTL -n "$NAMESPACE" get sandbox -l "$AB_SANDBOX_SELECTOR" --no-headers 2>/dev/null | wc -l | tr -d ' ') * 2 ))
+      [ "$ab2_want" -gt 0 ] && [ "$ab2_ready" -ge "$ab2_want" ] && break
+      sleep 2
+    done
+    $KUBECTL -n "$NAMESPACE" wait --for=condition=Ready pod -l "$AB_POOL_SELECTOR" --timeout=300s \
+      >"$LOG_DIR/ab2-pool-wait.log" 2>&1 \
+      && log_success "AB2 sandbox pool Ready" \
+      || { log_error "AB2 sandbox pool not all Ready (see $LOG_DIR/ab2-pool-wait.log)"; \
+           $KUBECTL -n "$NAMESPACE" get pods -l "$AB_POOL_SELECTOR" -o wide 2>/dev/null || true; exit 1; }
+  fi
+
+  # Roll the harness ksvc so it starts a fresh Revision that picks up the repointed
+  # llm-credentials (placeholder + ANTHROPIC_BASE_URL=http://authbridge-ab1:8080, an
+  # in-cluster Service that resolves in-cluster — no Route needed for this hop). Mirrors
+  # setup-kind.sh's build-ts annotation patch (step 9).
+  run_cmd $KUBECTL -n "$NAMESPACE" patch ksvc serverless-harness --type merge \
+    -p "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"deploy.sh/build-ts\":\"$(date +%s)\"}}}}}"
 fi
 
 # ============================================================================

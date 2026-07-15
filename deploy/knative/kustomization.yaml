@@ -14,3 +14,4 @@ resources:
   - service.yaml
   - gitd.yaml
   - harness-egress-policy.yaml
+  - relay-deployment.yaml

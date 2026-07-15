@@ -61,7 +61,39 @@ jobs:
           cd harness && pnpm exec tsc --noEmit && cd ..
           cd packages/k8s-sandbox && pnpm exec tsc --noEmit && cd ../..
           cd packages/knative-server && pnpm exec tsc --noEmit && cd ../..
+          cd packages/sandbox-relay && pnpm exec tsc --noEmit && cd ../..
+          cd packages/ibac-stub && pnpm exec tsc --noEmit && cd ../..
           cd experiments && pnpm exec tsc --noEmit && cd ..
 
       - name: Test
         run: pnpm -r test
+
+  proto:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99  # v1
+        with:
+          version: "1.71.0"
+          github_token: ${{ github.token }}
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5
+        with:
+          go-version-file: gen/go/go.mod
+
+      - name: Lint proto
+        run: buf lint
+
+      - name: Regenerate stubs
+        run: buf generate
+
+      - name: Verify no codegen drift
+        run: |
+          git add -A -- packages/k8s-sandbox/src/gen gen
+          git diff --cached --exit-code -- packages/k8s-sandbox/src/gen gen \
+            || { echo "::error::Generated stubs are out of date or untracked. Run 'buf generate' and commit."; exit 1; }
+
+      - name: Build and test Go stubs
+        run: cd gen/go && go build ./... && go test ./...

@@ -1,7 +1,7 @@
 # Inference Injector Design — the harness's provider-key chokepoint
 
 Version: 1.0 — June 26, 2026
-Status: Design (approved for implementation planning)
+Status: Design (approved for implementation planning). **Mechanism superseded by [RC1 — AuthBridge egress control-plane PoC](2026-07-10-authbridge-egress-control-plane-poc-design.md)** (2026-07-14): once SPARC/IBAC control plugins share the harness→LLM hop, the plain-Go injector is replaced by an AuthBridge shared gateway (RC1 "Profile A"). This spec is retained for its deployment-profile detail (shared-pod placement, provider routing, strip-then-set, audit-only) and as the home of the deferred per-caller-identity / mTLS work.
 Scope: The **inference injector** — the small, shared, trusted gateway that holds LLM provider keys
 so the harness doesn't, terminates the harness's mutually-authenticated in-cluster hop, sets the
 real provider credential, and originates TLS to the provider. It is the **one component with public

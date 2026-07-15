@@ -128,10 +128,23 @@ KSVC_URL=$(oc get ksvc serverless-harness -n default -o jsonpath='{.status.url}'
   ./deploy/knative/smoke.sh
 ```
 
+For the **AuthBridge two-hop egress-control** demo on OpenShift (`SH_AUTHBRIDGE=1` +
+the [`rc1-ocp-gate.sh`](rc1-ocp-gate.sh) live gate) — credential injection + allow/deny
+control on both harness egress hops — see [`README-authbridge.md`](README-authbridge.md).
+
 See [`SMOKE.md`](SMOKE.md#smoke-test-on-openshift) for details. Claims that assert
 on the **LLM `/turn` response** require the harness to reach its configured
 Anthropic endpoint *from the cluster*; health, scale-to-zero/-up, Redis session
 recall, and the 404 path do not.
+
+## Connecting a worker
+
+`setup-ocp.sh` also deploys the **relay** (`sandbox-relay.<ns>.svc:8443`) that a
+[SandboxTransport](../../proto/sandbox/v1/sandbox.proto) worker attaches to. To
+connect your own worker — set the relay token (auth is fail-closed), enable the
+remote-sandbox path on the harness, and deploy the worker pod — see
+[`README-worker.md`](README-worker.md). A ready-to-edit worker Deployment is in
+[`worker-example.yaml`](worker-example.yaml).
 
 ## Enabling KEDA (async leaf)
 

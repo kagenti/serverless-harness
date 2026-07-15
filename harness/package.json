@@ -17,6 +17,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@grpc/grpc-js": "^1.12.0",
     "@sh/session-backend": "workspace:*",
     "@sh/k8s-sandbox": "workspace:*",
     "@sh/work-queue": "workspace:*",

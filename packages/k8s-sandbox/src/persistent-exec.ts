@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import type { K8sSandboxConfig } from "./config.js";
-import type { ExecInPod } from "./exec.js";
+import type { ExecInPod, SandboxTransport } from "./transport.js";
 import { FrameParser, wrapCommand } from "./framing.js";
 
 /** argv for the long-lived session: a bare interactive `bash` (NOT `bash -c`). */
@@ -12,7 +12,6 @@ export function buildPersistentKubectlArgs(config: K8sSandboxConfig): string[] {
 }
 
 type SpawnFn = typeof nodeSpawn;
-export type PersistentExec = ExecInPod & { dispose: () => void };
 
 interface Inflight {
   nonce: string;
@@ -27,13 +26,13 @@ interface Inflight {
  * multiplexed over the framed protocol (framing.ts), one in flight at a time.
  * Channel unavailability (spawn error, mid-command death) transparently retries
  * the op via `deps.fallback`; timeout/abort reject with M2-compatible errors.
- * The session is spawned lazily and torn down by dispose().
+ * The session is spawned lazily and torn down by close().
  * NOTE: this transport does NOT stream `opts.onData`; streaming ops (bash, grep) stay on the M2 per-call exec.
  */
 export function persistentExecInPod(
   config: K8sSandboxConfig,
   deps: { fallback: ExecInPod; spawn?: SpawnFn },
-): PersistentExec {
+): SandboxTransport {
   const spawnFn = deps.spawn ?? nodeSpawn;
   let child: ChildProcess | null = null;
   let parser = new FrameParser();
@@ -155,8 +154,9 @@ export function persistentExecInPod(
     });
   };
 
-  return Object.assign(exec, {
-    dispose: () => {
+  return {
+    exec,
+    close: async () => {
       disposed = true;
       try {
         child?.stdin?.end();
@@ -166,5 +166,5 @@ export function persistentExecInPod(
       killChild();
       queue.length = 0;
     },
-  });
+  };
 }

@@ -1,4 +1,80 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// realProduceVerdict (exercised via the exported runLeaf() below, with no `deps.produceVerdict`
+// override) drives real Redis/Pi/model machinery in production. Mock those module boundaries so
+// the transport-wiring tests stay hermetic — mirrors the whole-module vi.mock style already used
+// for @sh/harness/run-leaf in packages/knative-server/test/run-leaf-route.test.ts.
+// vi.mock factories are hoisted above the rest of this module, so any value a factory returns
+// DIRECTLY (as opposed to referencing lazily inside a closure) must already be initialized by
+// the time the hoisted factory runs. vi.hoisted() runs its callback as part of that same hoisted
+// block, in declaration order, so classes/spies built there are safe to return directly below.
+const { selectPoolSandboxMock, FakeSandboxPoolSaturatedError } = vi.hoisted(() => {
+  class FakeSandboxPoolSaturatedError extends Error {
+    constructor(selector: string) {
+      super(`sandbox pool '${selector}' saturated: all pods at capacity`);
+      this.name = "SandboxPoolSaturatedError";
+    }
+  }
+  return { selectPoolSandboxMock: vi.fn(), FakeSandboxPoolSaturatedError };
+});
+vi.mock("../src/select-sandbox.js", () => ({
+  selectPoolSandbox: (...args: unknown[]) => selectPoolSandboxMock(...args),
+  SandboxPoolSaturatedError: FakeSandboxPoolSaturatedError,
+}));
+
+const { k8sSandboxExtensionMock, kubectlTransportMock } = vi.hoisted(() => ({
+  k8sSandboxExtensionMock: vi.fn(() => () => {}),
+  kubectlTransportMock: vi.fn(() => ({
+    exec: vi.fn(async () => ({ stdout: Buffer.from(""), exitCode: 0 })),
+    close: vi.fn(async () => {}),
+  })),
+}));
+vi.mock("@sh/k8s-sandbox", () => ({
+  k8sSandboxExtension: (...args: unknown[]) => k8sSandboxExtensionMock(...args),
+  KubectlTransport: (...args: unknown[]) => kubectlTransportMock(...args),
+}));
+
+const { FakeRedisSessionBackend } = vi.hoisted(() => {
+  class FakeRedisSessionBackend {
+    async read(_sid: string) { return []; }
+    async latestWhere(_sid: string, _pred: unknown) { return null; }
+    async append(_sid: string, _entry: unknown, _piType: string) { return {}; }
+    async list() { return []; }
+    async close() {}
+  }
+  return { FakeRedisSessionBackend };
+});
+vi.mock("@sh/session-backend", () => ({
+  RedisSessionBackend: FakeRedisSessionBackend,
+}));
+
+const { FakeSessionManager, FakeResourceLoader, createAgentSessionMock } = vi.hoisted(() => {
+  class FakeSessionManager {
+    constructor(private sid: string) {}
+    getSessionId() { return this.sid; }
+    appendCustomEntry(_type: string, _data?: unknown) { return "entry-id"; }
+  }
+  class FakeResourceLoader {
+    constructor(public opts: unknown) {}
+    async reload() {}
+  }
+  return {
+    FakeSessionManager,
+    FakeResourceLoader,
+    createAgentSessionMock: vi.fn(async () => ({ session: { prompt: async () => {} } })),
+  };
+});
+vi.mock("@earendil-works/pi-coding-agent", () => ({
+  createAgentSession: (...args: unknown[]) => createAgentSessionMock(...args),
+  DefaultResourceLoader: FakeResourceLoader,
+  getAgentDir: () => "/fake/agent-dir",
+  SessionManager: {
+    create: (_cwd: string, _snapshot: unknown, opts: { id: string }) => new FakeSessionManager(opts.id),
+    openFromCheckpoint: async (sid: string) => new FakeSessionManager(sid),
+  },
+  SettingsManager: { create: () => ({}) },
+}));
+
 import { runLeaf, buildLeafPrompt, buildSolvePrompt, leafSessionId, validateItem } from "../src/run-leaf.js";
 import type { LeafEnvelope } from "../src/run-leaf.js";
 import { SandboxPoolSaturatedError } from "../src/select-sandbox.js";
@@ -113,6 +189,69 @@ describe("leafSessionId", () => {
   });
   it("prefixes and sanitizes with the tenant for per-tenant id isolation", () => {
     expect(leafSessionId({ sessionId: "run-1/i1", tenant: "acme" })).toBe("acme-run-1-i1");
+  });
+});
+
+describe("realProduceVerdict transport wiring (Task 9)", () => {
+  const FAKE_CONFIG = { pod: "sandbox-0", namespace: "default", context: undefined, podCwd: "/workspace", headCwd: "/head" };
+
+  it("pod path: builds a fresh KubectlTransport per phase and passes no transport to the extension", async () => {
+    selectPoolSandboxMock.mockReset().mockResolvedValue({
+      config: FAKE_CONFIG,
+      heartbeat: vi.fn(async () => {}),
+      release: vi.fn(async () => {}),
+    });
+    kubectlTransportMock.mockClear();
+    k8sSandboxExtensionMock.mockClear();
+
+    const env: LeafEnvelope = {
+      sessionId: "run/pod-1",
+      item: { item_id: "i1", file: "f", pattern: "p" },
+      repoUrl: "https://git.example/r.git",
+      ref: "abc123",
+    };
+    await runLeaf(env);
+
+    // Built once for converge and once for cleanup — the pod path never shares a transport
+    // across phases, exactly like the pre-Task-9 code.
+    expect(kubectlTransportMock).toHaveBeenCalledTimes(2);
+    for (const call of kubectlTransportMock.mock.calls) expect(call[0]).toBe(FAKE_CONFIG);
+    // Each per-phase transport is closed once, right after its own phase.
+    for (const result of kubectlTransportMock.mock.results) {
+      expect(result.value.close).toHaveBeenCalledTimes(1);
+    }
+
+    expect(k8sSandboxExtensionMock).toHaveBeenCalledWith({ config: FAKE_CONFIG, transport: undefined });
+  });
+
+  it("grpc path: reuses selected.transport for converge + cleanup and closes it exactly once", async () => {
+    const close = vi.fn(async () => {});
+    const transport = {
+      exec: vi.fn(async () => ({ stdout: Buffer.from(""), exitCode: 0 })),
+      close,
+    };
+    selectPoolSandboxMock.mockReset().mockResolvedValue({
+      config: FAKE_CONFIG,
+      transport,
+      heartbeat: vi.fn(async () => {}),
+      release: vi.fn(async () => {}),
+    });
+    kubectlTransportMock.mockClear();
+    k8sSandboxExtensionMock.mockClear();
+
+    const env: LeafEnvelope = {
+      sessionId: "run/grpc-1",
+      item: { item_id: "i1", file: "f", pattern: "p" },
+      repoUrl: "https://git.example/r.git",
+      ref: "abc123",
+    };
+    await runLeaf(env);
+
+    // The shared transport serves both converge and cleanup — KubectlTransport is never built.
+    expect(kubectlTransportMock).not.toHaveBeenCalled();
+    expect(transport.exec).toHaveBeenCalledTimes(2);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(k8sSandboxExtensionMock).toHaveBeenCalledWith({ config: FAKE_CONFIG, transport });
   });
 });
 

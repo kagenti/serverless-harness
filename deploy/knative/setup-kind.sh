@@ -133,15 +133,133 @@ if [ "$SKIP_BUILD" != "true" ]; then
 fi
 
 # 8. Create LLM credentials secret (supports direct API key or gateway bridge)
-if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
-  echo "ERROR: Set ANTHROPIC_API_KEY (direct) or ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL (gateway)"
-  exit 1
+if [ "${SH_AUTHBRIDGE:-0}" = "1" ]; then
+  # RC1-1 Hop 1: the harness never holds the real key. AB1 (the reverse-proxy gateway,
+  # see deploy/knative/authbridge/ab1-deployment.yaml) holds it and injects it
+  # per-request; the harness gets only the placeholder + AB1's base URL.
+  REAL_KEY="${ANTHROPIC_API_KEY:?SH_AUTHBRIDGE=1 requires ANTHROPIC_API_KEY (the real key AB1 injects)}"
+  kubectl create secret generic ab1-llm-cred --from-literal=api.anthropic.com="$REAL_KEY" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  kubectl create secret generic llm-credentials \
+    --from-literal=api-key=AB1-PLACEHOLDER \
+    --from-literal=auth-token=AB1-PLACEHOLDER \
+    --from-literal=base-url=http://authbridge-ab1:8080 \
+    --dry-run=client -o yaml | kubectl apply -f -
+else
+  if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
+    echo "ERROR: Set ANTHROPIC_API_KEY (direct) or ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL (gateway)"
+    exit 1
+  fi
+  SECRET_ARGS=(--from-literal=api-key="${ANTHROPIC_API_KEY:-${ANTHROPIC_AUTH_TOKEN}}")
+  [ -n "${ANTHROPIC_BASE_URL:-}" ] && SECRET_ARGS+=(--from-literal=base-url="$ANTHROPIC_BASE_URL")
+  [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ] && SECRET_ARGS+=(--from-literal=auth-token="$ANTHROPIC_AUTH_TOKEN")
+  kubectl create secret generic llm-credentials "${SECRET_ARGS[@]}" \
+    --dry-run=client -o yaml | kubectl apply -f -
 fi
-SECRET_ARGS=(--from-literal=api-key="${ANTHROPIC_API_KEY:-${ANTHROPIC_AUTH_TOKEN}}")
-[ -n "${ANTHROPIC_BASE_URL:-}" ] && SECRET_ARGS+=(--from-literal=base-url="$ANTHROPIC_BASE_URL")
-[ -n "${ANTHROPIC_AUTH_TOKEN:-}" ] && SECRET_ARGS+=(--from-literal=auth-token="$ANTHROPIC_AUTH_TOKEN")
-kubectl create secret generic llm-credentials "${SECRET_ARGS[@]}" \
-  --dry-run=client -o yaml | kubectl apply -f -
+
+# 8b. SH_AUTHBRIDGE=1: deploy the AB1 gateway stack (after the secrets, near where
+# service.yaml is applied below) so the harness's egress is already scoped to AB1 before
+# the Knative Service starts routing traffic.
+if [ "${SH_AUTHBRIDGE:-0}" = "1" ]; then
+  echo "--- Deploying AB1 gateway (ibac-stub + authbridge-ab1) ---"
+
+  if [ "$SKIP_BUILD" != "true" ]; then
+    # Official kext image (main #655 static-inject + #657 reverse-proxy fidelity fixes) —
+    # multi-arch (linux/amd64 + linux/arm64), so it runs natively on any kind node. Pinned to
+    # the kext main sha; one pull+load here covers both AB1 (below) and the 3 AB2 sidecars
+    # applied later in this script, since AB1 runs first.
+    echo "--- Pulling + loading AuthBridge proxy image (official kext image, #655/#657 on main) ---"
+    docker pull ghcr.io/kagenti/kagenti-extensions/authbridge:main-9c131ee
+    kind load docker-image ghcr.io/kagenti/kagenti-extensions/authbridge:main-9c131ee --name "$CLUSTER_NAME"
+  fi
+
+  kubectl apply -f "$SCRIPT_DIR/ibac-stub.yaml" -f "$SCRIPT_DIR/authbridge/ab1-deployment.yaml"
+  # Applied AFTER any base egress policy so it overwrites the same NetworkPolicy name
+  # (serverless-harness-egress) rather than stacking with it.
+  kubectl apply -f "$SCRIPT_DIR/authbridge/harness-egress-ab1.yaml"
+  kubectl -n default rollout status deploy/authbridge-ab1 --timeout=120s
+  kubectl -n default rollout status deploy/ibac-stub --timeout=120s
+fi
+
+# 8c. SH_AUTHBRIDGE=1: deploy the AB2 egress forward-proxy stack (Hop 2) — see
+# docs/plans/2026-07-10-rc1-authbridge/rc1-2-hop2-sandbox-egress.md. Builds/loads the
+# echo-target image, seeds the REAL egress credential into a Secret the sandbox never reads
+# directly, and applies the AB2-sidecar variant of the sandbox pool (OVERWRITES the base
+# sandbox-0/1/2 CRs applied at step 6) so every pool pod picks up the authbridge-ab2 sidecar.
+# Off ⇒ none of this runs; the base pool from step 6 is left as-is.
+if [ "${SH_AUTHBRIDGE:-0}" = "1" ]; then
+  echo "--- Deploying AB2 egress forward-proxy (Hop 2: echo-target + AB2 sidecar pool) ---"
+
+  if [ "$SKIP_BUILD" != "true" ]; then
+    echo "--- Building echo-target image ---"
+    docker build --load -t dev.local/echo-target:rc1 "$SCRIPT_DIR/echo-target"
+    echo "--- Loading echo-target image into kind ---"
+    kind load docker-image dev.local/echo-target:rc1 --name "$CLUSTER_NAME"
+
+    # Pre-baked sandbox image (tools baked in, no apk-at-startup) for the AB2 pool below —
+    # same Dockerfile the OCP path uses (deploy/knative/sandbox.Dockerfile), built locally
+    # here instead of in-cluster. Scoped context matches .github/workflows/build.yaml
+    # (sandbox.Dockerfile has no COPY, so the build context is just deploy/knative).
+    echo "--- Building sandbox image ---"
+    docker build --load -f "$SCRIPT_DIR/sandbox.Dockerfile" -t dev.local/sandbox-rc1:rc1 "$SCRIPT_DIR"
+    echo "--- Loading sandbox image into kind ---"
+    kind load docker-image dev.local/sandbox-rc1:rc1 --name "$CLUSTER_NAME"
+  fi
+
+  # Real egress credential: seeded ONLY into this Secret; the sandbox container only ever
+  # holds the placeholder (ECHO_CRED=PLACEHOLDER-TOKEN in sandbox-pool-ab2.yaml). AB2's
+  # static-inject plugin resolves the real value by destination host (key_by: host -> a
+  # secret file/key named "echo-target"). Synthetic demo value — echo doesn't authenticate.
+  RC1_ECHO_REAL_CRED="${RC1_ECHO_REAL_CRED:-REAL-ECHO-EGRESS-CRED-rc1demo}"
+  kubectl create secret generic ab2-egress-cred \
+    --from-literal=echo-target="$RC1_ECHO_REAL_CRED" \
+    --dry-run=client -o yaml | kubectl apply -f -
+
+  kubectl apply -f "$SCRIPT_DIR/echo-target.yaml"
+  kubectl apply -f "$SCRIPT_DIR/authbridge/ab2-config.yaml"
+  kubectl -n default rollout status deploy/echo-target --timeout=120s
+
+  # Overwrites the base sandbox-0/1/2 CRs (same names/namespace) with the AB2-sidecar
+  # variant.
+  kubectl apply -f "$SCRIPT_DIR/sandbox-pool-ab2.yaml"
+
+  # The agent-sandbox controller does NOT roll existing pods when a Sandbox CR's spec
+  # changes (no restart/rollout of the underlying pod on update) — a pre-existing pod
+  # (e.g. sandbox-0 created by the base pool apply at step 6, or one already running from
+  # a prior setup-kind.sh invocation on this cluster) would otherwise keep its OLD
+  # 1-container spec (no authbridge-ab2 sidecar) forever. Force-delete the pool pods so the
+  # controller recreates them from the just-applied AB2 spec.
+  kubectl -n default delete pod -l "$POOL_SELECTOR" --ignore-not-found
+  # Wait for the OLD pods to be fully gone before readiness-checking the new ones. Otherwise a
+  # readiness probe (here or in leaf-smoke) can pass against a still-terminating old pod that
+  # happens to have the tools, and the new pod isn't actually ready yet.
+  kubectl -n default wait --for=delete pod -l "$POOL_SELECTOR" --timeout=180s || true
+
+  # Re-wait for the pool to converge on the AB2 variant: each pod is recreated with 2
+  # containers (sandbox + authbridge-ab2). Poll on per-container readiness (not just pod
+  # phase) before the authoritative wait, since the old 1-container pods must terminate and
+  # the new pods' sandbox container has to pull the (kind-loaded) baked image and start.
+  # Generous timeout for the same reason.
+  for _ in $(seq 1 150); do
+    # `|| true`: under `set -euo pipefail`, `grep -c` exits 1 when the count is 0, and there IS
+    # a guaranteed zero-ready window during the rollover (old 1-container pods terminating while
+    # the new sandbox containers start up). Without the guard the assignment aborts the whole
+    # script mid-poll. (The base poll at L115 needs no guard: it pipes kubectl, not a filtering
+    # grep, into wc — so no stage exits non-zero. Mirroring that shape here would NOT help, since
+    # grep-as-filter still exits 1 under pipefail; the `|| true` is the actual fix.)
+    ready2=$(kubectl -n default get pods -l "$POOL_SELECTOR" \
+      -o jsonpath='{range .items[*]}{range .status.containerStatuses[*]}{.ready}{"\n"}{end}{end}' \
+      2>/dev/null | grep -c '^true$' || true)
+    want2=$(( $(grep -c '^kind: Sandbox' "$SCRIPT_DIR/sandbox-pool-ab2.yaml") * 2 ))
+    [ "$ready2" -ge "$want2" ] && break
+    sleep 2
+  done
+  kubectl -n default wait --for=condition=Ready pod -l "$POOL_SELECTOR" --timeout=300s || {
+    echo "AB2 sandbox pool not all Ready (label='$POOL_SELECTOR')"
+    kubectl -n default get pods -l "$POOL_SELECTOR" -o wide | head -40
+    exit 1
+  }
+fi
 
 # 9. Deploy Knative Service
 echo "--- Deploying serverless-harness Knative Service ---"

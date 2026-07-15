@@ -88,6 +88,29 @@ the `M`-numbered built harness (Phase 1) and the `Z`-numbered credential plane (
 
 ---
 
+## SandboxTransport (`ST`-prefix)
+
+Make the sandbox reachable from **anywhere** by inverting connectivity: the sandbox worker dials
+*out* over one gRPC bidi stream (HTTP/2 on `:443`), a single-replica in-cluster relay bridges it to
+the harness, and both paths land behind the existing `SandboxTransport` seam
+(`KubectlTransport` local + `GrpcRelayTransport` remote). Extends the shared-sandbox model (P2) to
+untrusted bring-your-own / NAT / on-prem / other-cloud sandboxes without touching the Pi loop,
+session backend, or leaf queue. Contract is a **language-neutral Protobuf IDL** (`sandbox/v1`), not
+a TypeScript interface.
+
+| ID | Title | Status | Spec / issue |
+|----|-------|--------|--------------|
+| **ST** | **SandboxTransport — language-neutral remote sandbox exec over gRPC** — worker-dialed `Attach` stream, single-replica presence-only relay mirroring into the existing pool, `SandboxTransport` seam, Go reference worker; per-sandbox bearer token day-one (SPIFFE/mTLS additive later) | **design ✅** | [`2026-07-08-sandbox-transport-grpc-design.md`](2026-07-08-sandbox-transport-grpc-design.md) (#78); [ADR-0024](../adrs/0024-sandbox-transport-remote-exec.md); epic #89 |
+
+> **Two build tracks, separate contributors.** The **backend** (TypeScript / in-cluster — proto,
+> `SandboxTransport` seam + `KubectlTransport` rename, relay + `GrpcRelayTransport` + presence mirror:
+> issues #84–#86) and the **worker** (Go / sandbox side — reference worker: #87) build in parallel
+> off the shared `sandbox/v1` contract, joined by the integration + live gate (#88). This mirrors the
+> Z2/Z3 (harness) vs. Z4/Z5 (sandbox) split. Implementation **plans are local-only** (`../plans/`,
+> gitignored) and authored per contributor.
+
+---
+
 ## Phase 2 — Zero-Trust Credential Plane (`Z`-prefix)
 
 > **Roadmap anchor:** [Leaf-Session Backend Capability Charter](2026-06-26-leaf-session-backend-capability-charter.md) (evidence base: [Pipeline Archetypes & Requirements](2026-06-26-pipeline-archetypes-requirements.md)) tests the design against three independent agentic-pipeline archetypes and **reprioritizes** this track: the harness's core role is a **leaf-session backend for external orchestrators**. **Z1 (per-user identity) defers** until multi-tenant hosting; **Z6 _extras_ defer** — the core clean-context-subagent need (one archetype plans it) is met by a **re-entrant leaf-session contract**, not new machinery. Z3/Z5 stay "keep-light."
@@ -101,9 +124,9 @@ live only in identity-keyed egress points. Dependency-ordered:
 |----|-------|--------|---------------|-------|
 | **Z1** | Identity spine — per-session SPIFFE bound to user; `CredentialInjector` interface; orchestrator + reconstruct-on-wake | **design ✅** | [`2026-06-26-identity-spine-design.md`](2026-06-26-identity-spine-design.md) | parent M7 (reframed) |
 | **Z2** | **Harness lock-down** — fail-closed redirection, secret-free container, default-deny egress, distroless, scoped RBAC; argues the harness needs **no** egress proxy | **design ✅** | [`2026-06-26-harness-lockdown-design.md`](2026-06-26-harness-lockdown-design.md) | — |
-| **Z3** | **Inference injector** — shared provider-key chokepoint; multi-provider table, `x-sh-provider` routing, strip-then-set, mTLS, streaming, audit-only | **design ✅** | [`2026-06-26-inference-injector-design.md`](2026-06-26-inference-injector-design.md) | parent M8 |
+| **Z3** | **Inference injector** — shared provider-key chokepoint; multi-provider table, `x-sh-provider` routing, strip-then-set, mTLS, streaming, audit-only | **design ✅** · mechanism superseded by RC1 | [`2026-06-26-inference-injector-design.md`](2026-06-26-inference-injector-design.md) | parent M8 |
 | **Z4** | MCP code-mode in the sandbox (placeholder-swap; **supersedes** the parent's MCP *gateway*) | design ✅ | [`2026-06-18-m10-mcp-code-mode-design.md`](2026-06-18-m10-mcp-code-mode-design.md) | M10 (spec); parent M10 (superseded) |
-| **Z5** | Generalized credentialed egress (sandbox forward proxy + baked CA; subsumes the parent's sandbox-credential milestone; generalizes Z4's mechanism) | design ✅ | [`2026-06-19-m13-generalized-credentialed-egress-design.md`](2026-06-19-m13-generalized-credentialed-egress-design.md) | M13; parent M9 |
+| **Z5** | Generalized credentialed egress (sandbox forward proxy + baked CA; subsumes the parent's sandbox-credential milestone; generalizes Z4's mechanism) | design ✅ · static slice implemented by RC1 | [`2026-06-19-m13-generalized-credentialed-egress-design.md`](2026-06-19-m13-generalized-credentialed-egress-design.md) | M13; parent M9 |
 | **Z6** | Subagents — first-class child sessions; fresh-isolated default + `SandboxPolicy`; CoW workspace seed; `mail`/`subagent_*` log types | design (no spec yet) | parent research doc §3.4, §M11 | parent M11 |
 | **Z7** | Validation — secret-leak red-team across all paths; multi-agent fan-out; blast-radius containment | design (no spec yet) | parent research doc §M12 | parent M12 |
 
@@ -120,6 +143,22 @@ live only in identity-keyed egress points. Dependency-ordered:
 
 ---
 
+## Rosso Cortex Integration (`RC`-prefix)
+
+Reframes the Phase-2 credential plane around **Rosso Cortex / AuthBridge** as the concrete injection
+**and** control mechanism, and around the `#89` SandboxTransport seam — for a single-tenant, Kind-first
+PoC. AuthBridge sits on both harness HTTP egress hops as one "egress control-plane, two deployment
+profiles" pattern: a **shared** LLM gateway and a **per-sandbox** egress forward-proxy. This
+**supersedes the mechanism** of Z3 and implements a **static single-tenant slice** of Z5 (per-user /
+RFC 8693 deferred). Distinct from the `Z`-numbered plane it reframes — this is an **integration** track,
+so it takes its own prefix rather than a linear `Z` id.
+
+| ID | Title | Status | Spec / decision |
+|----|-------|--------|-----------------|
+| **RC1** | **AuthBridge egress control-plane PoC** — shared LLM gateway (Profile A) + per-sandbox egress forward-proxy (Profile B); real static-cred `token-broker` injection + stubbed-judge SPARC/IBAC control; BYO sandbox stretch on the `ST` seam (ST5-gated) | **accepted ✅** (2026-07-14) · RC1-0/1/2/4 implemented (Kind + OCP); RC1-3 stretch deferred (ST5) | [`2026-07-10-authbridge-egress-control-plane-poc-design.md`](2026-07-10-authbridge-egress-control-plane-poc-design.md); [ADR-0025](../adrs/0025-authbridge-deployment-topology.md) |
+
+---
+
 ## Lineage & supersessions (explicit)
 
 - The parent research doc's **M7–M12** table is **superseded by this registry.** Its M-numbers are
@@ -132,6 +171,12 @@ live only in identity-keyed egress points. Dependency-ordered:
   and its sidecar placement is refined to a **separate pod** (Z2 H6 — NetworkPolicy granularity).
 - The June-26 re-examination **reframed Z1's harness portion**: the harness gets a SPIFFE identity
   but **no egress waypoint** (its egress is fixed-destination; see Z2 §2.4).
+- **RC1** (own `RC` track) reframes the plane around **AuthBridge (Rosso Cortex)** as the mechanism, plus the `#89`
+  SandboxTransport seam. It **supersedes the *mechanism* of Z3** (the plain Go injector becomes an
+  AuthBridge shared gateway once control plugins share the hop) and **implements a static single-tenant
+  slice of Z5** (per-user / RFC 8693 token-exchange deferred), unifying both under one "egress
+  control-plane, two deployment profiles" pattern. Z3/Z5 are retained as the deployment-profile detail
+  and the home of the deferred per-user work. Topology decision: [ADR-0025](../adrs/0025-authbridge-deployment-topology.md).
 
 ---
 
