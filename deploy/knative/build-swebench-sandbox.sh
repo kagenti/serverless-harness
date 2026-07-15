@@ -121,8 +121,14 @@ FROM ${image} AS env_${i}
 # verified against a real swebench/sweb.eval.* image), then pack the shared
 # 'testbed' conda env to a portable tarball. Full binary paths so this does
 # not depend on any conda shell hook being active in the build stage.
+# --ignore-editable-packages: SWE-bench installs the repo editable
+# (pip install -e /testbed) inside testbed; conda pack refuses editable
+# packages by default. We intentionally drop that dangling /testbed link —
+# the repo is provided at runtime via the worktree (Task 5 / Plan C
+# re-runs pip install -e <worktree>), so the editable link must be skipped
+# or the pack fails at build time (observed on the matplotlib env stage).
 RUN /opt/miniconda3/bin/conda install -n base -c conda-forge conda-pack -y -q \\
- && /opt/miniconda3/bin/conda pack -n testbed -o /tmp/env.tar.gz
+ && /opt/miniconda3/bin/conda pack -n testbed --ignore-editable-packages -o /tmp/env.tar.gz
 
 EOF
     i=$((i + 1))

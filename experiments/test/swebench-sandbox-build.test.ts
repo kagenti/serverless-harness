@@ -55,12 +55,26 @@ describe("swebench-sandbox Dockerfile emitter (build-swebench-sandbox.sh --emit 
     // docs/notes/swebench-image-facts.md §4 verified `conda install ... conda-pack`
     // end-to-end against a real swebench/sweb.eval.* image; `pip install conda-pack`
     // was never verified. Guard against silent regression to the pip form.
-    const packStanzas = [
+    const packInstalls = [
       ...dockerfile.matchAll(/conda install -n base -c conda-forge conda-pack/g),
     ];
-    expect(packStanzas).toHaveLength(3); // one per env stage
-    expect(dockerfile).toContain("/opt/miniconda3/bin/conda pack -n testbed -o /tmp/env.tar.gz");
+    expect(packInstalls).toHaveLength(3); // one per env stage
+    expect(dockerfile).toContain(
+      "/opt/miniconda3/bin/conda pack -n testbed --ignore-editable-packages -o /tmp/env.tar.gz",
+    );
     expect(dockerfile).not.toMatch(/pip install conda-pack/);
+  });
+
+  it("passes --ignore-editable-packages in every env stage's conda pack", () => {
+    // SWE-bench installs the repo editable (pip install -e /testbed); conda pack
+    // refuses editable packages by default and the OCP build died on the
+    // matplotlib env stage without this flag. The runtime worktree re-installs
+    // the repo (Task 5 / Plan C), so dropping the dangling /testbed link is safe.
+    const packCmds = [...dockerfile.matchAll(/conda pack -n testbed[^\n]*/g)];
+    expect(packCmds).toHaveLength(3); // one per env stage
+    for (const m of packCmds) {
+      expect(m[0]).toContain("--ignore-editable-packages");
+    }
   });
 
   it("unpacks each env-key to a distinct /opt/miniconda3/envs/<env_dir> path and runs conda-unpack", () => {
