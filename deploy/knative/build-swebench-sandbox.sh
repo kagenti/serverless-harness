@@ -116,7 +116,13 @@ EOF
     image="$(jq -r '.instance_image_key' <<<"$row")"
     cat <<EOF
 FROM ${image} AS env_${i}
-RUN pip install conda-pack && conda pack -n testbed -o /tmp/env.tar.gz
+# Task-1-verified recipe (docs/notes/swebench-image-facts.md §4): install
+# conda-pack into the base env via conda (NOT pip — the pip path was never
+# verified against a real swebench/sweb.eval.* image), then pack the shared
+# 'testbed' conda env to a portable tarball. Full binary paths so this does
+# not depend on any conda shell hook being active in the build stage.
+RUN /opt/miniconda3/bin/conda install -n base -c conda-forge conda-pack -y -q \\
+ && /opt/miniconda3/bin/conda pack -n testbed -o /tmp/env.tar.gz
 
 EOF
     i=$((i + 1))

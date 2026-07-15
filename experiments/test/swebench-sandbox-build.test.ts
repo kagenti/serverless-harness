@@ -51,6 +51,18 @@ describe("swebench-sandbox Dockerfile emitter (build-swebench-sandbox.sh --emit 
     });
   });
 
+  it("packs each env with the Task-1-verified conda-pack recipe, never pip", () => {
+    // docs/notes/swebench-image-facts.md §4 verified `conda install ... conda-pack`
+    // end-to-end against a real swebench/sweb.eval.* image; `pip install conda-pack`
+    // was never verified. Guard against silent regression to the pip form.
+    const packStanzas = [
+      ...dockerfile.matchAll(/conda install -n base -c conda-forge conda-pack/g),
+    ];
+    expect(packStanzas).toHaveLength(3); // one per env stage
+    expect(dockerfile).toContain("/opt/miniconda3/bin/conda pack -n testbed -o /tmp/env.tar.gz");
+    expect(dockerfile).not.toMatch(/pip install conda-pack/);
+  });
+
   it("unpacks each env-key to a distinct /opt/miniconda3/envs/<env_dir> path and runs conda-unpack", () => {
     const dirs = new Set<string>();
     for (const env of selected) {
