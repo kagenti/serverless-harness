@@ -57,6 +57,19 @@ describe("swebench deck", () => {
     }
   });
 
+  it("each instance carries a canonical gold-test command and directives (Task 5-gen)", () => {
+    for (const inst of deck.instances) {
+      expect(typeof inst.test_cmd, `${inst.instance_id} test_cmd should be a string`).toBe("string");
+      expect(inst.test_cmd.length, `${inst.instance_id} test_cmd should be non-empty`).toBeGreaterThan(0);
+
+      expect(Array.isArray(inst.test_directives), `${inst.instance_id} test_directives should be an array`).toBe(true);
+      expect(inst.test_directives.length, `${inst.instance_id} test_directives should be non-empty`).toBeGreaterThan(0);
+      for (const d of inst.test_directives) {
+        expect(typeof d, `${inst.instance_id} test_directives entries should be strings`).toBe("string");
+      }
+    }
+  });
+
   it("every deck env_key has a bake-list.envs entry whose representative_instance_id is a deck instance for that env_key", () => {
     expect(Array.isArray(bake.envs)).toBe(true);
 

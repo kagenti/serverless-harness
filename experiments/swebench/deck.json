@@ -42,6 +42,11 @@
         "test_stop_slicing (ordering.tests.OrderingTests)",
         "test_stop_start_slicing (ordering.tests.OrderingTests)"
       ],
+      "test_cmd": "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1",
+      "test_directives": [
+        "ordering.models",
+        "ordering.tests"
+      ],
       "test_runtime_ms": null,
       "weight_bucket": null
     },
@@ -75,6 +80,10 @@
         "test_timezone_unsupported (model_enums.tests.CustomChoicesTests)",
         "test_uuid_unsupported (model_enums.tests.CustomChoicesTests)"
       ],
+      "test_cmd": "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1",
+      "test_directives": [
+        "model_enums.tests"
+      ],
       "test_runtime_ms": null,
       "weight_bucket": null
     },
@@ -91,6 +100,10 @@
         "test_middleware_headers (project_template.test_settings.TestStartProjectSettings)"
       ],
       "pass_to_pass": [],
+      "test_cmd": "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1",
+      "test_directives": [
+        "project_template.test_settings"
+      ],
       "test_runtime_ms": null,
       "weight_bucket": null
     },
@@ -149,6 +162,10 @@
         "test_valid_image (files.tests.GetImageDimensionsTests)",
         "test_webp (files.tests.GetImageDimensionsTests)"
       ],
+      "test_cmd": "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1",
+      "test_directives": [
+        "files.tests"
+      ],
       "test_runtime_ms": null,
       "weight_bucket": null
     },
@@ -195,6 +212,10 @@
         "test_process_template_response (middleware_exceptions.tests.AsyncMiddlewareTests)",
         "test_process_template_response_returns_none (middleware_exceptions.tests.AsyncMiddlewareTests)",
         "test_process_view_return_response (middleware_exceptions.tests.AsyncMiddlewareTests)"
+      ],
+      "test_cmd": "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1",
+      "test_directives": [
+        "middleware_exceptions.tests"
       ],
       "test_runtime_ms": null,
       "weight_bucket": null
@@ -495,6 +516,11 @@
         "test_tickets_7204_7506 (queries.tests.Queries1Tests)",
         "test_tickets_7448_7707 (queries.tests.Queries1Tests)"
       ],
+      "test_cmd": "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1",
+      "test_directives": [
+        "queries.models",
+        "queries.tests"
+      ],
       "test_runtime_ms": null,
       "weight_bucket": null
     },
@@ -673,6 +699,10 @@
         "test_update_with_none (expressions.tests.BasicExpressionsTests)",
         "test_uuid_pk_subquery (expressions.tests.BasicExpressionsTests)"
       ],
+      "test_cmd": "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1",
+      "test_directives": [
+        "expressions.tests"
+      ],
       "test_runtime_ms": null,
       "weight_bucket": null
     },
@@ -768,6 +798,10 @@
         "Annotations can reference fields in a values clause,",
         "test_values_with_pk_annotation (annotations.tests.NonAggregateAnnotationTestCase)"
       ],
+      "test_cmd": "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1",
+      "test_directives": [
+        "annotations.tests"
+      ],
       "test_runtime_ms": null,
       "weight_bucket": null
     },
@@ -820,6 +854,10 @@
         "test_queryset_override (modeladmin.tests.ModelAdminTests.test_queryset_override)",
         "The autocomplete_fields, raw_id_fields, and radio_fields widgets may",
         "`obj` is passed from `InlineModelAdmin.get_fieldsets()` to"
+      ],
+      "test_cmd": "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1",
+      "test_directives": [
+        "modeladmin.tests"
       ],
       "test_runtime_ms": null,
       "weight_bucket": null
@@ -1606,6 +1644,10 @@
         "lib/matplotlib/tests/test_axes.py::test_bar_leading_nan",
         "lib/matplotlib/tests/test_axes.py::test_bar_all_nan[png]"
       ],
+      "test_cmd": "pytest -rA",
+      "test_directives": [
+        "lib/matplotlib/tests/test_axes.py"
+      ],
       "test_runtime_ms": null,
       "weight_bucket": null
     },
@@ -1987,6 +2029,10 @@
         "xarray/tests/test_variable.py::TestBackendIndexing::test_MemoryCachedArray",
         "xarray/tests/test_variable.py::TestBackendIndexing::test_DaskIndexingAdapter"
       ],
+      "test_cmd": "pytest -rA",
+      "test_directives": [
+        "xarray/tests/test_variable.py"
+      ],
       "test_runtime_ms": null,
       "weight_bucket": null
     },
@@ -2284,6 +2330,10 @@
         "xarray/tests/test_computation.py::test_cross[a6-b6-ae6-be6-cartesian--1-False]",
         "xarray/tests/test_computation.py::test_cross[a6-b6-ae6-be6-cartesian--1-True]"
       ],
+      "test_cmd": "pytest -rA",
+      "test_directives": [
+        "xarray/tests/test_computation.py"
+      ],
       "test_runtime_ms": null,
       "weight_bucket": null
     },
@@ -2423,6 +2473,10 @@
         "tests/test_self.py::TestCallbackOptions::test_verbose",
         "tests/test_self.py::TestCallbackOptions::test_enable_all_extensions"
       ],
+      "test_cmd": "pytest -rA",
+      "test_directives": [
+        "tests/test_self.py"
+      ],
       "test_runtime_ms": null,
       "weight_bucket": null
     },
@@ -2455,6 +2509,10 @@
         "testing/logging/test_fixture.py::test_caplog_captures_despite_exception",
         "testing/logging/test_fixture.py::test_log_report_captures_according_to_config_option_upon_failure"
       ],
+      "test_cmd": "pytest -rA",
+      "test_directives": [
+        "testing/logging/test_fixture.py"
+      ],
       "test_runtime_ms": null,
       "weight_bucket": null
     },
@@ -2476,6 +2534,10 @@
         "sklearn/tree/tests/test_export.py::test_friedman_mse_in_graphviz",
         "sklearn/tree/tests/test_export.py::test_precision",
         "sklearn/tree/tests/test_export.py::test_export_text_errors"
+      ],
+      "test_cmd": "pytest -rA",
+      "test_directives": [
+        "sklearn/tree/tests/test_export.py"
       ],
       "test_runtime_ms": null,
       "weight_bucket": null
@@ -2682,6 +2744,10 @@
         "sklearn/compose/tests/test_column_transformer.py::test_empty_selection_pandas_output[bool_int]",
         "sklearn/compose/tests/test_column_transformer.py::test_raise_error_if_index_not_aligned"
       ],
+      "test_cmd": "pytest -rA",
+      "test_directives": [
+        "sklearn/compose/tests/test_column_transformer.py"
+      ],
       "test_runtime_ms": null,
       "weight_bucket": null
     },
@@ -2728,6 +2794,10 @@
         "tests/test_ext_autodoc_configs.py::test_autodoc_typehints_format_fully_qualified_for_newtype_alias",
         "tests/test_ext_autodoc_configs.py::test_autodoc_default_options",
         "tests/test_ext_autodoc_configs.py::test_autodoc_default_options_with_values"
+      ],
+      "test_cmd": "tox --current-env -epy39 -v --",
+      "test_directives": [
+        "tests/test_ext_autodoc_configs.py"
       ],
       "test_runtime_ms": null,
       "weight_bucket": null
@@ -2777,6 +2847,10 @@
         "tests/test_markup.py::test_compact_refonly_bullet_list",
         "tests/test_markup.py::test_default_role1",
         "tests/test_markup.py::test_default_role2"
+      ],
+      "test_cmd": "tox --current-env -epy39 -v --",
+      "test_directives": [
+        "tests/test_markup.py"
       ],
       "test_runtime_ms": null,
       "weight_bucket": null
@@ -2838,6 +2912,10 @@
         "test_ITE",
         "test_Min_Max"
       ],
+      "test_cmd": "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' bin/test -C --verbose",
+      "test_directives": [
+        "sympy/utilities/tests/test_lambdify.py"
+      ],
       "test_runtime_ms": null,
       "weight_bucket": null
     },
@@ -2863,6 +2941,10 @@
         "test_sparse_zeros_sparse_eye",
         "test_copyin",
         "test_sparse_solve"
+      ],
+      "test_cmd": "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' bin/test -C --verbose",
+      "test_directives": [
+        "sympy/matrices/tests/test_sparse.py"
       ],
       "test_runtime_ms": null,
       "weight_bucket": null
@@ -2894,6 +2976,10 @@
         "test_diff_and_applyfunc",
         "test_op_priority",
         "test_symbolic_indexing"
+      ],
+      "test_cmd": "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' bin/test -C --verbose",
+      "test_directives": [
+        "sympy/tensor/array/tests/test_immutable_ndim_array.py"
       ],
       "test_runtime_ms": null,
       "weight_bucket": null
@@ -3059,6 +3145,10 @@
         "test_issue_15669",
         "test_issue_17988",
         "test_issue_18205"
+      ],
+      "test_cmd": "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' bin/test -C --verbose",
+      "test_directives": [
+        "sympy/polys/tests/test_polytools.py"
       ],
       "test_runtime_ms": null,
       "weight_bucket": null
@@ -3231,6 +3321,10 @@
         "test_issue_19360",
         "test_poly_copy_equals_original"
       ],
+      "test_cmd": "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' bin/test -C --verbose",
+      "test_directives": [
+        "sympy/polys/tests/test_polytools.py"
+      ],
       "test_runtime_ms": null,
       "weight_bucket": null
     },
@@ -3308,6 +3402,10 @@
         "test_single_e",
         "test_beta_math",
         "test_lambdify_cse"
+      ],
+      "test_cmd": "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' bin/test -C --verbose",
+      "test_directives": [
+        "sympy/utilities/tests/test_lambdify.py"
       ],
       "test_runtime_ms": null,
       "weight_bucket": null
