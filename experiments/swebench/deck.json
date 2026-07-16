@@ -47,8 +47,8 @@
         "ordering.models",
         "ordering.tests"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 945,
+      "weight_bucket": "medium"
     },
     {
       "instance_id": "django__django-11964",
@@ -84,8 +84,8 @@
       "test_directives": [
         "model_enums.tests"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 715,
+      "weight_bucket": "light"
     },
     {
       "instance_id": "django__django-12419",
@@ -104,8 +104,8 @@
       "test_directives": [
         "project_template.test_settings"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 905,
+      "weight_bucket": "medium"
     },
     {
       "instance_id": "django__django-13410",
@@ -166,8 +166,8 @@
       "test_directives": [
         "files.tests"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 685,
+      "weight_bucket": "light"
     },
     {
       "instance_id": "django__django-13810",
@@ -217,8 +217,8 @@
       "test_directives": [
         "middleware_exceptions.tests"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 736,
+      "weight_bucket": "light"
     },
     {
       "instance_id": "django__django-15128",
@@ -521,8 +521,8 @@
         "queries.models",
         "queries.tests"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 1720,
+      "weight_bucket": "medium"
     },
     {
       "instance_id": "django__django-15382",
@@ -703,8 +703,8 @@
       "test_directives": [
         "expressions.tests"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 1061,
+      "weight_bucket": "medium"
     },
     {
       "instance_id": "django__django-16032",
@@ -802,8 +802,8 @@
       "test_directives": [
         "annotations.tests"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 977,
+      "weight_bucket": "medium"
     },
     {
       "instance_id": "django__django-16661",
@@ -859,8 +859,8 @@
       "test_directives": [
         "modeladmin.tests"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 868,
+      "weight_bucket": "light"
     },
     {
       "instance_id": "matplotlib__matplotlib-24177",
@@ -1648,8 +1648,8 @@
       "test_directives": [
         "lib/matplotlib/tests/test_axes.py"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 2277,
+      "weight_bucket": "heavy"
     },
     {
       "instance_id": "pydata__xarray-2905",
@@ -2033,8 +2033,8 @@
       "test_directives": [
         "xarray/tests/test_variable.py"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 26746,
+      "weight_bucket": "heavy"
     },
     {
       "instance_id": "pydata__xarray-7229",
@@ -2334,8 +2334,8 @@
       "test_directives": [
         "xarray/tests/test_computation.py"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 16822,
+      "weight_bucket": "heavy"
     },
     {
       "instance_id": "pylint-dev__pylint-7277",
@@ -2477,8 +2477,8 @@
       "test_directives": [
         "tests/test_self.py"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 431,
+      "weight_bucket": "light"
     },
     {
       "instance_id": "pytest-dev__pytest-10051",
@@ -2513,8 +2513,8 @@
       "test_directives": [
         "testing/logging/test_fixture.py"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 557,
+      "weight_bucket": "light"
     },
     {
       "instance_id": "scikit-learn__scikit-learn-14053",
@@ -2539,8 +2539,8 @@
       "test_directives": [
         "sklearn/tree/tests/test_export.py"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 1224,
+      "weight_bucket": "medium"
     },
     {
       "instance_id": "scikit-learn__scikit-learn-26323",
@@ -2748,8 +2748,8 @@
       "test_directives": [
         "sklearn/compose/tests/test_column_transformer.py"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 214,
+      "weight_bucket": "light"
     },
     {
       "instance_id": "sphinx-doc__sphinx-10449",
@@ -2799,8 +2799,8 @@
       "test_directives": [
         "tests/test_ext_autodoc_configs.py"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 3362,
+      "weight_bucket": "heavy"
     },
     {
       "instance_id": "sphinx-doc__sphinx-8621",
@@ -2852,8 +2852,8 @@
       "test_directives": [
         "tests/test_markup.py"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 770,
+      "weight_bucket": "light"
     },
     {
       "instance_id": "sympy__sympy-12096",
@@ -2916,8 +2916,8 @@
       "test_directives": [
         "sympy/utilities/tests/test_lambdify.py"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 2113,
+      "weight_bucket": "heavy"
     },
     {
       "instance_id": "sympy__sympy-13031",
@@ -2946,8 +2946,8 @@
       "test_directives": [
         "sympy/matrices/tests/test_sparse.py"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 1907,
+      "weight_bucket": "medium"
     },
     {
       "instance_id": "sympy__sympy-15017",
@@ -2981,8 +2981,8 @@
       "test_directives": [
         "sympy/tensor/array/tests/test_immutable_ndim_array.py"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 1447,
+      "weight_bucket": "medium"
     },
     {
       "instance_id": "sympy__sympy-19040",
@@ -3150,8 +3150,8 @@
       "test_directives": [
         "sympy/polys/tests/test_polytools.py"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 14786,
+      "weight_bucket": "heavy"
     },
     {
       "instance_id": "sympy__sympy-20428",
@@ -3325,8 +3325,8 @@
       "test_directives": [
         "sympy/polys/tests/test_polytools.py"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 14498,
+      "weight_bucket": "heavy"
     },
     {
       "instance_id": "sympy__sympy-23262",
@@ -3407,8 +3407,8 @@
       "test_directives": [
         "sympy/utilities/tests/test_lambdify.py"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_runtime_ms": 4000,
+      "weight_bucket": "heavy"
     }
   ]
 }
