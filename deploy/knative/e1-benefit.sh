@@ -53,7 +53,7 @@ run_arm() {  # $1=arm label ; $2=cap ; echoes "resvSecPerLeaf p95Ms throughput p
     while [ "$(jobs -rp | wc -l)" -ge "$C" ]; do sleep 0.5; done
   done < <(jq -c '.[]' <<<"$ITEMS")
   # shellcheck disable=SC2086
-  wait $pids
+  wait $pids || true
   wall=$(( $(now_ms) - t0 )); [ "$wall" -lt 1 ] && wall=1
   stop_sampler "$sampler"
   resv=$(pool_lease_seconds_from "$f")
