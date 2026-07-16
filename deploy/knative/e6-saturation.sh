@@ -36,7 +36,7 @@ VARIANTS=("L0:small.py:password" "L1:medium.py:eval(" "L2:large.py:eval(")
 # Plan C: WORKLOAD=synthetic|swebench switch. synthetic (default) keeps the original behavior
 # exactly; swebench drives real solve leaves through the workload-provider seam (Task 1/3).
 WORKLOAD="${WORKLOAD:-synthetic}"
-PROVIDER_DECK="${DECK:-$(cd "$(dirname "$0")/../.." && pwd)/experiments/swebench/deck.json}"
+PROVIDER_DECK="${DECK:-$(cd ../.. && pwd)/experiments/swebench/deck.json}"  # CWD is the script dir (cd above); mirror e1-benefit.sh
 PREDICTIONS="${PREDICTIONS:-${LOG_DIR:-/tmp/kagenti/planC}/predictions.jsonl}"
 
 echo "--- E6: workload curve + un-capped sweep (samples=$SAMPLES pin=$PIN sweepMax=$SWEEP_MAX) ---"
