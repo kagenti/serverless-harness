@@ -29,6 +29,15 @@ spec:
       labels:
         sh.kagenti.io/sandbox-pool: default    # pool discovery label (harness selects on this)
     spec:
+      # Spread pool pods across nodes (see sandbox-pool.yaml). Soft (ScheduleAnyway) so
+      # single-node clusters still schedule; topologyKey=hostname aims for a 1-pod skew.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              sh.kagenti.io/sandbox-pool: default
       containers:
         - name: sandbox
           image: dev.local/sandbox-rc1:rc1
@@ -120,6 +129,15 @@ spec:
       labels:
         sh.kagenti.io/sandbox-pool: default    # pool discovery label (harness selects on this)
     spec:
+      # Spread pool pods across nodes (see sandbox-pool.yaml). Soft (ScheduleAnyway) so
+      # single-node clusters still schedule; topologyKey=hostname aims for a 1-pod skew.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              sh.kagenti.io/sandbox-pool: default
       containers:
         - name: sandbox
           image: dev.local/sandbox-rc1:rc1
@@ -209,6 +227,15 @@ spec:
       labels:
         sh.kagenti.io/sandbox-pool: default    # pool discovery label (harness selects on this)
     spec:
+      # Spread pool pods across nodes (see sandbox-pool.yaml). Soft (ScheduleAnyway) so
+      # single-node clusters still schedule; topologyKey=hostname aims for a 1-pod skew.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              sh.kagenti.io/sandbox-pool: default
       containers:
         - name: sandbox
           image: dev.local/sandbox-rc1:rc1
