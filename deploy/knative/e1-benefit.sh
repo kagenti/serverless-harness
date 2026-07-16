@@ -22,7 +22,8 @@ DEGRADE_X="${E1B_DEGRADE_X:-2}"
 KAGENTI_SANDBOX_POOL_SELECTOR="${KAGENTI_SANDBOX_POOL_SELECTOR:-sh.kagenti.io/sandbox-pool=swebench}"
 DECK="${DECK:-$(cd ../.. && pwd)/experiments/swebench/deck.json}"
 PRED="${PREDICTIONS:-${LOG_DIR:-/tmp/kagenti/planC}/predictions-e1.jsonl}"
-mkdir -p "$(dirname "$PRED")"
+USAGE="${USAGE:-${LOG_DIR:-/tmp/kagenti/planC}/usage-e1.jsonl}"  # per-leaf token usage for cost pricing
+mkdir -p "$(dirname "$PRED")"; mkdir -p "$(dirname "$USAGE")"; : >"$USAGE"
 # Health tally (spec §8): only solved leaves count toward resvSec/leaf, p95, throughput; broken
 # leaves are excluded and surfaced. Accumulated across both arms from run_arm's emitted counts.
 H_SOLVED=0; H_FAILED=0; H_SATURATED=0; H_TRANSPORT=0
@@ -52,12 +53,13 @@ run_arm() {  # $1=arm label ; $2=cap ; echoes "resvSecPerLeaf p95Ms throughput p
   while IFS= read -r row; do
     # Status gate (spec §8): write .ms + .pred (⇒ count toward resvSec/leaf, p95, throughput) ONLY
     # for a solved leaf; always write .class for the tally. if/fi keeps the subshell exit 0.
-    ( id=$(jq -r '.instanceId' <<<"$row"); post=$(jq -c '.post' <<<"$row")
+    ( id=$(jq -r '.instanceId' <<<"$row"); bk=$(jq -r '.label' <<<"$row"); post=$(jq -c '.post' <<<"$row")
       ts=$(now_ms); resp=$(dispatch_solve "e1b-$arm-$RANDOM-$i-$$" "$post" || true)
       cls=$(leaf_health_class "$resp"); echo "$cls" > "$lat_d/$i.class"
       if [ "$cls" = solved ]; then
         echo $(( $(now_ms) - ts )) > "$lat_d/$i.ms"
         append_prediction "$lat_d/$i.pred" "$id" "${SH_MODEL:-claude-haiku-4-5}" "$resp"
+        append_usage "$lat_d/$i.use" "$id" "$bk" "$resp"
       fi ) &
     pids="$pids $!"; i=$((i + 1))
     # cap offered concurrency at C
@@ -67,6 +69,7 @@ run_arm() {  # $1=arm label ; $2=cap ; echoes "resvSecPerLeaf p95Ms throughput p
   # shellcheck disable=SC2086
   wait $pids || true
   cat "$lat_d"/*.pred >> "$PRED" 2>/dev/null || true
+  cat "$lat_d"/*.use >> "$USAGE" 2>/dev/null || true
   wall=$(( $(now_ms) - t0 )); [ "$wall" -lt 1 ] && wall=1
   stop_sampler "$sampler"
   # Tally leaves by class (one .class per dispatch); done_n counts only solved (.ms) leaves.
@@ -94,6 +97,10 @@ run_arm() {  # $1=arm label ; $2=cap ; echoes "resvSecPerLeaf p95Ms throughput p
 }
 
 echo "--- E1 benefit: $NITEMS leaves, C=$C, dedicated(cap=1) vs shared@N($N) ---"
+# Real swebench solve leaves run minutes (>> default 300s); bump the ksvc request timeout once (both
+# arms' set_ksvc_env/set_scale preserve it) so long leaves are not killed. Needs cluster Knative
+# max-revision-timeout-seconds >= this. Reset to 300 by the EXIT trap (restore_ksvc_env).
+set_ksvc_timeout "${SWEBENCH_LEAF_TIMEOUT:-1800}"
 read -r ded_r ded_p ded_t ded_peak d_sv d_fl d_sa d_tr <<<"$(run_arm dedicated 1)"
 read -r shr_r shr_p shr_t shr_peak s_sv s_fl s_sa s_tr <<<"$(run_arm shared "$N")"
 H_SOLVED=$((H_SOLVED + ${d_sv:-0} + ${s_sv:-0})); H_FAILED=$((H_FAILED + ${d_fl:-0} + ${s_fl:-0}))

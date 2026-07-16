@@ -57,6 +57,12 @@ class SyntheticProvider implements WorkloadProvider {
   }
 }
 
+// Repos whose per-leaf setup (venv + editable `pip install -e` / pytest collection at base_commit)
+// fails on the baked swebench image — C-ext / build-heavy repos (verified live: matplotlib fails
+// setup in ~19s; sklearn/numpy build likewise). A curve representative must actually solve setup, so
+// representative() skips these. sweepItem() already avoids matplotlib by ranking on test_runtime_ms.
+const SETUP_UNRELIABLE_REPOS = new Set(["matplotlib/matplotlib", "scikit-learn/scikit-learn", "numpy/numpy"]);
+
 class SwebenchProvider implements WorkloadProvider {
   readonly name = "swebench" as const;
   constructor(private readonly deck: Deck) {}
@@ -79,15 +85,17 @@ class SwebenchProvider implements WorkloadProvider {
       },
     };
   }
-  // Returns byBucket(bucket)[0] but throws a helpful error instead of letting toItem(undefined) blow up
-  // on an empty bucket.
+  // The bucket's representative for the N-vs-workload curve: the lexicographically smallest instance
+  // whose repo is NOT setup-unreliable (so the curve point is an actual solve, not a setup failure
+  // that the health tally would exclude). Falls back to [0] if every instance in the bucket is
+  // denylisted. Throws a helpful error on an empty bucket instead of letting toItem(undefined) blow up.
   private representative(bucket: string): DeckInstance {
-    const inst = this.byBucket(bucket)[0];
-    if (!inst) throw new Error(`swebench deck has no instances in bucket: ${bucket}`);
-    return inst;
+    const all = this.byBucket(bucket);
+    if (all.length === 0) throw new Error(`swebench deck has no instances in bucket: ${bucket}`);
+    return all.find((i) => !SETUP_UNRELIABLE_REPOS.has(i.repo)) ?? all[0];
   }
   curveItems(): WorkItem[] {
-    // One representative per bucket: the lexicographically smallest instance_id (deterministic).
+    // One representative per bucket: lexicographically smallest setup-reliable instance (deterministic).
     return BUCKETS.map((b) => this.toItem(this.representative(b)));
   }
   sweepItem(): WorkItem {

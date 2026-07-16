@@ -82,11 +82,14 @@ export function isSwebenchEnvelope(env: { kind?: string; env_key?: string }): bo
   return env.kind === "solve" && typeof env.env_key === "string" && env.env_key.length > 0;
 }
 
+// Cumulative token usage for a solve leaf (summed across all agent turns), for run cost pricing.
+export type LeafUsage = { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+
 export type LeafResult =
   | { status: "done"; verdict: Verdict }
   | { status: "paused"; gateId: number; gate: { summary: string; proposed_action: string } }
   | { status: "aborted" }
-  | { status: "solved"; patch: string }
+  | { status: "solved"; patch: string; usage?: LeafUsage }
   | { status: "failed"; reason: "no_verdict" | "invalid_verdict" | "bad_inputs" | "error" | "saturated"; message?: string };
 
 export function buildLeafPrompt(item: LeafItem, workspaceRef?: string): string {
@@ -149,7 +152,7 @@ export type ProduceVerdict = (
   capture: LeafCapture,
 ) => Promise<void>;
 
-export type SolveCapture = { patch?: string };
+export type SolveCapture = { patch?: string; usage?: LeafUsage };
 export type ProduceSolve = (
   env: LeafEnvelope,
   config: TurnConfig | undefined,
@@ -218,7 +221,7 @@ export async function runSolveLeaf(
     if (err instanceof SandboxPoolSaturatedError) return { status: "failed", reason: "saturated", message: err.message };
     return { status: "failed", reason: "error", message: err instanceof Error ? err.message : String(err) };
   }
-  return { status: "solved", patch: capture.patch ?? "" };
+  return { status: "solved", patch: capture.patch ?? "", usage: capture.usage };
 }
 
 // Real solve runner: lease a sandbox, converge the per-leaf worktree, run the agent with ONLY the
@@ -299,6 +302,12 @@ export const realProduceSolve: ProduceSolve = async (env, config, capture) => {
         ? buildSwebenchSolvePrompt(env.problemStatement!, workspaceRef, `${swebenchVenvDir(sid)}/bin/python`)
         : buildSolvePrompt(env.problemStatement!, workspaceRef);
       await session.prompt(prompt);
+      // Per-leaf token usage (cumulative across all solve turns) for run cost pricing. Best-effort:
+      // never let a stats hiccup fail an otherwise-solved leaf.
+      try {
+        const st = session.getSessionStats();
+        capture.usage = { input: st.tokens.input, output: st.tokens.output, cacheRead: st.tokens.cacheRead, cacheWrite: st.tokens.cacheWrite, total: st.tokens.total };
+      } catch { /* usage is best-effort */ }
       capture.patch = swebench ? await captureSwebenchDiff(transport, sid) : await captureWorkspaceDiff(transport, sid);
     } finally {
       await backend.flush();

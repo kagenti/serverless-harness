@@ -38,6 +38,7 @@ VARIANTS=("L0:small.py:password" "L1:medium.py:eval(" "L2:large.py:eval(")
 WORKLOAD="${WORKLOAD:-synthetic}"
 PROVIDER_DECK="${DECK:-$(cd ../.. && pwd)/experiments/swebench/deck.json}"  # CWD is the script dir (cd above); mirror e1-benefit.sh
 PREDICTIONS="${PREDICTIONS:-${LOG_DIR:-/tmp/kagenti/planC}/predictions.jsonl}"
+USAGE="${USAGE:-${LOG_DIR:-/tmp/kagenti/planC}/usage.jsonl}"  # per-leaf token usage for cost pricing
 # Health tally (spec §8): count leaves by outcome so broken leaves are excluded from the duty/knee
 # metrics AND surfaced, not silently folded in. swebench-only; synthetic path leaves these at 0.
 H_SOLVED=0; H_FAILED=0; H_SATURATED=0; H_TRANSPORT=0
@@ -104,8 +105,11 @@ if [ "$WORKLOAD" = "synthetic" ]; then
 else
   # Repos are baked into the swebench image; no gitd wait needed. Route into the swebench sandbox
   # pool (by label, not a single-pod pin) and warm exactly one harness pod, same as synthetic C=1.
-  mkdir -p "$(dirname "$PREDICTIONS")"; : >"$PREDICTIONS"
+  mkdir -p "$(dirname "$PREDICTIONS")"; : >"$PREDICTIONS"; mkdir -p "$(dirname "$USAGE")"; : >"$USAGE"
   set_ksvc_env KAGENTI_SANDBOX_POOL_SELECTOR=sh.kagenti.io/sandbox-pool=swebench KAGENTI_EXEC_TIMING=1 KAGENTI_SANDBOX_CAP=1000
+  # Real swebench solve leaves run minutes (>> default 300s); bump the ksvc request timeout so long
+  # leaves are not killed mid-run. Needs cluster Knative max-revision-timeout-seconds >= this.
+  set_ksvc_timeout "${SWEBENCH_LEAF_TIMEOUT:-1800}"
   set_scale 1 1
 
   harness_pod() {
@@ -144,6 +148,7 @@ else
       H_SOLVED=$((H_SOLVED + 1))
       after_ms="$(sum_exec_ms_all)"; after_cnt="$(count_exec_lines_all)"; after_setup="$(sum_setup_ms_all)"
       append_prediction "$PREDICTIONS" "$id" "${SH_MODEL:-claude-haiku-4-5}" "$resp"
+      append_usage "$USAGE" "$id" "$label" "$resp"
       # solve-duty = total exec delta − setup delta (spec §4).
       solve_ms=$(( (after_ms - before_ms) - (after_setup - before_setup) )); [ "$solve_ms" -lt 0 ] && solve_ms=0
       ms_s="$ms_s$solve_ms
