@@ -295,3 +295,11 @@ describe("runLeaf — solve routing", () => {
     expect((r as { reason?: string }).reason).toBe("saturated");
   });
 });
+
+it("solve without env_key uses convergeWorkspace, not swebench setup", async () => {
+  // produceSolve is injectable; assert the swebench branch is NOT taken when env_key is absent.
+  // (Structural: import isSwebenchEnvelope and check the predicate.)
+  const { isSwebenchEnvelope } = await import("../src/run-leaf.js");
+  expect(isSwebenchEnvelope({ kind: "solve", problemStatement: "x", repoUrl: "git://h/r.git", ref: "main" })).toBe(false);
+  expect(isSwebenchEnvelope({ kind: "solve", problemStatement: "x", repoUrl: "/repos/a/b.git", ref: "c", env_key: "k:latest" })).toBe(true);
+});

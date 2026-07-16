@@ -10,6 +10,7 @@ import { RedisSessionBackend } from "@sh/session-backend";
 import { k8sSandboxExtension, KubectlTransport } from "@sh/k8s-sandbox";
 import { selectPoolSandbox, SandboxPoolSaturatedError } from "./select-sandbox.js";
 import { convergeWorkspace, cleanupWorkspace, captureWorkspaceDiff } from "./converge.js";
+import { setupSwebenchWorkspace, captureSwebenchDiff, cleanupSwebench, swebenchVenvDir, buildSwebenchSolvePrompt } from "./swebench-setup.js";
 import { resolveModelSelection, requireModel, applyModelGateway, type TurnConfig } from "./run-turn.js";
 import { BufferedRedisBackend } from "./buffered-redis-backend.js";
 import { flushExtension } from "./flush-extension.js";
@@ -68,11 +69,17 @@ export interface LeafEnvelope {
   tenant?: string;            // namespaces the session id
   kind?: "converge" | "solve"; // absent/"converge" => existing behavior; "solve" => runSolveLeaf
   problemStatement?: string;   // required when kind === "solve": the task the agent must implement
+  env_key?: string;            // swebench solve: triggers the contained swebench-setup path (Plan C)
 }
 
 /** The Pi/Redis session id for a leaf: tenant-prefixed (if any), then sanitized. */
 export function leafSessionId(env: { sessionId: string; tenant?: string }): string {
   return toSessionId(env.tenant ? `${env.tenant}/${env.sessionId}` : env.sessionId);
+}
+
+/** True when a solve envelope carries a non-empty env_key, triggering the contained swebench path. */
+export function isSwebenchEnvelope(env: { kind?: string; env_key?: string }): boolean {
+  return env.kind === "solve" && typeof env.env_key === "string" && env.env_key.length > 0;
 }
 
 export type LeafResult =
@@ -246,7 +253,20 @@ export const realProduceSolve: ProduceSolve = async (env, config, capture) => {
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   try {
     const transport = KubectlTransport(selected.config);
-    const workspaceRef = await convergeWorkspace(transport, env.repoUrl!, env.ref!, sid);
+    const swebench = isSwebenchEnvelope(env);
+    let workspaceRef: string;
+    if (swebench) {
+      const t0 = Date.now();
+      workspaceRef = await setupSwebenchWorkspace(transport, {
+        repoUrl: env.repoUrl!, baseCommit: env.ref!, envKey: env.env_key!, runId: sid,
+      });
+      // Separate setup-duty from solve-duty (spec §4): the driver reads this line for setup ms,
+      // and solve-duty = total exec-timing delta − setupMs.
+      const safeSid = sid.replace(/[\r\n]+/g, "");
+      console.error(`[swebench-phase] sid=${safeSid} setupMs=${Date.now() - t0}`);
+    } else {
+      workspaceRef = await convergeWorkspace(transport, env.repoUrl!, env.ref!, sid);
+    }
     // A solve leaf edits files in its worktree; point the agent's sandbox cwd at that worktree so the
     // model's edits (relative or absolute) land where captureWorkspaceDiff reads them.
     const agentConfig = { ...selected.config, podCwd: workspaceRef };
@@ -275,14 +295,18 @@ export const realProduceSolve: ProduceSolve = async (env, config, capture) => {
     });
 
     try {
-      await session.prompt(buildSolvePrompt(env.problemStatement!, workspaceRef));
-      capture.patch = await captureWorkspaceDiff(transport, sid);
+      const prompt = swebench
+        ? buildSwebenchSolvePrompt(env.problemStatement!, workspaceRef, `${swebenchVenvDir(sid)}/bin/python`)
+        : buildSolvePrompt(env.problemStatement!, workspaceRef);
+      await session.prompt(prompt);
+      capture.patch = swebench ? await captureSwebenchDiff(transport, sid) : await captureWorkspaceDiff(transport, sid);
     } finally {
       await backend.flush();
     }
   } finally {
     if (heartbeat) clearInterval(heartbeat);
-    await cleanupWorkspace(KubectlTransport(selected.config), sid);
+    if (isSwebenchEnvelope(env)) await cleanupSwebench(KubectlTransport(selected.config), sid);
+    else await cleanupWorkspace(KubectlTransport(selected.config), sid);
     await selected.release();
   }
 };
