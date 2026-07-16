@@ -157,14 +157,44 @@ dispatch_converge() {
     -H "Content-Type: application/json" -d "$body" "$BASE/runs"
 }
 
+# Recover a completed leaf's result (incl. the solve `patch`) by polling GET /runs/status until a
+# terminal status. The harness persists leaf:result:<sid> to Redis BEFORE it writes the POST /runs
+# HTTP body (packages/knative-server/src/server.ts writeResult, awaited pre-response), so a lost 200
+# body does NOT lose the result — this reads it back without re-running the (expensive) solve.
+# Echoes the terminal record JSON; empty on timeout. Usage: poll_leaf_result <sessionId> [timeoutSec]
+# NOTE: default timeout is 900s to match dispatch_solve's sync --max-time, since real SWE-bench solve
+# leaves run for minutes (T6 follow-up measured ~8 min for a light instance). For the authoritative
+# run the harness ksvc timeoutSeconds must also exceed the max leaf runtime, else the handler is
+# killed before it persists leaf:result and no polling can recover it.
+poll_leaf_result() {
+  local sid="$1" timeout="${2:-900}" waited=0 resp st enc
+  enc=$(jq -rn --arg s "$sid" '$s|@uri')
+  while [ "$waited" -lt "$timeout" ]; do
+    # shellcheck disable=SC2086  # CURL_OPTS is intentionally word-split
+    resp=$(curl -s $CURL_OPTS --max-time 15 ${CURL_HDR[@]+"${CURL_HDR[@]}"} "$BASE/runs/status?sessionId=$enc" || true)
+    st=$(jq -r '.status // empty' <<<"$resp" 2>/dev/null || true)
+    case "$st" in solved|failed|done|aborted) echo "$resp"; return 0 ;; esac
+    sleep 3; waited=$((waited + 3))
+  done
+  echo "$resp"; return 1
+}
+
 # POST /runs with a provider-emitted solve `post` body (Plan C). Merges sessionId + model.
-# Usage: dispatch_solve <sessionId> <postJson> [model]   (echoes the raw JSON response)
+# Echoes the raw JSON response; on transient transport loss of the sync body (empty/non-JSON, no
+# .status) it falls back to poll_leaf_result so the result is recovered from Redis, NOT re-run.
+# Usage: dispatch_solve <sessionId> <postJson> [model]
 dispatch_solve() {
-  local sid="$1" post="$2" model="${3:-${SH_MODEL:-claude-haiku-4-5}}" body
+  local sid="$1" post="$2" model="${3:-${SH_MODEL:-claude-haiku-4-5}}" body resp st
   body=$(jq -c --arg s "$sid" --arg m "$model" '. + {sessionId:$s, model:$m}' <<<"$post")
   # shellcheck disable=SC2086  # CURL_OPTS is intentionally word-split
-  curl -s $CURL_OPTS --max-time 900 ${CURL_HDR[@]+"${CURL_HDR[@]}"} \
-    -H "Content-Type: application/json" -d "$body" "$BASE/runs"
+  resp=$(curl -s $CURL_OPTS --max-time 900 ${CURL_HDR[@]+"${CURL_HDR[@]}"} \
+    -H "Content-Type: application/json" -d "$body" "$BASE/runs" || true)
+  st=$(jq -r '.status // empty' <<<"$resp" 2>/dev/null || true)
+  # A saturated verdict is HTTP 503 with a body ({status:failed,reason:saturated}) → .status present →
+  # fast path (it is intentionally not persisted, so must not be treated as recoverable). Only an
+  # empty/garbled body (transport loss) has no .status → recover the persisted result.
+  if [ -n "$st" ]; then echo "$resp"; return 0; fi
+  poll_leaf_result "$sid"
 }
 
 # Append one official-shape SWE-bench prediction line to a per-run predictions.jsonl.
@@ -174,6 +204,23 @@ append_prediction() {
   patch=$(jq -r '.patch // ""' <<<"$resp" 2>/dev/null || echo "")
   jq -nc --arg i "$id" --arg m "$model" --arg p "$patch" \
     '{instance_id:$i, model_name_or_path:$m, model_patch:$p}' >>"$file"
+}
+
+# Classify a dispatch response into one health bucket for the experiment health tally (spec §8):
+#   solved     — completed leaf (include in duty/throughput/reservation metrics + predictions)
+#   saturated  — sandbox-cap rejection (HTTP 503 {status:failed,reason:saturated}); exclude + count
+#   failed     — any other failure verdict (setup_failed/no_verdict/error); exclude + count
+#   transport  — empty/garbled body with no .status (transient transport loss); exclude + count
+# Usage: leaf_health_class <runs_response_json>
+leaf_health_class() {
+  local resp="$1" st rs
+  st=$(jq -r '.status // empty' <<<"$resp" 2>/dev/null || true)
+  case "$st" in
+    solved|done) echo solved ;;
+    failed) rs=$(jq -r '.reason // "error"' <<<"$resp" 2>/dev/null || true)
+            [ "$rs" = saturated ] && echo saturated || echo failed ;;
+    *)      echo transport ;;
+  esac
 }
 
 # Sum ms= from [exec-timing] lines in a harness pod's log (needs KAGENTI_EXEC_TIMING=1).

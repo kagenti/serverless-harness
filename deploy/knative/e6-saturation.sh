@@ -38,6 +38,9 @@ VARIANTS=("L0:small.py:password" "L1:medium.py:eval(" "L2:large.py:eval(")
 WORKLOAD="${WORKLOAD:-synthetic}"
 PROVIDER_DECK="${DECK:-$(cd ../.. && pwd)/experiments/swebench/deck.json}"  # CWD is the script dir (cd above); mirror e1-benefit.sh
 PREDICTIONS="${PREDICTIONS:-${LOG_DIR:-/tmp/kagenti/planC}/predictions.jsonl}"
+# Health tally (spec §8): count leaves by outcome so broken leaves are excluded from the duty/knee
+# metrics AND surfaced, not silently folded in. swebench-only; synthetic path leaves these at 0.
+H_SOLVED=0; H_FAILED=0; H_SATURATED=0; H_TRANSPORT=0
 
 echo "--- E6: workload curve + un-capped sweep (samples=$SAMPLES pin=$PIN sweepMax=$SWEEP_MAX) ---"
 ensure_port_forward >/dev/null || true
@@ -127,6 +130,18 @@ else
       t0=$(now_ms)
       resp=$(dispatch_solve "e6-$label-$RANDOM-$$" "$post" || true)
       wall=$(( $(now_ms) - t0 ))
+      # Status gate (spec §8): only a solved leaf is a duty sample AND a valid prediction; broken
+      # leaves (saturated/failed/transport-lost) are excluded from the curve and counted in the tally.
+      cls=$(leaf_health_class "$resp")
+      if [ "$cls" != solved ]; then
+        case "$cls" in
+          saturated) H_SATURATED=$((H_SATURATED + 1)) ;;
+          transport) H_TRANSPORT=$((H_TRANSPORT + 1)) ;;
+          *)         H_FAILED=$((H_FAILED + 1)) ;;
+        esac
+        continue
+      fi
+      H_SOLVED=$((H_SOLVED + 1))
       after_ms="$(sum_exec_ms_all)"; after_cnt="$(count_exec_lines_all)"; after_setup="$(sum_setup_ms_all)"
       append_prediction "$PREDICTIONS" "$id" "${SH_MODEL:-claude-haiku-4-5}" "$resp"
       # solve-duty = total exec delta − setup delta (spec §4).
@@ -136,6 +151,11 @@ else
 "; wall_s="$wall_s$wall
 "
     done
+    # If every sample for this bucket was excluded, drop it from the curve (already tallied).
+    if ! printf '%s' "$ms_s" | grep -q '[0-9]'; then
+      echo "  $label instance=$id SKIPPED (no solved samples)"
+      continue
+    fi
     medMs=$(printf '%s' "$ms_s" | grep -v '^$' | median); [ "$medMs" -lt 1 ] && medMs=1
     medCnt=$(printf '%s' "$cnt_s" | grep -v '^$' | median)
     medWall=$(printf '%s' "$wall_s" | grep -v '^$' | median); [ "$medWall" -lt 1 ] && medWall=1
@@ -194,19 +214,36 @@ else
   SWEEP_DESC="heavy (swebench)"
   set_scale 1 "$SWEEP_MAX"
 
-  run_rung() {  # $1=c ; echoes "<medianThroughput> <medianP95>"
-    local c="$1" thr_s="" p95_s="" i pids d t0 wall
+  run_rung() {  # $1=c ; echoes "<medThr> <medP95> <solved> <failed> <saturated> <transport>"
+    local c="$1" thr_s="" p95_s="" i pids d t0 wall sv cf
+    local rc_solved=0 rc_failed=0 rc_saturated=0 rc_transport=0
     for _ in $(seq 1 "$SAMPLES"); do
       d="$(mktemp -d)"; pids=""; i=0; t0=$(now_ms)
       while [ "$i" -lt "$c" ]; do
-        ( ts=$(now_ms); dispatch_solve "e6sw-$c-$RANDOM-$i-$$" "$SWEEP_POST" >/dev/null 2>&1 || true
-          echo $(( $(now_ms) - ts )) > "$d/$i.ms" ) & pids="$pids $!"
+        # Capture the response (not /dev/null) to classify it; write .class always and .ms only when
+        # solved. Use if/fi (not `&&`) as the subshell's last statement so it always exits 0 — e6's
+        # `wait $pids` below has no `|| true`, so a non-zero subshell would abort under set -e.
+        ( ts=$(now_ms); resp=$(dispatch_solve "e6sw-$c-$RANDOM-$i-$$" "$SWEEP_POST" || true)
+          cls=$(leaf_health_class "$resp"); echo "$cls" > "$d/$i.class"
+          if [ "$cls" = solved ]; then echo $(( $(now_ms) - ts )) > "$d/$i.ms"; fi ) & pids="$pids $!"
         i=$((i + 1))
       done
       # shellcheck disable=SC2086
       wait $pids
       wall=$(( $(now_ms) - t0 )); [ "$wall" -lt 1 ] && wall=1
-      thr_s="$thr_s$(awk -v c="$c" -v w="$wall" 'BEGIN{printf "%.3f", c/(w/1000.0)}')
+      for cf in "$d"/*.class; do
+        [ -e "$cf" ] || continue
+        case "$(cat "$cf")" in
+          solved)    rc_solved=$((rc_solved + 1)) ;;
+          saturated) rc_saturated=$((rc_saturated + 1)) ;;
+          transport) rc_transport=$((rc_transport + 1)) ;;
+          *)         rc_failed=$((rc_failed + 1)) ;;
+        esac
+      done
+      # Throughput counts only SOLVED leaves — a saturated/failed leaf returns near-instantly and
+      # would otherwise inflate throughput (and deflate p95), corrupting the knee (spec §8).
+      sv=$(find "$d" -name '*.ms' | wc -l | tr -d ' ')
+      thr_s="$thr_s$(awk -v n="$sv" -v w="$wall" 'BEGIN{printf "%.3f", n/(w/1000.0)}')
 "
       if ls "$d"/*.ms >/dev/null 2>&1; then
         p95_s="$p95_s$(cat "$d"/*.ms | sort -n | awk '{a[NR]=$1} END{printf "%d", a[int(NR*0.95+0.999)]?a[int(NR*0.95+0.999)]:a[NR]}')
@@ -219,13 +256,17 @@ else
     local mthr mp95
     mthr=$(printf '%s' "$thr_s" | grep -v '^$' | sort -n | awk '{a[NR]=$1} END{print (NR%2)?a[(NR+1)/2]:a[NR/2]}')
     mp95=$(printf '%s' "$p95_s" | grep -v '^$' | median)
-    echo "$mthr $mp95"
+    echo "$mthr $mp95 $rc_solved $rc_failed $rc_saturated $rc_transport"
   }
 fi
 
 POINTS="[]"
 for c in $LADDER; do
-  read -r thr p95 <<<"$(run_rung "$c")"
+  # swebench run_rung emits 6 fields (…solved failed saturated transport); synthetic emits 2, so the
+  # trailing counts are empty and default to 0 via ${x:-0} (keeps the synthetic path unchanged).
+  read -r thr p95 rsv rfl rst rtr <<<"$(run_rung "$c")"
+  H_SOLVED=$((H_SOLVED + ${rsv:-0})); H_FAILED=$((H_FAILED + ${rfl:-0}))
+  H_SATURATED=$((H_SATURATED + ${rst:-0})); H_TRANSPORT=$((H_TRANSPORT + ${rtr:-0}))
   echo "  sweep c=$c throughput=$thr p95Ms=$p95"
   POINTS=$(jq -c --argjson c "$c" --argjson t "$thr" --argjson p "$p95" \
     '. + [{c:$c, throughput:$t, p95Ms:$p}]' <<<"$POINTS")
@@ -241,13 +282,16 @@ KF=$(npx tsx -e '
 read -r KNEE FLOOR <<<"$KF"
 echo "  knee(CAP floor)=$KNEE floorPass=$FLOOR maxScale=$SWEEP_MAX"
 
-echo "E6_RESULT ratioCurve=$CURVE knee=$KNEE floorPass=$FLOOR maxScale=$SWEEP_MAX pass=$([ "$FAIL" = 0 ] && echo yes || echo no)"
+H_TOTAL=$((H_SOLVED + H_FAILED + H_SATURATED + H_TRANSPORT))
+HEALTH="health=$H_SOLVED/$H_TOTAL failed=$H_FAILED saturated=$H_SATURATED transport=$H_TRANSPORT"
+echo "E6_RESULT ratioCurve=$CURVE knee=$KNEE floorPass=$FLOOR maxScale=$SWEEP_MAX $HEALTH pass=$([ "$FAIL" = 0 ] && echo yes || echo no)"
 {
   echo ""
   echo "### E6 run $(hostname 2>/dev/null || echo host)"
   echo "- N-vs-workload curve (C=1, samples=$SAMPLES): $CURVE"
   echo "- sweep points ($SWEEP_DESC, max-scale=$SWEEP_MAX): $POINTS"
   echo "- knee floor: $KNEE (floorPass=$FLOOR)"
+  echo "- leaf health (excluded from metrics): $HEALTH"
 } >> EXPERIMENTS.md
 
 [ "$FAIL" = 0 ] || exit 1
