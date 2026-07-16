@@ -22,13 +22,12 @@ export function buildSwebenchSetupScript(a: { repoUrl: string; baseCommit: strin
   const ENV_PY = `/opt/miniconda3/envs/${envDirFromKey(a.envKey)}/bin/python`;
   return [
     `set -eu`,
-    `CO="${CO}"`,
-    `VENV="${VENV}"`,
+    `CO=${sq(CO)}`,
+    `VENV=${sq(VENV)}`,
     `rm -rf "$CO" "$VENV"`,
-    `git clone --no-hardlinks "${a.repoUrl}" "$CO" >&2`,
-    `git -C "$CO" checkout -q "${a.baseCommit}"`,
-    `"${ENV_PY}" -m venv --system-site-packages "$VENV" >&2`,
-    `# pip install -e "$CO" (editable install; retries without --no-build-isolation on failure)`,
+    `git clone --no-hardlinks ${sq(a.repoUrl)} "$CO" >&2`,
+    `git -C "$CO" checkout -q ${sq(a.baseCommit)}`,
+    `${sq(ENV_PY)} -m venv --system-site-packages "$VENV" >&2`,
     `HOME=/workspace "$VENV/bin/pip" install -e "$CO" --no-build-isolation --no-cache-dir >&2 \\`,
     `  || HOME=/workspace "$VENV/bin/pip" install -e "$CO" --no-cache-dir >&2`,
     `printf '%s' "$CO"`,

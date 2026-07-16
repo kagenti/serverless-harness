@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 export interface DeckInstance {
   instance_id: string; repo: string; base_commit: string; env_key: string;
   problem_statement: string; weight_bucket: "light" | "medium" | "heavy" | null;
+  test_runtime_ms: number | null;
 }
 export interface Deck { deckHash: string; seed: number; instances: DeckInstance[] }
 
@@ -78,14 +79,30 @@ class SwebenchProvider implements WorkloadProvider {
       },
     };
   }
+  // Returns byBucket(bucket)[0] but throws a helpful error instead of letting toItem(undefined) blow up
+  // on an empty bucket.
+  private representative(bucket: string): DeckInstance {
+    const inst = this.byBucket(bucket)[0];
+    if (!inst) throw new Error(`swebench deck has no instances in bucket: ${bucket}`);
+    return inst;
+  }
   curveItems(): WorkItem[] {
     // One representative per bucket: the lexicographically smallest instance_id (deterministic).
-    return BUCKETS.map((b) => this.toItem(this.byBucket(b)[0]));
+    return BUCKETS.map((b) => this.toItem(this.representative(b)));
   }
   sweepItem(): WorkItem {
-    // The heaviest single instance = largest test_runtime_ms in the heavy bucket, id-tiebroken.
+    // The heaviest single instance = largest test_runtime_ms in the heavy bucket (null treated as -1),
+    // tie-broken by instance_id ascending for determinism.
+    this.representative("heavy"); // throws a helpful error if the heavy bucket is empty
     const heavy = this.byBucket("heavy");
-    return this.toItem(heavy[0]);
+    const best = heavy.reduce((a, b) => {
+      const ar = a.test_runtime_ms ?? -1;
+      const br = b.test_runtime_ms ?? -1;
+      if (br > ar) return b;
+      if (br < ar) return a;
+      return b.instance_id < a.instance_id ? b : a;
+    });
+    return this.toItem(best);
   }
   sliceItems(opts: SliceOpts): WorkItem[] {
     const buckets = opts.buckets ?? [...BUCKETS];

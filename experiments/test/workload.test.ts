@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { fileURLToPath } from "node:url";
-import { getWorkloadProvider, loadDeck } from "../src/workload.js";
+import { getWorkloadProvider } from "../src/workload.js";
 
 const deckPath = fileURLToPath(new URL("../swebench/deck.json", import.meta.url));
 

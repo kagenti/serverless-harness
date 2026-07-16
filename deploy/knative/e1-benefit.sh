@@ -38,7 +38,7 @@ SWEEP_MAX_SHARED="${E1B_MAX_SCALE:-20}"
 run_arm() {  # $1=arm label ; $2=cap ; echoes "resvSecPerLeaf p95Ms throughput peakPods"
   local arm="$1" cap="$2" f lat_d done_n=0 pids="" t0 wall p95 thr resv peak
   set_ksvc_env KAGENTI_SANDBOX_POOL_SELECTOR=sh.kagenti.io/sandbox-pool=swebench KAGENTI_SANDBOX_CAP="$cap"
-  set_scale 1 "$SWEEP_MAX_SHARED"   # enough harness pods to offer C; SWEEP_MAX_SHARED default below
+  set_scale 1 "$SWEEP_MAX_SHARED"   # enough harness pods to offer C (SWEEP_MAX_SHARED set above)
   : >"$PRED"
   f=$(mktemp); lat_d=$(mktemp -d)
   local sampler; sampler=$(start_pool_lease_sampler "$f")
@@ -50,13 +50,15 @@ run_arm() {  # $1=arm label ; $2=cap ; echoes "resvSecPerLeaf p95Ms throughput p
     ( id=$(jq -r '.instanceId' <<<"$row"); post=$(jq -c '.post' <<<"$row")
       ts=$(now_ms); resp=$(dispatch_solve "e1b-$arm-$RANDOM-$i-$$" "$post" || true)
       echo $(( $(now_ms) - ts )) > "$lat_d/$i.ms"
-      append_prediction "$PRED" "$id" "${SH_MODEL:-claude-haiku-4-5}" "$resp" ) &
+      append_prediction "$lat_d/$i.pred" "$id" "${SH_MODEL:-claude-haiku-4-5}" "$resp" ) &
     pids="$pids $!"; i=$((i + 1))
     # cap offered concurrency at C
-    while [ "$(jobs -rp | wc -l)" -ge "$C" ]; do sleep 0.5; done
+    # -1 discounts the lease sampler background job so the cap counts only leaf dispatches.
+    while [ "$(( $(jobs -rp | wc -l) - 1 ))" -ge "$C" ]; do sleep 0.5; done
   done < <(jq -c '.[]' <<<"$ITEMS")
   # shellcheck disable=SC2086
   wait $pids || true
+  cat "$lat_d"/*.pred >> "$PRED" 2>/dev/null || true
   wall=$(( $(now_ms) - t0 )); [ "$wall" -lt 1 ] && wall=1
   stop_sampler "$sampler"
   resv=$(pool_lease_seconds_from "$f")

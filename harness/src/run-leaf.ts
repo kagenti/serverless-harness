@@ -262,7 +262,8 @@ export const realProduceSolve: ProduceSolve = async (env, config, capture) => {
       });
       // Separate setup-duty from solve-duty (spec §4): the driver reads this line for setup ms,
       // and solve-duty = total exec-timing delta − setupMs.
-      console.error(`[swebench-phase] sid=${sid} setupMs=${Date.now() - t0}`);
+      const safeSid = sid.replace(/[\r\n]+/g, "");
+      console.error(`[swebench-phase] sid=${safeSid} setupMs=${Date.now() - t0}`);
     } else {
       workspaceRef = await convergeWorkspace(transport, env.repoUrl!, env.ref!, sid);
     }

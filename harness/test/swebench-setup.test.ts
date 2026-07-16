@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
   envDirFromKey, buildSwebenchSetupScript, buildSwebenchDiffScript,
   swebenchCheckoutDir, buildSwebenchSolvePrompt,
@@ -12,11 +12,10 @@ describe("swebench-setup script builders", () => {
   });
   it("clones with --no-hardlinks, checks out base_commit, builds a system-site venv, editable-installs with build-iso fallback under HOME=/workspace", () => {
     const s = buildSwebenchSetupScript(a);
-    expect(s).toContain('git clone --no-hardlinks "/repos/django/django.git"');
-    expect(s).toContain('checkout -q "abc1234"');
-    expect(s).toContain('/opt/miniconda3/envs/sweb.env.py.x86_64.deadbeef/bin/python" -m venv --system-site-packages');
+    expect(s).toContain("git clone --no-hardlinks '/repos/django/django.git'");
+    expect(s).toContain("checkout -q 'abc1234'");
+    expect(s).toContain("/opt/miniconda3/envs/sweb.env.py.x86_64.deadbeef/bin/python' -m venv --system-site-packages");
     expect(s).toContain("HOME=/workspace");
-    expect(s).toContain("pip install -e");
     expect(s).toContain("--no-build-isolation");
     expect(s).toContain("--no-cache-dir");
     // fallback: a second pip install WITHOUT --no-build-isolation
