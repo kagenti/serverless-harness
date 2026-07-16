@@ -13,6 +13,7 @@ import { flushExtension } from "./flush-extension.js";
 import { k8sSandboxExtension, resolveSandboxConfig } from "@sh/k8s-sandbox";
 import { checkpointExtension } from "./checkpoint-extension.js";
 import { budgetVoterExtension, branchSpend } from "./budget-voter.js";
+import { toolChoiceExtension } from "./tool-choice-extension.js";
 
 export interface TurnConfig {
   redisUrl?: string;
@@ -40,12 +41,60 @@ export function resolveModelSelection(
 }
 
 /**
+ * Synthesize a model object for an endpoint that speaks the Anthropic Messages wire format
+ * but serves a model id NOT in pi-ai's built-in registry — e.g. an in-cluster vLLM/llm-d
+ * server whose /v1/messages is Anthropic-compatible but which requires its own served model
+ * name (meta-llama/Llama-3.1-8B-Instruct) verbatim in the request body.
+ *
+ * Opt-in via SH_MODEL_CUSTOM=1. SH_MODEL is used as-is (id + name), ANTHROPIC_BASE_URL is the
+ * endpoint. applyModelGateway() still layers Bearer auth + the gateway compat flags on top,
+ * so this only supplies the pieces requireModel() otherwise reads from the registry. The
+ * cost/context numbers are placeholders (self-hosted, not billed); contextWindow/maxTokens are
+ * conservative defaults — override via SH_MODEL_CONTEXT_WINDOW / SH_MODEL_MAX_TOKENS if needed.
+ */
+function synthesizeCustomModel(modelId: string, env: NodeJS.ProcessEnv) {
+  const baseUrl = env.ANTHROPIC_BASE_URL;
+  if (!baseUrl) {
+    throw new Error(
+      `SH_MODEL_CUSTOM=1 requires ANTHROPIC_BASE_URL (the Anthropic-compatible endpoint to send "${modelId}" to).`,
+    );
+  }
+  const contextWindow = Number(env.SH_MODEL_CONTEXT_WINDOW) || 131072;
+  const maxTokens = Number(env.SH_MODEL_MAX_TOKENS) || 8192;
+  return {
+    id: modelId,
+    name: modelId,
+    api: "anthropic-messages",
+    // provider MUST be "anthropic" (not a synthetic tag): pi resolves the request API key by
+    // provider name — authStorage.getApiKey(provider) maps "anthropic" -> ANTHROPIC_API_KEY
+    // (which applyModelGateway seeds from the auth token), whereas an unknown provider like
+    // "custom" has no env-key mapping and fails with `No API key found for "custom"`. Request
+    // routing is by baseUrl + api, not provider, so tagging it "anthropic" sends traffic to the
+    // custom baseUrl while satisfying the key lookup. Overridable via SH_MODEL_PROVIDER.
+    provider: (env.SH_MODEL_PROVIDER ?? "anthropic") as never,
+    baseUrl,
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow,
+    maxTokens,
+  } as ReturnType<typeof getModel> & object;
+}
+
+/**
  * Resolve a model from the pi-ai registry, throwing a clear error when the id is unknown.
  * getModel() returns undefined for an unknown provider/model (e.g. the dotted
  * "claude-sonnet-4.6" is a github-copilot key, not an anthropic one) — without this guard
  * the caller crashes later on `baseModel.headers`. Returns the model object on success.
+ *
+ * SH_MODEL_CUSTOM=1 bypasses the registry entirely and synthesizes an Anthropic-compatible
+ * model from SH_MODEL + ANTHROPIC_BASE_URL — for self-hosted endpoints (vLLM/llm-d) whose
+ * served model id is not a known Anthropic id. See synthesizeCustomModel().
  */
 export function requireModel(provider: string, modelId: string) {
+  if (process.env.SH_MODEL_CUSTOM === "1") {
+    return synthesizeCustomModel(modelId, process.env);
+  }
   const model = getModel(provider as never, modelId as never);
   if (model) return model;
   const providers = getProviders() as string[];
@@ -147,10 +196,17 @@ export async function runTurn(
   const budgetLimit = Number(process.env.SH_BUDGET_TOKENS);
   const budgetMargin = Number(process.env.SH_BUDGET_MARGIN);
   const sandboxConfig = await resolveSandboxConfig(process.env, cwd);
+  // Surface whether sandbox routing actually resolved: a null config means tool calls run in
+  // the harness pod's own filesystem (local), not a sandbox pod — a common cause of "the file
+  // never appeared in the sandbox". Cheap one-line signal in container logs.
+  if (process.env.SH_MODEL_CUSTOM === "1") {
+    console.error(`[sandbox] resolved config: ${sandboxConfig ? "pod/pool" : "NULL (tools run LOCAL)"}`);
+  }
   const extensionFactories = [
     flushExtension(backend),
     k8sSandboxExtension({ config: sandboxConfig }),
     checkpointExtension(store, sessionManager),
+    toolChoiceExtension(),
   ];
   if (Number.isFinite(budgetLimit) && budgetLimit > 0) {
     // session_start is not emitted in the headless path, so compute the pre-turn baseline
