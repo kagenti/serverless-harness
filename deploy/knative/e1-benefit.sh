@@ -17,6 +17,9 @@ N="${E1B_SHARED_CAP:-8}"          # shared@N cap (default = a mid knee; override
 PER_BUCKET="${E1B_PER_BUCKET:-2}"
 SEED="${E1B_SEED:-7}"
 DEGRADE_X="${E1B_DEGRADE_X:-2}"
+# Driver-shell selector (mirrors measure-swebench-runtimes.sh): pool_pod_counts (lib.sh) reads this
+# from the driver's own environment, not from the ksvc container env set below via set_ksvc_env.
+KAGENTI_SANDBOX_POOL_SELECTOR="${KAGENTI_SANDBOX_POOL_SELECTOR:-sh.kagenti.io/sandbox-pool=swebench}"
 DECK="${DECK:-$(cd ../.. && pwd)/experiments/swebench/deck.json}"
 PRED="${PREDICTIONS:-${LOG_DIR:-/tmp/kagenti/planC}/predictions-e1.jsonl}"
 mkdir -p "$(dirname "$PRED")"
