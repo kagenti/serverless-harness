@@ -119,13 +119,13 @@ else
     process.stdout.write(JSON.stringify(p.curveItems()));
   ')
   CURVE_IN="[]"
-  for row in $(jq -c '.[]' <<<"$CURVE_ITEMS"); do
+  while IFS= read -r row; do
     label=$(jq -r '.label' <<<"$row"); id=$(jq -r '.instanceId' <<<"$row"); post=$(jq -c '.post' <<<"$row")
     ms_s=""; cnt_s=""; wall_s=""
     for _ in $(seq 1 "$SAMPLES"); do
       before_ms="$(sum_exec_ms_all)"; before_cnt="$(count_exec_lines_all)"; before_setup="$(sum_setup_ms_all)"
       t0=$(now_ms)
-      resp=$(dispatch_solve "e6-$label-$RANDOM-$$" "$post")
+      resp=$(dispatch_solve "e6-$label-$RANDOM-$$" "$post" || true)
       wall=$(( $(now_ms) - t0 ))
       after_ms="$(sum_exec_ms_all)"; after_cnt="$(count_exec_lines_all)"; after_setup="$(sum_setup_ms_all)"
       append_prediction "$PREDICTIONS" "$id" "${SH_MODEL:-claude-haiku-4-5}" "$resp"
@@ -142,7 +142,7 @@ else
     echo "  $label instance=$id execCount=$medCnt solveMs=$medMs wallMs=$medWall"
     CURVE_IN=$(jq -c --arg l "$label" --argjson m "$medMs" --argjson c "$medCnt" --argjson w "$medWall" \
       '. + [{label:$l, execMs:$m, execCount:$c, wallMs:$w}]' <<<"$CURVE_IN")
-  done
+  done < <(jq -c '.[]' <<<"$CURVE_ITEMS")
 fi
 
 # shellcheck disable=SC2016  # single-quoted TypeScript literal, not bash expansion
