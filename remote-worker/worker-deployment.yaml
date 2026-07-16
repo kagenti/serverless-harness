@@ -1,0 +1,43 @@
+# In-cluster remote-worker Deployment (template — deploy-incluster.sh fills the
+# __PLACEHOLDERS__). Runs the worker as a pod so relay->worker execs stay inside
+# the cluster (no `oc port-forward` push latency). restricted-v2 compatible.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: remote-worker
+  namespace: __NS__
+  labels:
+    app: remote-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: remote-worker
+  template:
+    metadata:
+      labels:
+        app: remote-worker
+    spec:
+      serviceAccountName: remote-worker
+      containers:
+        - name: remote-worker
+          image: __IMAGE__
+          imagePullPolicy: Always
+          env:
+            - name: SANDBOX_ID
+              value: __SANDBOX_ID__
+            - name: RELAY_ADDR
+              value: sandbox-relay.__NS__.svc:8443
+            - name: SANDBOX_TOKEN
+              value: __TOKEN__
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532          # explicit non-root UID (image declares none); nonroot-v2 SCC allows it
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests: { cpu: "10m", memory: "32Mi" }
+            limits: { memory: "64Mi" }
