@@ -157,6 +157,25 @@ dispatch_converge() {
     -H "Content-Type: application/json" -d "$body" "$BASE/runs"
 }
 
+# POST /runs with a provider-emitted solve `post` body (Plan C). Merges sessionId + model.
+# Usage: dispatch_solve <sessionId> <postJson> [model]   (echoes the raw JSON response)
+dispatch_solve() {
+  local sid="$1" post="$2" model="${3:-${SH_MODEL:-claude-haiku-4-5}}" body
+  body=$(jq -c --arg s "$sid" --arg m "$model" '. + {sessionId:$s, model:$m}' <<<"$post")
+  # shellcheck disable=SC2086  # CURL_OPTS is intentionally word-split
+  curl -s $CURL_OPTS --max-time 900 ${CURL_HDR[@]+"${CURL_HDR[@]}"} \
+    -H "Content-Type: application/json" -d "$body" "$BASE/runs"
+}
+
+# Append one official-shape SWE-bench prediction line to a per-run predictions.jsonl.
+# Usage: append_prediction <file> <instance_id> <model> <runs_response_json>
+append_prediction() {
+  local file="$1" id="$2" model="$3" resp="$4" patch
+  patch=$(jq -r '.patch // ""' <<<"$resp" 2>/dev/null || echo "")
+  jq -nc --arg i "$id" --arg m "$model" --arg p "$patch" \
+    '{instance_id:$i, model_name_or_path:$m, model_patch:$p}' >>"$file"
+}
+
 # Sum ms= from [exec-timing] lines in a harness pod's log (needs KAGENTI_EXEC_TIMING=1).
 # Usage: sum_exec_ms <harness_pod>
 sum_exec_ms() {
@@ -190,6 +209,18 @@ count_exec_lines_all() {
   local total=0 p
   # shellcheck disable=SC2013
   for p in $(harness_pods_all); do total=$(( total + $(count_exec_lines "$p") )); done
+  echo "$total"
+}
+
+# Sum setupMs= from [swebench-phase] lines across ALL Running harness pods (Plan C setup-duty).
+sum_setup_ms_all() {
+  local total=0 p n
+  # shellcheck disable=SC2013
+  for p in $(harness_pods_all); do
+    n=$(kubectl -n "$NS" logs "$p" 2>/dev/null \
+      | awk -F'setupMs=' '/\[swebench-phase\]/ {split($2,a," "); s+=a[1]} END{printf "%d", s+0}')
+    total=$(( total + n ))
+  done
   echo "$total"
 }
 

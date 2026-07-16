@@ -94,6 +94,11 @@ class SwebenchProvider implements WorkloadProvider {
   }
 }
 
+// Official SWE-bench predictions.jsonl record shape (one line per solved instance).
+export function predictionRecord(instanceId: string, model: string, patch: string) {
+  return { instance_id: instanceId, model_name_or_path: model, model_patch: patch };
+}
+
 export function getWorkloadProvider(
   env: Record<string, string | undefined>,
   deckPath?: string,
