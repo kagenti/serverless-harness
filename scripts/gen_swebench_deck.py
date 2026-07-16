@@ -21,7 +21,28 @@ import json
 import random
 from pathlib import Path
 
+from swebench.harness.constants import MAP_REPO_VERSION_TO_SPECS
+from swebench.harness.test_spec.python import get_test_directives
 from swebench.harness.test_spec.test_spec import make_test_spec
+
+
+def test_cmd_and_directives(row: dict) -> tuple[str, list[str]]:
+    """Derive the canonical gold-test command + directives for a full SWE-bench instance row.
+
+    Mirrors, rather than re-derives, what swebench itself runs at eval time. In the installed
+    swebench (4.1.0), swebench.harness.test_spec.python.make_eval_script_list_py builds its test
+    invocation as ``" ".join([MAP_REPO_VERSION_TO_SPECS[repo][version]["test_cmd"],
+    *get_test_directives(instance)])`` -- MAP_REPO_VERSION_TO_SPECS lives in
+    swebench.harness.constants (same constant env_key derivation already leans on -- see the
+    Task 1 note above), and get_test_directives lives in swebench.harness.test_spec.python (NOT
+    swebench.harness.utils, despite that being the more discoverable-looking module name).
+    test_cmd is a str per repo/version in this installed version; defensively join if a future
+    swebench version ever returns a list. test_directives is always a list[str].
+    """
+    test_cmd = MAP_REPO_VERSION_TO_SPECS[row["repo"]][str(row["version"])]["test_cmd"]
+    if isinstance(test_cmd, list):
+        test_cmd = " ".join(test_cmd)
+    return test_cmd, list(get_test_directives(row))
 
 
 def env_key_and_instance_key(row: dict, arch: str) -> tuple[str, str]:
@@ -91,6 +112,7 @@ def main() -> None:
     for row in rows:
         env_key, instance_image_key = env_key_and_instance_key(row, args.arch)
         instance_image_keys[row["instance_id"]] = instance_image_key
+        test_cmd, test_directives = test_cmd_and_directives(row)
         instances.append(
             {
                 "instance_id": row["instance_id"],
@@ -103,6 +125,8 @@ def main() -> None:
                 "test_patch": row.get("test_patch", ""),
                 "fail_to_pass": to_list(row.get("FAIL_TO_PASS")),
                 "pass_to_pass": to_list(row.get("PASS_TO_PASS")),
+                "test_cmd": test_cmd,
+                "test_directives": test_directives,
                 "test_runtime_ms": None,
                 "weight_bucket": None,
             }

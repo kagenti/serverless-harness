@@ -180,7 +180,10 @@ describe("swebench-sandbox emitter — iterative accumulation (--offset / --base
   it("batch-1 default base still emits apt + safe.directory (auto base-tools)", () => {
     const df = emit("--offset 0 --limit 5");
     expect(df).toContain("FROM ubuntu:22.04 AS assembled");
-    expect(df).toContain("apt-get install -y --no-install-recommends git ripgrep ca-certificates");
+    expect(df).toContain(
+      "apt-get install -y --no-install-recommends git ripgrep ca-certificates " +
+        "build-essential python3-dev pkg-config libfreetype6-dev libpng-dev",
+    );
     expect(df).toContain("git config --system --add safe.directory '*'");
   });
 

@@ -42,8 +42,13 @@
         "test_stop_slicing (ordering.tests.OrderingTests)",
         "test_stop_start_slicing (ordering.tests.OrderingTests)"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1",
+      "test_directives": [
+        "ordering.models",
+        "ordering.tests"
+      ],
+      "test_runtime_ms": 945,
+      "weight_bucket": "medium"
     },
     {
       "instance_id": "django__django-11964",
@@ -75,8 +80,12 @@
         "test_timezone_unsupported (model_enums.tests.CustomChoicesTests)",
         "test_uuid_unsupported (model_enums.tests.CustomChoicesTests)"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1",
+      "test_directives": [
+        "model_enums.tests"
+      ],
+      "test_runtime_ms": 715,
+      "weight_bucket": "light"
     },
     {
       "instance_id": "django__django-12419",
@@ -91,8 +100,12 @@
         "test_middleware_headers (project_template.test_settings.TestStartProjectSettings)"
       ],
       "pass_to_pass": [],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1",
+      "test_directives": [
+        "project_template.test_settings"
+      ],
+      "test_runtime_ms": 905,
+      "weight_bucket": "medium"
     },
     {
       "instance_id": "django__django-13410",
@@ -149,8 +162,12 @@
         "test_valid_image (files.tests.GetImageDimensionsTests)",
         "test_webp (files.tests.GetImageDimensionsTests)"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1",
+      "test_directives": [
+        "files.tests"
+      ],
+      "test_runtime_ms": 685,
+      "weight_bucket": "light"
     },
     {
       "instance_id": "django__django-13810",
@@ -196,8 +213,12 @@
         "test_process_template_response_returns_none (middleware_exceptions.tests.AsyncMiddlewareTests)",
         "test_process_view_return_response (middleware_exceptions.tests.AsyncMiddlewareTests)"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1",
+      "test_directives": [
+        "middleware_exceptions.tests"
+      ],
+      "test_runtime_ms": 736,
+      "weight_bucket": "light"
     },
     {
       "instance_id": "django__django-15128",
@@ -495,8 +516,13 @@
         "test_tickets_7204_7506 (queries.tests.Queries1Tests)",
         "test_tickets_7448_7707 (queries.tests.Queries1Tests)"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1",
+      "test_directives": [
+        "queries.models",
+        "queries.tests"
+      ],
+      "test_runtime_ms": 1720,
+      "weight_bucket": "medium"
     },
     {
       "instance_id": "django__django-15382",
@@ -673,8 +699,12 @@
         "test_update_with_none (expressions.tests.BasicExpressionsTests)",
         "test_uuid_pk_subquery (expressions.tests.BasicExpressionsTests)"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1",
+      "test_directives": [
+        "expressions.tests"
+      ],
+      "test_runtime_ms": 1061,
+      "weight_bucket": "medium"
     },
     {
       "instance_id": "django__django-16032",
@@ -768,8 +798,12 @@
         "Annotations can reference fields in a values clause,",
         "test_values_with_pk_annotation (annotations.tests.NonAggregateAnnotationTestCase)"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1",
+      "test_directives": [
+        "annotations.tests"
+      ],
+      "test_runtime_ms": 977,
+      "weight_bucket": "medium"
     },
     {
       "instance_id": "django__django-16661",
@@ -821,8 +855,12 @@
         "The autocomplete_fields, raw_id_fields, and radio_fields widgets may",
         "`obj` is passed from `InlineModelAdmin.get_fieldsets()` to"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "./tests/runtests.py --verbosity 2 --settings=test_sqlite --parallel 1",
+      "test_directives": [
+        "modeladmin.tests"
+      ],
+      "test_runtime_ms": 868,
+      "weight_bucket": "light"
     },
     {
       "instance_id": "matplotlib__matplotlib-24177",
@@ -1606,8 +1644,12 @@
         "lib/matplotlib/tests/test_axes.py::test_bar_leading_nan",
         "lib/matplotlib/tests/test_axes.py::test_bar_all_nan[png]"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "pytest -rA",
+      "test_directives": [
+        "lib/matplotlib/tests/test_axes.py"
+      ],
+      "test_runtime_ms": 2277,
+      "weight_bucket": "heavy"
     },
     {
       "instance_id": "pydata__xarray-2905",
@@ -1987,8 +2029,12 @@
         "xarray/tests/test_variable.py::TestBackendIndexing::test_MemoryCachedArray",
         "xarray/tests/test_variable.py::TestBackendIndexing::test_DaskIndexingAdapter"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "pytest -rA",
+      "test_directives": [
+        "xarray/tests/test_variable.py"
+      ],
+      "test_runtime_ms": 26746,
+      "weight_bucket": "heavy"
     },
     {
       "instance_id": "pydata__xarray-7229",
@@ -2284,8 +2330,12 @@
         "xarray/tests/test_computation.py::test_cross[a6-b6-ae6-be6-cartesian--1-False]",
         "xarray/tests/test_computation.py::test_cross[a6-b6-ae6-be6-cartesian--1-True]"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "pytest -rA",
+      "test_directives": [
+        "xarray/tests/test_computation.py"
+      ],
+      "test_runtime_ms": 16822,
+      "weight_bucket": "heavy"
     },
     {
       "instance_id": "pylint-dev__pylint-7277",
@@ -2423,8 +2473,12 @@
         "tests/test_self.py::TestCallbackOptions::test_verbose",
         "tests/test_self.py::TestCallbackOptions::test_enable_all_extensions"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "pytest -rA",
+      "test_directives": [
+        "tests/test_self.py"
+      ],
+      "test_runtime_ms": 431,
+      "weight_bucket": "light"
     },
     {
       "instance_id": "pytest-dev__pytest-10051",
@@ -2455,8 +2509,12 @@
         "testing/logging/test_fixture.py::test_caplog_captures_despite_exception",
         "testing/logging/test_fixture.py::test_log_report_captures_according_to_config_option_upon_failure"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "pytest -rA",
+      "test_directives": [
+        "testing/logging/test_fixture.py"
+      ],
+      "test_runtime_ms": 557,
+      "weight_bucket": "light"
     },
     {
       "instance_id": "scikit-learn__scikit-learn-14053",
@@ -2477,8 +2535,12 @@
         "sklearn/tree/tests/test_export.py::test_precision",
         "sklearn/tree/tests/test_export.py::test_export_text_errors"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "pytest -rA",
+      "test_directives": [
+        "sklearn/tree/tests/test_export.py"
+      ],
+      "test_runtime_ms": 1224,
+      "weight_bucket": "medium"
     },
     {
       "instance_id": "scikit-learn__scikit-learn-26323",
@@ -2682,8 +2744,12 @@
         "sklearn/compose/tests/test_column_transformer.py::test_empty_selection_pandas_output[bool_int]",
         "sklearn/compose/tests/test_column_transformer.py::test_raise_error_if_index_not_aligned"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "pytest -rA",
+      "test_directives": [
+        "sklearn/compose/tests/test_column_transformer.py"
+      ],
+      "test_runtime_ms": 214,
+      "weight_bucket": "light"
     },
     {
       "instance_id": "sphinx-doc__sphinx-10449",
@@ -2729,8 +2795,12 @@
         "tests/test_ext_autodoc_configs.py::test_autodoc_default_options",
         "tests/test_ext_autodoc_configs.py::test_autodoc_default_options_with_values"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "tox --current-env -epy39 -v --",
+      "test_directives": [
+        "tests/test_ext_autodoc_configs.py"
+      ],
+      "test_runtime_ms": 3362,
+      "weight_bucket": "heavy"
     },
     {
       "instance_id": "sphinx-doc__sphinx-8621",
@@ -2778,8 +2848,12 @@
         "tests/test_markup.py::test_default_role1",
         "tests/test_markup.py::test_default_role2"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "tox --current-env -epy39 -v --",
+      "test_directives": [
+        "tests/test_markup.py"
+      ],
+      "test_runtime_ms": 770,
+      "weight_bucket": "light"
     },
     {
       "instance_id": "sympy__sympy-12096",
@@ -2838,8 +2912,12 @@
         "test_ITE",
         "test_Min_Max"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' bin/test -C --verbose",
+      "test_directives": [
+        "sympy/utilities/tests/test_lambdify.py"
+      ],
+      "test_runtime_ms": 2113,
+      "weight_bucket": "heavy"
     },
     {
       "instance_id": "sympy__sympy-13031",
@@ -2864,8 +2942,12 @@
         "test_copyin",
         "test_sparse_solve"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' bin/test -C --verbose",
+      "test_directives": [
+        "sympy/matrices/tests/test_sparse.py"
+      ],
+      "test_runtime_ms": 1907,
+      "weight_bucket": "medium"
     },
     {
       "instance_id": "sympy__sympy-15017",
@@ -2895,8 +2977,12 @@
         "test_op_priority",
         "test_symbolic_indexing"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' bin/test -C --verbose",
+      "test_directives": [
+        "sympy/tensor/array/tests/test_immutable_ndim_array.py"
+      ],
+      "test_runtime_ms": 1447,
+      "weight_bucket": "medium"
     },
     {
       "instance_id": "sympy__sympy-19040",
@@ -3060,8 +3146,12 @@
         "test_issue_17988",
         "test_issue_18205"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' bin/test -C --verbose",
+      "test_directives": [
+        "sympy/polys/tests/test_polytools.py"
+      ],
+      "test_runtime_ms": 14786,
+      "weight_bucket": "heavy"
     },
     {
       "instance_id": "sympy__sympy-20428",
@@ -3231,8 +3321,12 @@
         "test_issue_19360",
         "test_poly_copy_equals_original"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' bin/test -C --verbose",
+      "test_directives": [
+        "sympy/polys/tests/test_polytools.py"
+      ],
+      "test_runtime_ms": 14498,
+      "weight_bucket": "heavy"
     },
     {
       "instance_id": "sympy__sympy-23262",
@@ -3309,8 +3403,12 @@
         "test_beta_math",
         "test_lambdify_cse"
       ],
-      "test_runtime_ms": null,
-      "weight_bucket": null
+      "test_cmd": "PYTHONWARNINGS='ignore::UserWarning,ignore::SyntaxWarning' bin/test -C --verbose",
+      "test_directives": [
+        "sympy/utilities/tests/test_lambdify.py"
+      ],
+      "test_runtime_ms": 4000,
+      "weight_bucket": "heavy"
     }
   ]
 }
