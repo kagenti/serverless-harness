@@ -85,3 +85,22 @@ export function buildRatioCurve(points: WorkloadPoint[]): RatioCurvePoint[] {
     return { label: p.label, execCount: p.execCount, duty, n: derivedRatio(duty) };
   });
 }
+
+export interface ArmResult {
+  arm: "dedicated" | "shared";
+  resvSecPerLeaf: number;
+  p95Ms: number;
+  throughput: number;
+  peakPods: number;
+}
+
+/** Benefit = dedicated:shared reservation-seconds/leaf; withinDegrade gates on p95 (spec §7). */
+export function reservationBenefit(
+  dedicated: ArmResult,
+  shared: ArmResult,
+  degradeX: number,
+): { ratio: number; withinDegrade: boolean } {
+  if (shared.resvSecPerLeaf <= 0) throw new Error("reservationBenefit: shared resvSecPerLeaf must be > 0");
+  const ratio = Math.round((dedicated.resvSecPerLeaf / shared.resvSecPerLeaf) * 10) / 10;
+  return { ratio, withinDegrade: shared.p95Ms <= dedicated.p95Ms * degradeX };
+}

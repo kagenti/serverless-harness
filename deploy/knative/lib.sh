@@ -283,6 +283,24 @@ set_ksvc_env() {
   wait_ksvc_ready
 }
 
+# Sample, per interval, the number of pool pods holding >=1 active lease (reservation footprint).
+# reservation-seconds = (sum of samples) * SAMPLE_INTERVAL. start echoes pid; sum with pool_lease_seconds_from.
+start_pool_lease_sampler() {
+  local out="$1"
+  { while :; do
+      local now busy=0 n
+      now=$(now_ms)
+      for pod in $(pool_pod_counts); do
+        n=$(kubectl -n "$NS" exec deploy/redis -- \
+          redis-cli ZCOUNT "sh:sandbox:${pod}:leases" "$now" "+inf" 2>/dev/null | tr -d '[:space:]')
+        [ "${n:-0}" -gt 0 ] && busy=$(( busy + 1 ))
+      done
+      echo "$busy"; sleep "$SAMPLE_INTERVAL"
+    done; } >>"$out" 2>/dev/null &
+  echo $!
+}
+pool_lease_seconds_from() { awk -v iv="$SAMPLE_INTERVAL" '{s+=$1} END{printf "%d", s*iv}' "$1"; }
+
 # Reset the harness ksvc env to the committed service.yaml defaults (pool mode, no timing/cap
 # override, no single-pod pin). Used by experiment drivers via `trap ... EXIT` so a run — even
 # one that exits mid-way — never leaves the ksvc mutated for the next smoke.
