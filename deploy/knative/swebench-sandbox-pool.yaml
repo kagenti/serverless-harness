@@ -36,6 +36,15 @@ spec:
       labels:
         sh.kagenti.io/sandbox-pool: swebench    # pool discovery label (harness selects on this)
     spec:
+      # Spread pool pods across nodes (see sandbox-pool.yaml). Scoped to the swebench pool
+      # label. Soft (ScheduleAnyway) so single-node clusters still schedule.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              sh.kagenti.io/sandbox-pool: swebench
       serviceAccountName: serverless-harness-sandbox
       securityContext:
         runAsUser: 65532
@@ -87,6 +96,15 @@ spec:
       labels:
         sh.kagenti.io/sandbox-pool: swebench    # pool discovery label (harness selects on this)
     spec:
+      # Spread pool pods across nodes (see sandbox-pool.yaml). Scoped to the swebench pool
+      # label. Soft (ScheduleAnyway) so single-node clusters still schedule.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              sh.kagenti.io/sandbox-pool: swebench
       serviceAccountName: serverless-harness-sandbox
       securityContext:
         runAsUser: 65532
@@ -138,6 +156,15 @@ spec:
       labels:
         sh.kagenti.io/sandbox-pool: swebench    # pool discovery label (harness selects on this)
     spec:
+      # Spread pool pods across nodes (see sandbox-pool.yaml). Scoped to the swebench pool
+      # label. Soft (ScheduleAnyway) so single-node clusters still schedule.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              sh.kagenti.io/sandbox-pool: swebench
       serviceAccountName: serverless-harness-sandbox
       securityContext:
         runAsUser: 65532
