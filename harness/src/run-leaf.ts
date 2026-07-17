@@ -16,6 +16,7 @@ import { BufferedRedisBackend } from "./buffered-redis-backend.js";
 import { flushExtension } from "./flush-extension.js";
 import { checkpointExtension } from "./checkpoint-extension.js";
 import { submitVerdictExtension, VERDICT_ENTRY_TYPE, type VerdictCapture } from "./submit-verdict-tool.js";
+import { verdictTerminationExtension } from "./verdict-termination-extension.js";
 import { validateVerdict, type Verdict } from "./verdict.js";
 import type { GateCapture } from "./request-approval-tool.js";
 import { computeGateState, decideSeed, validateDecision, type Decision, GATE_DECISION_ENTRY_TYPE } from "./gate.js";
@@ -446,6 +447,7 @@ export const realProduceVerdict: ProduceVerdict = async (item, env, config, capt
         k8sSandboxExtension({ config: selected?.config ?? null, transport: selected?.transport }),
         flushExtension(backend),
         checkpointExtension(store, sessionManager),
+        verdictTerminationExtension(capture, { maxTurns: env.maxTurns }),
       ],
     });
     await resourceLoader.reload();

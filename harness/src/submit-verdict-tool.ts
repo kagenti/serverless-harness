@@ -50,7 +50,11 @@ export function submitVerdictExtension(capture: VerdictCapture, sink?: VerdictSi
         }
         capture.verdict = r.value;
         sink?.appendCustomEntry(VERDICT_ENTRY_TYPE, r.value);
-        return { content: [{ type: "text", text: "Verdict recorded." }] };
+        // `terminate: true` tells agent-loop.ts to stop the turn loop after this tool call
+        // (AgentToolResult.terminate) — without it the model just keeps getting re-prompted
+        // and calls submit_verdict again, sometimes thousands of times, until something
+        // external kills the pod.
+        return { content: [{ type: "text", text: "Verdict recorded." }], terminate: true };
       },
     } as any);
   };
