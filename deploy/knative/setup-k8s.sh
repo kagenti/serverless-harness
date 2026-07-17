@@ -115,7 +115,7 @@ KUBECTL=(kubectl)
 [ -n "$KUBECTL_CONTEXT" ] && KUBECTL=(kubectl --context "$KUBECTL_CONTEXT")
 
 log_info "serverless-harness setup on Kubernetes"
-log_info "context=$(${KUBECTL[@]} config current-context) namespace=$NAMESPACE"
+log_info "context=$("${KUBECTL[@]}" config current-context) namespace=$NAMESPACE"
 log_info "harness=$HARNESS_IMAGE sandbox=$SANDBOX_IMAGE storage=${STORAGE_CLASS:-<default>} ingress=$INGRESS keda=$([ "$SKIP_KEDA" = true ] && echo off || echo on)"
 
 # ----------------------------------------------------------------------------
