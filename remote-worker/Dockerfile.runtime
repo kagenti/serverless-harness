@@ -1,0 +1,6 @@
+# Runtime-only image: packages the prebuilt linux/amd64 remote-worker binary
+# (produced by build-image.sh). No Go toolchain or module fetch happens here, so
+# the in-cluster OpenShift build needs no egress to module proxies.
+FROM registry.access.redhat.com/ubi9/ubi-micro:latest
+COPY remote-worker /usr/local/bin/remote-worker
+ENTRYPOINT ["/usr/local/bin/remote-worker"]

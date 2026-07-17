@@ -1,0 +1,4 @@
+# Build + run scratch (not source)
+/dist/
+/.rw-bin
+*.log

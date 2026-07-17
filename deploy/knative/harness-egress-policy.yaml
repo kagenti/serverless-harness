@@ -76,6 +76,17 @@ spec:
               app: redis
       ports:
         - { protocol: TCP, port: 6379 }
+    # Relay — the remote-sandbox control channel. When SH_REMOTE_SANDBOX=1 the
+    # harness drives leaf execs on a bring-your-own worker via GrpcRelayTransport ->
+    # the relay's ClusterIP on :8443 (plaintext h2c). This is part of the allowed
+    # "sandbox control channel"; without it harness->relay is default-denied and
+    # every remote exec times out (the worker never receives a frame).
+    - to:
+        - podSelector:
+            matchLabels:
+              app: sandbox-relay
+      ports:
+        - { protocol: TCP, port: 8443 }
     # Outbound HTTPS — external LLM provider + in-cluster K8s API server (pods/exec).
     # 443 and 6443: kubernetes.default is a :443 ClusterIP, but kube-proxy may DNAT
     # it to an apiserver endpoint on :6443, so allow both to keep the sandbox control
