@@ -99,4 +99,22 @@ describe("captureWorkspaceDiff", () => {
     };
     expect(await captureWorkspaceDiff(transport, "run-1")).toBe("");
   });
+  it("restores a trailing newline the transport stripped (patch must not end mid-line)", async () => {
+    // Some exec transports drop the trailing newline; a diff that ends mid-line is rejected by
+    // `git apply` / GNU patch, so captureWorkspaceDiff must normalize it back.
+    const transport = {
+      exec: async () => ({ stdout: Buffer.from("diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b"), exitCode: 0 }),
+      close: async () => {},
+    };
+    const patch = await captureWorkspaceDiff(transport, "run-1");
+    expect(patch.endsWith("\n")).toBe(true);
+    expect(patch).toBe("diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b\n");
+  });
+  it("does not add a second newline when the patch already ends with one", async () => {
+    const transport = {
+      exec: async () => ({ stdout: Buffer.from("diff --git a/x b/x\n"), exitCode: 0 }),
+      close: async () => {},
+    };
+    expect(await captureWorkspaceDiff(transport, "run-1")).toBe("diff --git a/x b/x\n");
+  });
 });
