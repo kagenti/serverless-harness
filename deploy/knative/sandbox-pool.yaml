@@ -24,6 +24,18 @@ spec:
       labels:
         sh.kagenti.io/sandbox-pool: default    # pool discovery label (harness selects on this)
     spec:
+      # Spread pool pods across nodes. Pool pods request little CPU/memory, so without a
+      # hint the scheduler bin-packs all N onto one node — capping the pool at a single
+      # node's resources (the multi-node scaling goal is defeated). Soft (ScheduleAnyway)
+      # so single-node clusters (Kind) still schedule; topologyKey=hostname aims for at
+      # most a 1-pod skew per node.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              sh.kagenti.io/sandbox-pool: default
       containers:
         - name: sandbox
           image: alpine:3.20
@@ -61,6 +73,18 @@ spec:
       labels:
         sh.kagenti.io/sandbox-pool: default    # pool discovery label (harness selects on this)
     spec:
+      # Spread pool pods across nodes. Pool pods request little CPU/memory, so without a
+      # hint the scheduler bin-packs all N onto one node — capping the pool at a single
+      # node's resources (the multi-node scaling goal is defeated). Soft (ScheduleAnyway)
+      # so single-node clusters (Kind) still schedule; topologyKey=hostname aims for at
+      # most a 1-pod skew per node.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              sh.kagenti.io/sandbox-pool: default
       containers:
         - name: sandbox
           image: alpine:3.20
@@ -98,6 +122,18 @@ spec:
       labels:
         sh.kagenti.io/sandbox-pool: default    # pool discovery label (harness selects on this)
     spec:
+      # Spread pool pods across nodes. Pool pods request little CPU/memory, so without a
+      # hint the scheduler bin-packs all N onto one node — capping the pool at a single
+      # node's resources (the multi-node scaling goal is defeated). Soft (ScheduleAnyway)
+      # so single-node clusters (Kind) still schedule; topologyKey=hostname aims for at
+      # most a 1-pod skew per node.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              sh.kagenti.io/sandbox-pool: default
       containers:
         - name: sandbox
           image: alpine:3.20
