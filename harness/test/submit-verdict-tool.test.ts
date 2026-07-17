@@ -25,6 +25,22 @@ describe("submitVerdictExtension", () => {
     expect(res.isError).toBeFalsy();
   });
 
+  it("sets terminate: true on a successful verdict, so agent-loop.ts stops the turn loop", async () => {
+    const capture: VerdictCapture = {};
+    const { api, tools } = fakePi();
+    submitVerdictExtension(capture)(api);
+    const res = await tools[0].execute("call-1", { item_id: "i1", verdict: "CLEAR", reason: "r" }, undefined, undefined, {} as any);
+    expect(res.terminate).toBe(true);
+  });
+
+  it("does not set terminate on an invalid verdict (agent should retry, not stop)", async () => {
+    const capture: VerdictCapture = {};
+    const { api, tools } = fakePi();
+    submitVerdictExtension(capture)(api);
+    const res = await tools[0].execute("call-1", { item_id: "i1", verdict: "MAYBE", reason: "r" }, undefined, undefined, {} as any);
+    expect(res.terminate).toBeFalsy();
+  });
+
   it("rejects an invalid verdict and does not capture", async () => {
     const capture: VerdictCapture = {};
     const { api, tools } = fakePi();
