@@ -206,6 +206,16 @@ append_prediction() {
     '{instance_id:$i, model_name_or_path:$m, model_patch:$p}' >>"$file"
 }
 
+# Append one per-leaf token-usage line ({instance_id, bucket, usage:{input,output,cacheRead,cacheWrite,total}})
+# to a usage.jsonl, for run cost pricing. Reads .usage from the /runs response (harness now returns it
+# on solved results). Skips leaves with no .usage (older image / non-solved). Usage: append_usage <file>
+# <instance_id> <bucket> <runs_response_json>
+append_usage() {
+  local file="$1" id="$2" bucket="$3" resp="$4"
+  jq -e '.usage' <<<"$resp" >/dev/null 2>&1 || return 0
+  jq -c --arg i "$id" --arg b "$bucket" '{instance_id:$i, bucket:$b, usage:.usage}' <<<"$resp" >>"$file" 2>/dev/null || true
+}
+
 # Classify a dispatch response into one health bucket for the experiment health tally (spec §8):
 #   solved     — completed leaf (include in duty/throughput/reservation metrics + predictions)
 #   saturated  — sandbox-cap rejection (HTTP 503 {status:failed,reason:saturated}); exclude + count
@@ -330,6 +340,19 @@ set_ksvc_env() {
   wait_ksvc_ready
 }
 
+# Set the harness ksvc request timeout (seconds), minting a fresh revision. Real SWE-bench solve
+# leaves run for minutes (8-12 min isolated, ~2x under concurrency) — far above the default 300s —
+# so long leaves would be killed mid-run before the result is persisted. Bump this above the max
+# expected leaf runtime. NOTE: the cluster's Knative `max-revision-timeout-seconds` (config-defaults,
+# default 600) must be >= this value, else the patch is rejected. set_ksvc_env/set_scale preserve
+# timeoutSeconds (they patch env/annotations only), so this persists across the driver's revisions.
+# Usage: set_ksvc_timeout <seconds>
+set_ksvc_timeout() {
+  kubectl patch ksvc "$KSVC" -n "$NS" --type=json \
+    -p "[{\"op\":\"replace\",\"path\":\"/spec/template/spec/timeoutSeconds\",\"value\":$1}]" >/dev/null
+  wait_ksvc_ready
+}
+
 # Sample, per interval, the number of pool pods holding >=1 active lease (reservation footprint).
 # reservation-seconds = (sum of samples) * SAMPLE_INTERVAL. start echoes pid; sum with pool_lease_seconds_from.
 start_pool_lease_sampler() {
@@ -358,4 +381,7 @@ restore_ksvc_env() {
   kubectl patch ksvc "$KSVC" -n "$NS" --type=merge -p \
     '{"spec":{"template":{"metadata":{"annotations":{"autoscaling.knative.dev/min-scale":"0","autoscaling.knative.dev/max-scale":"5"}}}}}' \
     >/dev/null 2>&1 || true
+  # Reset the request timeout to the committed default (a swebench run bumps it via set_ksvc_timeout).
+  kubectl patch ksvc "$KSVC" -n "$NS" --type=json \
+    -p '[{"op":"replace","path":"/spec/template/spec/timeoutSeconds","value":300}]' >/dev/null 2>&1 || true
 }

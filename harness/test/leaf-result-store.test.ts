@@ -25,7 +25,7 @@ describe("toResultRecord", () => {
     const r: LeafResult = { status: "done", verdict: { item_id: "i1", verdict: "FLAGGED", reason: "x" } };
     expect(toResultRecord(r, "run-1/i1", "T")).toEqual({
       status: "done", verdict: { item_id: "i1", verdict: "FLAGGED", reason: "x" },
-      gate: null, reason: null, patch: null, sessionId: "run-1/i1", ts: "T",
+      gate: null, reason: null, patch: null, usage: null, sessionId: "run-1/i1", ts: "T",
     });
   });
   it("maps paused → gate-bearing record", () => {
@@ -47,6 +47,16 @@ describe("toResultRecord — solved", () => {
     expect(rec.patch).toBe("diff --git a/x b/x\n");
     expect(rec.verdict).toBeNull();
     expect(rec.sessionId).toBe("run-1");
+  });
+  it("carries token usage when the solved result has it", () => {
+    const rec = toResultRecord(
+      { status: "solved", patch: "d", usage: { input: 10, output: 5, cacheRead: 2, cacheWrite: 1, total: 18 } },
+      "run-1", "t",
+    );
+    expect(rec.usage).toEqual({ input: 10, output: 5, cacheRead: 2, cacheWrite: 1, total: 18 });
+  });
+  it("defaults usage to null when the solved result has none", () => {
+    expect(toResultRecord({ status: "solved", patch: "d" }, "run-1", "t").usage).toBeNull();
   });
   it("defaults patch to null for non-solve results", () => {
     const rec = toResultRecord({ status: "aborted" }, "run-1", "t");
