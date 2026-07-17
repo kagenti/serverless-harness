@@ -80,5 +80,10 @@ export function buildDiffCaptureScript(runId: string): string {
 export async function captureWorkspaceDiff(transport: SandboxTransport, runId: string): Promise<string> {
   const { stdout, exitCode } = await transport.exec(buildDiffCaptureScript(runId), { timeout: 120 });
   if (exitCode !== 0) throw new Error(`diff capture failed (exit ${exitCode})`);
-  return stdout.toString();
+  const patch = stdout.toString();
+  // A unified diff must end with a newline. `git diff` emits one, but some exec transports strip
+  // the trailing newline from captured stdout — and a patch that ends mid-line is rejected by
+  // `git apply` / GNU patch ("patch unexpectedly ends in middle of line"), so the captured
+  // model_patch fails to apply during offline evaluation. Restore it for a non-empty patch.
+  return patch && !patch.endsWith("\n") ? patch + "\n" : patch;
 }
