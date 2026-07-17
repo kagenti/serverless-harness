@@ -289,7 +289,12 @@ echo "  knee(CAP floor)=$KNEE floorPass=$FLOOR maxScale=$SWEEP_MAX"
 
 H_TOTAL=$((H_SOLVED + H_FAILED + H_SATURATED + H_TRANSPORT))
 HEALTH="health=$H_SOLVED/$H_TOTAL failed=$H_FAILED saturated=$H_SATURATED transport=$H_TRANSPORT"
+# Per-leaf token cost for the whole run, summed from the pi session streams (curve + sweep leaves;
+# all share this driver's pid "-$$"). swebench-only so the synthetic path output stays unchanged.
+COST=""
+[ "$WORKLOAD" = "swebench" ] && COST=$(run_cost_report "$$" "${USAGE:-${LOG_DIR:-/tmp/kagenti/planC}/usage.jsonl}.cost" 2>/dev/null || echo "COST_REPORT unavailable")
 echo "E6_RESULT ratioCurve=$CURVE knee=$KNEE floorPass=$FLOOR maxScale=$SWEEP_MAX $HEALTH pass=$([ "$FAIL" = 0 ] && echo yes || echo no)"
+[ -n "$COST" ] && echo "  $COST"
 {
   echo ""
   echo "### E6 run $(hostname 2>/dev/null || echo host)"
@@ -297,6 +302,7 @@ echo "E6_RESULT ratioCurve=$CURVE knee=$KNEE floorPass=$FLOOR maxScale=$SWEEP_MA
   echo "- sweep points ($SWEEP_DESC, max-scale=$SWEEP_MAX): $POINTS"
   echo "- knee floor: $KNEE (floorPass=$FLOOR)"
   echo "- leaf health (excluded from metrics): $HEALTH"
+  [ -n "$COST" ] && echo "- $COST"
 } >> EXPERIMENTS.md
 
 [ "$FAIL" = 0 ] || exit 1

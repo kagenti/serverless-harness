@@ -120,7 +120,10 @@ BEN=$(npx tsx -e '
 read -r RATIO WITHIN <<<"$BEN"
 H_TOTAL=$((H_SOLVED + H_FAILED + H_SATURATED + H_TRANSPORT))
 HEALTH="health=$H_SOLVED/$H_TOTAL failed=$H_FAILED saturated=$H_SATURATED transport=$H_TRANSPORT"
+# Per-leaf token cost for both arms, summed from the pi session streams (all e1b leaves share "-$$").
+COST=$(run_cost_report "$$" "${USAGE:-${LOG_DIR:-/tmp/kagenti/planC}/usage-e1.jsonl}.cost" 2>/dev/null || echo "COST_REPORT unavailable")
 echo "E1B_RESULT benefit=${RATIO}x withinDegrade=$WITHIN dedicated_resv=$ded_r shared_resv=$shr_r $HEALTH"
+echo "  $COST"
 {
   echo ""
   echo "### E1 benefit run $(hostname 2>/dev/null || echo host)"
@@ -129,4 +132,5 @@ echo "E1B_RESULT benefit=${RATIO}x withinDegrade=$WITHIN dedicated_resv=$ded_r s
   echo "- shared@$N: resvSec/leaf=$shr_r p95=$shr_p thr=$shr_t peakPods=$shr_peak"
   echo "- benefit (dedicated:shared) = ${RATIO}x (withinDegrade=$WITHIN)"
   echo "- leaf health (excluded from metrics): $HEALTH"
+  echo "- $COST"
 } >> EXPERIMENTS.md
