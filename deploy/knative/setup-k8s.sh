@@ -124,6 +124,10 @@ log_info "harness=$HARNESS_IMAGE sandbox=$SANDBOX_IMAGE storage=${STORAGE_CLASS:
 # values are injected here rather than by forking files.
 #   - image refs: Kind's dev.local tags / the pool's alpine placeholder -> $HARNESS_IMAGE / $SANDBOX_IMAGE
 #   - namespace:  namespace: default + redis.default.svc -> $NAMESPACE
+#   - SH_MODEL:   service.yaml's literal SH_MODEL value -> $SH_MODEL (declarative, so we never
+#                 `kubectl set env` a Knative Service — that CRD isn't a built-in workload kind)
+#   - SH_MODEL_CUSTOM: injected as an extra env entry right after SH_MODEL when set (keeps the
+#                 secretKeyRef ANTHROPIC_* entries intact, unlike a post-apply patch)
 #   - storageClass: injected into the sandbox pool's volumeClaimTemplates only when set
 # ----------------------------------------------------------------------------
 render_base() {
@@ -137,10 +141,29 @@ render_base() {
       sed -e "s#namespace: default#namespace: ${NAMESPACE}#g" \
           -e "s#redis.default.svc#redis.${NAMESPACE}.svc#g"
     else cat; fi \
+  | if [ -n "${SH_MODEL:-}" ]; then
+      # service.yaml declares `- name: SH_MODEL` / `value: "claude-haiku-4-5"`; swap the value.
+      sed -e "s#\(- name: SH_MODEL\$\)#\1#" \
+          -e "/- name: SH_MODEL\$/{n;s#value: \".*\"#value: \"${SH_MODEL}\"#;}"
+    else cat; fi \
+  | if [ "${SH_MODEL_CUSTOM:-}" = "1" ]; then
+      # Insert an SH_MODEL_CUSTOM env entry immediately after the SH_MODEL block. awk (not sed \n)
+      # for newline portability across GNU/BSD. Matches the SH_MODEL value line's indent.
+      awk '
+        /- name: SH_MODEL$/ { print; getline vln; print vln;
+          match(vln, /^ */); ind=substr(vln, 1, RLENGTH-2);
+          print ind "- name: SH_MODEL_CUSTOM"; print ind "  value: \"1\""; next }
+        { print }'
+    else cat; fi \
   | if [ -n "$STORAGE_CLASS" ]; then
-      # Insert storageClassName above accessModes in each volumeClaimTemplate PVC spec
-      # (only the sandbox pool has these). Preserves the existing 8-space indent.
-      sed -e "s#^\( *\)accessModes: \[\"ReadWriteOnce\"\]#\1storageClassName: ${STORAGE_CLASS}\n\1accessModes: [\"ReadWriteOnce\"]#g"
+      # Insert storageClassName above accessModes in each volumeClaimTemplate PVC spec (only the
+      # sandbox pool has these). awk for newline portability (GNU vs BSD sed differ on `\n` in
+      # the replacement — BSD inserts a literal 'n'). Preserves the existing indent.
+      awk -v sc="$STORAGE_CLASS" '
+        /^[[:space:]]*accessModes: \["ReadWriteOnce"\]/ {
+          match($0, /^[[:space:]]*/); ind=substr($0, 1, RLENGTH);
+          print ind "storageClassName: " sc }
+        { print }'
     else cat; fi
 }
 
@@ -240,15 +263,11 @@ fi
 # 7. Harness Knative Service (+ SA/RBAC in service.yaml)
 # ----------------------------------------------------------------------------
 log_info "Deploying harness Knative Service"
+# SH_MODEL / SH_MODEL_CUSTOM are substituted into the ksvc env by render_base() (declarative) —
+# we do NOT `kubectl set env` a Knative Service (that CRD is not a built-in workload kind, so
+# `set env` errors and, under set -euo pipefail, would abort the script).
 apply_base "$SCRIPT_DIR/service.yaml"
-# Optional self-hosted-model env (SH_MODEL / SH_MODEL_CUSTOM) — set on the ksvc if provided.
-if ! $DRY_RUN; then
-  ENV_SETS=()
-  [ -n "${SH_MODEL:-}" ]        && ENV_SETS+=("SH_MODEL=${SH_MODEL}")
-  [ -n "${SH_MODEL_CUSTOM:-}" ] && ENV_SETS+=("SH_MODEL_CUSTOM=${SH_MODEL_CUSTOM}")
-  [ "${#ENV_SETS[@]}" -gt 0 ] && "${KUBECTL[@]}" -n "$NAMESPACE" set env ksvc/serverless-harness "${ENV_SETS[@]}"
-  "${KUBECTL[@]}" -n "$NAMESPACE" wait ksvc/serverless-harness --for=condition=Ready --timeout=180s
-fi
+$DRY_RUN || "${KUBECTL[@]}" -n "$NAMESPACE" wait ksvc/serverless-harness --for=condition=Ready --timeout=180s
 
 # ----------------------------------------------------------------------------
 # 8. Ingress (optional)
