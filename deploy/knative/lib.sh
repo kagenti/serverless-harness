@@ -7,6 +7,10 @@
 # OpenShift: export KSVC_URL=<https route> (see setup-ocp.sh output) to target the
 #   auto-created Route directly — no port-forward, no Host header, TLS-skip (-k).
 
+# Directory of this lib (for locating co-located helper scripts like session-usage.py), robust to
+# the caller's cwd. BASH_SOURCE[0] is lib.sh itself since this file is sourced.
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 NS="${NS:-default}"
 KSVC="${KSVC:-serverless-harness}"
 PORT="${PORT:-8080}"
@@ -214,6 +218,45 @@ append_usage() {
   local file="$1" id="$2" bucket="$3" resp="$4"
   jq -e '.usage' <<<"$resp" >/dev/null 2>&1 || return 0
   jq -c --arg i "$id" --arg b "$bucket" '{instance_id:$i, bucket:$b, usage:.usage}' <<<"$resp" >>"$file" 2>/dev/null || true
+}
+
+# Authoritative per-leaf cost for a whole run, summed from the pi session streams in Redis. Every
+# leaf the drivers dispatch uses a sessionId ending in "-<driver pid>" (e6-<label>-<rand>-$$,
+# e6sw-<c>-<rand>-<i>-$$, e1b-<arm>-<rand>-<i>-$$), so a `session:*-<pid>` scan captures exactly
+# this run's leaves — no hot-loop sid threading, and it covers curve + sweep + benefit leaves alike.
+# The in-harness `usage` field is unreliable on the pinned pi build; the session stream is the source
+# of truth (session-usage.py sums it, using pi's own model-accurate cost.total). Writes one JSON line
+# per leaf to <outfile> and echoes a one-line COST_REPORT summary (leaves / tokens / USD / avg).
+# Usage: run_cost_report <driver_pid> <outfile>
+run_cost_report() {
+  local pid="$1" out="$2" sid
+  : >"$out"
+  for sid in $(kubectl -n "$NS" exec deploy/redis -- redis-cli --scan --pattern "session:*-$pid" 2>/dev/null | tr -d '\r' | grep -vE ':seq$'); do
+    kubectl -n "$NS" exec deploy/redis -- redis-cli XRANGE "$sid" - + 2>/dev/null \
+      | SID="${sid#session:}" python3 "$LIB_DIR/session-usage.py" >>"$out" 2>/dev/null || true
+  done
+  python3 - "$out" <<'PY'
+import sys, json
+tot = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
+cost = 0.0
+leaves = 0
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        r = json.loads(line)
+    except Exception:
+        continue
+    leaves += 1
+    for f in tot:
+        tot[f] += r.get(f, 0)
+    cost += r.get("costUsd", 0)
+avg = round(cost / leaves, 4) if leaves else 0
+print(f"COST_REPORT leaves={leaves} totalTokens={sum(tot.values())} "
+      f"input={tot['input']} output={tot['output']} cacheRead={tot['cacheRead']} "
+      f"cacheWrite={tot['cacheWrite']} costUsd={round(cost, 4)} avgUsdPerLeaf={avg}")
+PY
 }
 
 # Classify a dispatch response into one health bucket for the experiment health tally (spec §8):
