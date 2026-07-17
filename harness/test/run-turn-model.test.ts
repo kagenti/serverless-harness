@@ -51,3 +51,48 @@ describe("requireModel", () => {
     );
   });
 });
+
+describe("requireModel with SH_MODEL_CUSTOM (self-hosted endpoint)", () => {
+  it("requires ANTHROPIC_BASE_URL when SH_MODEL_CUSTOM=1", () => {
+    expect(() =>
+      requireModel("anthropic", "meta-llama/Llama-3.3-70B-Instruct", { SH_MODEL_CUSTOM: "1" }),
+    ).toThrowError(/SH_MODEL_CUSTOM=1 requires ANTHROPIC_BASE_URL/);
+  });
+
+  it("synthesizes an anthropic-messages model from SH_MODEL + ANTHROPIC_BASE_URL", () => {
+    const m = requireModel("anthropic", "meta-llama/Llama-3.3-70B-Instruct", {
+      SH_MODEL_CUSTOM: "1",
+      ANTHROPIC_BASE_URL: "http://vllm.my-ns.svc:8000",
+    }) as {
+      id: string;
+      name: string;
+      api: string;
+      provider: string;
+      baseUrl: string;
+      contextWindow: number;
+      maxTokens: number;
+    };
+    expect(m.id).toBe("meta-llama/Llama-3.3-70B-Instruct");
+    expect(m.name).toBe("meta-llama/Llama-3.3-70B-Instruct");
+    expect(m.api).toBe("anthropic-messages");
+    expect(m.baseUrl).toBe("http://vllm.my-ns.svc:8000");
+    // provider defaults to "anthropic" so pi's key lookup resolves ANTHROPIC_API_KEY.
+    expect(m.provider).toBe("anthropic");
+    // Conservative defaults when overrides are unset.
+    expect(m.contextWindow).toBe(131072);
+    expect(m.maxTokens).toBe(8192);
+  });
+
+  it("honors SH_MODEL_PROVIDER / SH_MODEL_CONTEXT_WINDOW / SH_MODEL_MAX_TOKENS overrides", () => {
+    const m = requireModel("anthropic", "some/model", {
+      SH_MODEL_CUSTOM: "1",
+      ANTHROPIC_BASE_URL: "http://endpoint:8000",
+      SH_MODEL_PROVIDER: "vllm",
+      SH_MODEL_CONTEXT_WINDOW: "65536",
+      SH_MODEL_MAX_TOKENS: "4096",
+    }) as { provider: string; contextWindow: number; maxTokens: number };
+    expect(m.provider).toBe("vllm");
+    expect(m.contextWindow).toBe(65536);
+    expect(m.maxTokens).toBe(4096);
+  });
+});
