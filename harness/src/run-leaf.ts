@@ -302,11 +302,20 @@ export const realProduceSolve: ProduceSolve = async (env, config, capture) => {
         ? buildSwebenchSolvePrompt(env.problemStatement!, workspaceRef, `${swebenchVenvDir(sid)}/bin/python`)
         : buildSolvePrompt(env.problemStatement!, workspaceRef);
       await session.prompt(prompt);
-      // Per-leaf token usage (cumulative across all solve turns) for run cost pricing. Best-effort:
-      // never let a stats hiccup fail an otherwise-solved leaf.
+      // Per-leaf token usage (cumulative across all solve turns) for run cost pricing. Sum assistant
+      // usage off the session branch — the same defensive pattern budget-voter.ts:branchSpend uses
+      // (session.getSessionStats() accesses message.usage non-defensively and throws on this pi build).
+      // Best-effort: never let a usage hiccup fail an otherwise-solved leaf.
       try {
-        const st = session.getSessionStats();
-        capture.usage = { input: st.tokens.input, output: st.tokens.output, cacheRead: st.tokens.cacheRead, cacheWrite: st.tokens.cacheWrite, total: st.tokens.total };
+        const u = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+        const branch = (sessionManager as { getBranch?: () => unknown[] }).getBranch?.() ?? [];
+        for (const entry of branch as Array<{ type?: string; message?: { role?: string; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number } } }>) {
+          if (entry?.type === "message" && entry.message?.role === "assistant" && entry.message.usage) {
+            const m = entry.message.usage;
+            u.input += m.input; u.output += m.output; u.cacheRead += m.cacheRead; u.cacheWrite += m.cacheWrite;
+          }
+        }
+        capture.usage = { ...u, total: u.input + u.output + u.cacheRead + u.cacheWrite };
       } catch { /* usage is best-effort */ }
       capture.patch = swebench ? await captureSwebenchDiff(transport, sid) : await captureWorkspaceDiff(transport, sid);
     } finally {
