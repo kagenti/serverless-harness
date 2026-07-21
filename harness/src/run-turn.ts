@@ -6,7 +6,7 @@ import {
   SettingsManager,
   type FileEntry,
 } from "@earendil-works/pi-coding-agent";
-import { getModel, getModels, getProviders, type AssistantMessage } from "@earendil-works/pi-ai";
+import { getModel, getModels, getProviders, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
 import { RedisSessionBackend } from "@sh/session-backend";
 import { BufferedRedisBackend } from "./buffered-redis-backend.js";
 import { flushExtension } from "./flush-extension.js";
@@ -52,7 +52,7 @@ export function resolveModelSelection(
  * cost/context numbers are placeholders (self-hosted, not billed); contextWindow/maxTokens are
  * conservative defaults — override via SH_MODEL_CONTEXT_WINDOW / SH_MODEL_MAX_TOKENS if needed.
  */
-function synthesizeCustomModel(modelId: string, env: NodeJS.ProcessEnv) {
+function synthesizeCustomModel(modelId: string, env: NodeJS.ProcessEnv): Model<"anthropic-messages"> {
   const baseUrl = env.ANTHROPIC_BASE_URL;
   if (!baseUrl) {
     throw new Error(
@@ -61,7 +61,10 @@ function synthesizeCustomModel(modelId: string, env: NodeJS.ProcessEnv) {
   }
   const contextWindow = Number(env.SH_MODEL_CONTEXT_WINDOW) || 131072;
   const maxTokens = Number(env.SH_MODEL_MAX_TOKENS) || 8192;
-  return {
+  // Typed as Model<"anthropic-messages"> (not `as ReturnType<typeof getModel>`) so tsc checks
+  // the shape — if pi-ai's Model type gains a required field, this fails to compile instead of
+  // silently omitting it.
+  const model: Model<"anthropic-messages"> = {
     id: modelId,
     name: modelId,
     api: "anthropic-messages",
@@ -71,14 +74,15 @@ function synthesizeCustomModel(modelId: string, env: NodeJS.ProcessEnv) {
     // "custom" has no env-key mapping and fails with `No API key found for "custom"`. Request
     // routing is by baseUrl + api, not provider, so tagging it "anthropic" sends traffic to the
     // custom baseUrl while satisfying the key lookup. Overridable via SH_MODEL_PROVIDER.
-    provider: (env.SH_MODEL_PROVIDER ?? "anthropic") as never,
+    provider: (env.SH_MODEL_PROVIDER ?? "anthropic") as Model<"anthropic-messages">["provider"],
     baseUrl,
     reasoning: false,
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow,
     maxTokens,
-  } as ReturnType<typeof getModel> & object;
+  };
+  return model;
 }
 
 /**
@@ -91,9 +95,13 @@ function synthesizeCustomModel(modelId: string, env: NodeJS.ProcessEnv) {
  * model from SH_MODEL + ANTHROPIC_BASE_URL — for self-hosted endpoints (vLLM/llm-d) whose
  * served model id is not a known Anthropic id. See synthesizeCustomModel().
  */
-export function requireModel(provider: string, modelId: string) {
-  if (process.env.SH_MODEL_CUSTOM === "1") {
-    return synthesizeCustomModel(modelId, process.env);
+export function requireModel(
+  provider: string,
+  modelId: string,
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  if (env.SH_MODEL_CUSTOM === "1") {
+    return synthesizeCustomModel(modelId, env);
   }
   const model = getModel(provider as never, modelId as never);
   if (model) return model;
