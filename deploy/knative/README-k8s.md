@@ -1,0 +1,157 @@
+# Deploying on generic Kubernetes
+
+`deploy/knative/setup-k8s.sh` stands up the serverless-harness stack on a **vanilla
+Kubernetes cluster** — the sibling of `setup-kind.sh` (Kind) and `setup-ocp.sh`
+(OpenShift). It installs Knative Serving + Kourier, the agent-sandbox controller,
+Redis, the sandbox pool, the LLM-credentials secret, and the harness Knative Service,
+reusing the shared base manifests (`deploy/knative/*.yaml`) with cluster-specifics
+injected via flags — no forked per-cluster YAMLs.
+
+## When to use this vs. setup-kind.sh / setup-ocp.sh
+
+| | `setup-kind.sh` | `setup-k8s.sh` (this) | `setup-ocp.sh` |
+|---|---|---|---|
+| Target | local Kind (single node) | any real/vanilla K8s cluster | OpenShift 4.x |
+| Knative install | raw manifests | raw manifests | OLM operator (OpenShift Serverless) |
+| KEDA install | raw manifests | raw manifests (`--with-keda`) | OLM operator (`--with-keda`) |
+| Images | builds locally + `kind load` | **prebuilt refs** (`--image`); in-cluster build documented | prebuilt refs / built-in `oc new-build` |
+| Namespace | `default` | `--namespace` | `--namespace` |
+| StorageClass | cluster default | `--storage-class` (default: cluster default) | cluster default |
+| Ingress | Kourier port-forward | port-forward or `--ingress nodeport` | auto-created Route |
+
+Use `setup-kind.sh` for local dev, `setup-ocp.sh` on OpenShift (where OLM manages the
+operators and Routes are automatic), and **`setup-k8s.sh` for any other Kubernetes** —
+where there is no OLM (so operators install via raw manifests) and no automatic
+ingress domain (so you reach the service by port-forward or NodePort).
+
+## Prerequisites
+
+- **kubectl** configured to the target cluster (`--context` or current-context)
+- A **default StorageClass**, or pass `--storage-class`
+- **Prebuilt images** for the harness + sandbox (this script does not build — see below)
+- A model credential:
+  - `ANTHROPIC_API_KEY` (direct), **or**
+  - `ANTHROPIC_AUTH_TOKEN` + `ANTHROPIC_BASE_URL` (Bearer-token gateway or self-hosted endpoint)
+
+## Quick start
+
+```bash
+export ANTHROPIC_API_KEY=sk-...
+./deploy/knative/setup-k8s.sh \
+  --namespace serverless-harness \
+  --image ghcr.io/kagenti/serverless-harness:latest \
+  --sandbox-image ghcr.io/kagenti/serverless-harness-sandbox:latest
+```
+
+When it finishes it prints how to reach the service (port-forward by default):
+
+```bash
+kubectl port-forward -n kourier-system svc/kourier 8080:80
+curl -H 'Host: serverless-harness.serverless-harness.example.com' \
+     -H 'Content-Type: application/json' \
+     -d '{"prompt":"Hello"}' http://localhost:8080/turn
+```
+
+Preview everything without applying: add `--dry-run` (prints the rendered manifests).
+
+## Options
+
+```
+--namespace <ns>       Target namespace (default: default)
+--image <ref>          Harness image, prebuilt
+--sandbox-image <ref>  Sandbox image, prebuilt
+--storage-class <sc>   StorageClass for sandbox /workspace PVCs (default: cluster default)
+--ingress <mode>       none (port-forward) | nodeport   (default: none)
+--with-keda            Install KEDA for the async-leaf ScaledJob path (default: off)
+--context <ctx>        kubectl context (default: current-context)
+--dry-run              Print rendered manifests without applying
+```
+
+Environment: `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`+`ANTHROPIC_BASE_URL`;
+`SH_MODEL`, `SH_MODEL_CUSTOM`; `KNATIVE_VERSION`, `KEDA_VERSION`.
+
+## Building the images
+
+Unlike Kind, this script takes **prebuilt** images — build and push them yourself,
+then pass the refs via `--image` / `--sandbox-image`. Any registry the cluster can pull
+from works, including an in-cluster registry (pass its address as the image ref).
+
+Why not build in the script: OpenShift has a built-in builder (`oc new-build`) that
+`setup-ocp.sh` can assume, but vanilla Kubernetes has no standard in-cluster build
+system, so this script stays builder-agnostic and just consumes an image ref.
+
+### Rebuilding images (including in-cluster)
+
+Building is decoupled from deploy, so use whatever fits — this is handy for iterating on
+harness code for testing/experimentation. Whatever you pick, pass the resulting ref via
+`--image`/`--sandbox-image`:
+
+- **Local build + push** to any registry the cluster can reach:
+  ```bash
+  docker build -t <registry>/serverless-harness:dev .            # harness (repo root)
+  docker build -f deploy/knative/sandbox.Dockerfile -t <registry>/serverless-harness-sandbox:dev deploy/knative
+  docker push <registry>/serverless-harness:dev && docker push <registry>/serverless-harness-sandbox:dev
+  ./deploy/knative/setup-k8s.sh --image <registry>/serverless-harness:dev \
+      --sandbox-image <registry>/serverless-harness-sandbox:dev ...
+  ```
+- **In-cluster build** — if your cluster has a build system (e.g. **Shipwright**, Tekton, `ko`),
+  build to an **in-cluster registry** and pass that ref. This avoids pushing over the internet
+  and is convenient for rebuild-heavy experimentation. Example with Shipwright: a `Build`
+  with `source.git` pointed at your fork + `strategy: buildah` (or an insecure-registry variant)
+  outputting to `<in-cluster-registry>:5000/serverless-harness:<tag>`, then
+  `--image <in-cluster-registry>:5000/serverless-harness:<tag>`. Note: an in-cluster registry
+  referenced by ClusterIP/`.svc` must be reachable *and trusted* by the node container runtime
+  (e.g. listed in the node's registry config as an insecure mirror) for the kubelet to pull it.
+
+## Storage: default class vs. GPFS (IBM Storage Scale)
+
+The sandbox pool's `/workspace` PVCs bind to whatever StorageClass you pick:
+
+- **Default (no flag):** uses the cluster's default StorageClass — works on any cluster.
+- **GPFS / IBM Storage Scale:** `--storage-class ibm-scale-csi`. GPFS is a high-performance,
+  cluster-wide parallel filesystem — attractive for agent workspaces (fast shared I/O, and
+  an eventual path to a shared RWX workspace across sandboxes). Requires the IBM Storage
+  Scale CSI driver installed and healthy on the cluster; the pool uses per-sandbox RWO
+  volumes on it today.
+
+## Choosing the model
+
+Set the harness model via `SH_MODEL` (default is the harness's built-in default). To target
+a **self-hosted, Anthropic-compatible endpoint** (e.g. vLLM / llm-d serving `/v1/messages`)
+whose model id is not a built-in Anthropic id, set `SH_MODEL_CUSTOM=1` and point
+`ANTHROPIC_BASE_URL` at the endpoint:
+
+```bash
+export SH_MODEL=meta-llama/Llama-3.3-70B-Instruct
+export SH_MODEL_CUSTOM=1
+export ANTHROPIC_AUTH_TOKEN=...            # or a placeholder if the endpoint needs none
+export ANTHROPIC_BASE_URL=http://my-model.my-ns.svc.cluster.local:8000
+```
+
+## Reaching the service without a port-forward
+
+`--ingress nodeport` patches the Kourier service to `NodePort`, so you can reach the
+harness at `http://<node-ip>:<nodeport>` (with the `Host` header) instead of a
+port-forward. For a real public endpoint with TLS/auth, put your cluster's ingress
+controller or gateway in front of Kourier — that layer is cluster-specific and out of
+scope for this generic script.
+
+## What it installs
+
+| Component | How |
+|-----------|-----|
+| Knative Serving + Kourier | raw manifests + config patches (autoscaler, PVC/securityContext features) |
+| KEDA (optional) | raw manifest (`--with-keda`) |
+| agent-sandbox controller | `kubectl apply --server-side` (v0.5.0) |
+| Redis | in-repo Deployment (`redis.yaml`) |
+| Sandbox pool | `sandbox-pool.yaml`, namespaced + storageClass injected |
+| Harness | Knative Service (`service.yaml`) + SA/RBAC |
+
+## Cleanup
+
+```bash
+kubectl delete namespace <namespace>
+```
+
+Cluster-scoped installs shared with other workloads (Knative CRDs/controller, Kourier,
+agent-sandbox controller, KEDA) are left in place.
