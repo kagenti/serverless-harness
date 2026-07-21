@@ -143,8 +143,7 @@ render_base() {
     else cat; fi \
   | if [ -n "${SH_MODEL:-}" ]; then
       # service.yaml declares `- name: SH_MODEL` / `value: "claude-haiku-4-5"`; swap the value.
-      sed -e "s#\(- name: SH_MODEL\$\)#\1#" \
-          -e "/- name: SH_MODEL\$/{n;s#value: \".*\"#value: \"${SH_MODEL}\"#;}"
+      sed -e "/- name: SH_MODEL\$/{n;s#value: \".*\"#value: \"${SH_MODEL}\"#;}"
     else cat; fi \
   | if [ "${SH_MODEL_CUSTOM:-}" = "1" ]; then
       # Insert an SH_MODEL_CUSTOM env entry immediately after the SH_MODEL block. awk (not sed \n)
