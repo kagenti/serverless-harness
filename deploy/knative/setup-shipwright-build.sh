@@ -41,6 +41,7 @@ GIT_REVISION=""
 STRATEGY="buildah"
 IMAGE_REPO=""
 TAG="dev"
+BUILD_NAME=""
 BUILD_SANDBOX=false
 WAIT_TIMEOUT="20m"
 KUBECTL_CONTEXT=""
@@ -71,6 +72,9 @@ Options:
   --git-revision <ref>   Branch/tag/commit to build (default: current checked-out branch)
   --strategy <name>      ClusterBuildStrategy to use (default: ${STRATEGY})
   --tag <tag>            Image tag (default: ${TAG})
+  --build-name <name>    Build object name prefix, so this doesn't collide with an existing
+                         Build named "serverless-harness" in the namespace (default: derived
+                         from --tag, e.g. "serverless-harness-dev")
   --with-sandbox         Also build the sandbox image (deploy/knative/sandbox.Dockerfile)
   --wait-timeout <dur>   Max time to wait per build (default: ${WAIT_TIMEOUT})
   --context <ctx>        kubectl context to target (default: current-context)
@@ -103,6 +107,7 @@ while [[ $# -gt 0 ]]; do
     --git-revision)   GIT_REVISION="$2"; shift 2 ;;
     --strategy)       STRATEGY="$2"; shift 2 ;;
     --tag)            TAG="$2"; shift 2 ;;
+    --build-name)     BUILD_NAME="$2"; shift 2 ;;
     --with-sandbox)   BUILD_SANDBOX=true; shift ;;
     --wait-timeout)   WAIT_TIMEOUT="$2"; shift 2 ;;
     --context)        KUBECTL_CONTEXT="$2"; shift 2 ;;
@@ -149,12 +154,33 @@ fi
 HARNESS_IMAGE="${IMAGE_REPO}:${TAG}"
 SANDBOX_IMAGE="${IMAGE_REPO}-sandbox:${TAG}"
 
+# Default Build object names include the tag, so a test/experimental run (different
+# --tag) doesn't silently overwrite an existing Build's revision/output — e.g. a real
+# "serverless-harness" Build already pointed at a stable branch. Pass --build-name to
+# reuse/update a specific existing Build on purpose.
+BUILD_NAME_HARNESS="${BUILD_NAME:-serverless-harness-${TAG}}"
+BUILD_NAME_SANDBOX="${BUILD_NAME:-serverless-harness-sandbox-${TAG}}"
+
+warn_if_build_exists_with_different_spec() {
+  local name="$1" revision="$2" image="$3"
+  local existing
+  existing="$("${KUBECTL[@]}" -n "$NAMESPACE" get build "$name" -o json 2>/dev/null)" || return 0
+  local existing_rev existing_image
+  existing_rev="$(echo "$existing" | grep -o '"revision"[^,}]*' | head -1)"
+  existing_image="$(echo "$existing" | grep -o '"image"[^,}]*' | head -1)"
+  if [[ "$existing_rev" != *"$revision"* || "$existing_image" != *"$image"* ]]; then
+    log_warn "Build/${name} already exists with a different revision/output — this run will"
+    log_warn "overwrite it. Pass a different --build-name (or --tag) to avoid clobbering it."
+  fi
+}
+
 # ----------------------------------------------------------------------------
 # Render + apply one Build, create a BuildRun, wait for it, return the BuildRun name
 # ----------------------------------------------------------------------------
 render_build() {
-  local template="$1" image="$2"
+  local template="$1" name="$2" image="$3"
   sed \
+    -e "s#__NAME__#${name}#g" \
     -e "s#__NAMESPACE__#${NAMESPACE}#g" \
     -e "s#__GIT_URL__#${GIT_URL}#g" \
     -e "s#__GIT_REVISION__#${GIT_REVISION}#g" \
@@ -167,13 +193,15 @@ run_build() {
   local name="$1" template="$2" image="$3"
 
   if $DRY_RUN; then
-    render_build "$template" "$image"
+    render_build "$template" "$name" "$image"
     echo "---"
     return 0
   fi
 
+  warn_if_build_exists_with_different_spec "$name" "$GIT_REVISION" "$image"
+
   log_info "Applying Build/${name} (revision: ${GIT_REVISION}, output: ${image})"
-  render_build "$template" "$image" | "${KUBECTL[@]}" apply -f -
+  render_build "$template" "$name" "$image" | "${KUBECTL[@]}" apply -f -
 
   log_info "Starting BuildRun for ${name}"
   local buildrun
@@ -197,10 +225,10 @@ EOF
   log_success "Build/${name} succeeded -> ${image}"
 }
 
-run_build serverless-harness "$SCRIPT_DIR/shipwright/build-harness.yaml" "$HARNESS_IMAGE"
+run_build "$BUILD_NAME_HARNESS" "$SCRIPT_DIR/shipwright/build-harness.yaml" "$HARNESS_IMAGE"
 
 if $BUILD_SANDBOX; then
-  run_build serverless-harness-sandbox "$SCRIPT_DIR/shipwright/build-sandbox.yaml" "$SANDBOX_IMAGE"
+  run_build "$BUILD_NAME_SANDBOX" "$SCRIPT_DIR/shipwright/build-sandbox.yaml" "$SANDBOX_IMAGE"
 fi
 
 if ! $DRY_RUN; then
