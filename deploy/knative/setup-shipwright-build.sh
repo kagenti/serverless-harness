@@ -157,18 +157,32 @@ SANDBOX_IMAGE="${IMAGE_REPO}-sandbox:${TAG}"
 # Default Build object names include the tag, so a test/experimental run (different
 # --tag) doesn't silently overwrite an existing Build's revision/output — e.g. a real
 # "serverless-harness" Build already pointed at a stable branch. Pass --build-name to
-# reuse/update a specific existing Build on purpose.
-BUILD_NAME_HARNESS="${BUILD_NAME:-serverless-harness-${TAG}}"
-BUILD_NAME_SANDBOX="${BUILD_NAME:-serverless-harness-sandbox-${TAG}}"
+# reuse/update a specific existing Build on purpose — it's a prefix, so the sandbox
+# Build gets "-sandbox" appended rather than colliding with the harness Build's name.
+BUILD_NAME_PREFIX="${BUILD_NAME:-serverless-harness-${TAG}}"
+BUILD_NAME_HARNESS="$BUILD_NAME_PREFIX"
+BUILD_NAME_SANDBOX="${BUILD_NAME_PREFIX}-sandbox"
 
 warn_if_build_exists_with_different_spec() {
   local name="$1" revision="$2" image="$3"
-  local existing
-  existing="$("${KUBECTL[@]}" -n "$NAMESPACE" get build "$name" -o json 2>/dev/null)" || return 0
+  local get_err
+  get_err="$(mktemp)"
   local existing_rev existing_image
-  existing_rev="$(echo "$existing" | grep -o '"revision"[^,}]*' | head -1)"
-  existing_image="$(echo "$existing" | grep -o '"image"[^,}]*' | head -1)"
-  if [[ "$existing_rev" != *"$revision"* || "$existing_image" != *"$image"* ]]; then
+  if ! existing_rev="$("${KUBECTL[@]}" -n "$NAMESPACE" get build "$name" \
+      -o jsonpath='{.spec.source.git.revision}' 2>"$get_err")"; then
+    if grep -qi 'NotFound' "$get_err"; then
+      rm -f "$get_err"
+      return 0
+    fi
+    log_warn "Could not check for an existing Build/${name} (kubectl error below) — proceeding anyway:"
+    cat "$get_err" >&2
+    rm -f "$get_err"
+    return 0
+  fi
+  rm -f "$get_err"
+  existing_image="$("${KUBECTL[@]}" -n "$NAMESPACE" get build "$name" \
+    -o jsonpath='{.spec.output.image}' 2>/dev/null)"
+  if [[ "$existing_rev" != "$revision" || "$existing_image" != "$image" ]]; then
     log_warn "Build/${name} already exists with a different revision/output — this run will"
     log_warn "overwrite it. Pass a different --build-name (or --tag) to avoid clobbering it."
   fi
