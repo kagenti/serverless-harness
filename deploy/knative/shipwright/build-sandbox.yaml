@@ -6,7 +6,7 @@
 apiVersion: shipwright.io/v1beta1
 kind: Build
 metadata:
-  name: serverless-harness-sandbox
+  name: __NAME__
   namespace: __NAMESPACE__
   labels:
     app: serverless-harness-sandbox
