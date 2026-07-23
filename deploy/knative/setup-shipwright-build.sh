@@ -193,14 +193,18 @@ warn_if_build_exists_with_different_spec() {
 # ----------------------------------------------------------------------------
 render_build() {
   local template="$1" name="$2" image="$3"
-  sed \
-    -e "s#__NAME__#${name}#g" \
-    -e "s#__NAMESPACE__#${NAMESPACE}#g" \
-    -e "s#__GIT_URL__#${GIT_URL}#g" \
-    -e "s#__GIT_REVISION__#${GIT_REVISION}#g" \
-    -e "s#__STRATEGY__#${STRATEGY}#g" \
-    -e "s#__IMAGE__#${image}#g" \
-    "$template"
+  # Substitute placeholders with bash literal string replacement rather than sed, so a value
+  # containing sed-significant characters (a '#' in a git URL/image ref that would break the
+  # 's#...#...#' delimiter, or '&'/'\' in the replacement) can't corrupt the output.
+  local content
+  content="$(cat "$template")"
+  content="${content//__NAME__/$name}"
+  content="${content//__NAMESPACE__/$NAMESPACE}"
+  content="${content//__GIT_URL__/$GIT_URL}"
+  content="${content//__GIT_REVISION__/$GIT_REVISION}"
+  content="${content//__STRATEGY__/$STRATEGY}"
+  content="${content//__IMAGE__/$image}"
+  printf '%s\n' "$content"
 }
 
 run_build() {
@@ -247,5 +251,10 @@ fi
 
 if ! $DRY_RUN; then
   echo "HARNESS_IMAGE=${HARNESS_IMAGE}"
-  $BUILD_SANDBOX && echo "SANDBOX_IMAGE=${SANDBOX_IMAGE}"
+  # Use an if, not `$BUILD_SANDBOX && echo ...`: as the script's last statement under `set -e`,
+  # that && short-circuits to a non-zero exit when BUILD_SANDBOX is false — making a successful
+  # harness-only build wrongly report failure (exit 1).
+  if $BUILD_SANDBOX; then
+    echo "SANDBOX_IMAGE=${SANDBOX_IMAGE}"
+  fi
 fi
