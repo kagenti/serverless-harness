@@ -58,4 +58,15 @@ describe("verdictTerminationExtension", () => {
     expect(result.block).toBe(true);
     expect(result.reason).toMatch(/turn limit/i);
   });
+
+  it("treats maxTurns: 0 as 'use default' rather than disabling the cap", () => {
+    const capture: VerdictCapture = {};
+    const { pi, handlers } = fakePi();
+    verdictTerminationExtension(capture, { maxTurns: 0 })(pi);
+    // 0 must NOT mean unbounded — it should fall back to the default cap and still block.
+    for (let i = 0; i < 41; i++) handlers["turn_start"]();
+    const result = handlers["tool_call"]({});
+    expect(result.block).toBe(true);
+    expect(result.reason).toMatch(/turn limit/i);
+  });
 });
