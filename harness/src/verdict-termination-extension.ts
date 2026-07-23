@@ -34,7 +34,10 @@ export function verdictTerminationExtension(
   opts: { maxTurns?: number } = {},
 ): ExtensionFactory {
   const counter: TurnCounter = { turns: 0 };
-  const maxTurns = opts.maxTurns ?? DEFAULT_MAX_TURNS;
+  // Treat a missing OR non-positive maxTurns as "use the default" — a nullish-coalesce alone would
+  // let an explicit 0 (or negative) through, which then fails the `> 0` guard below and silently
+  // DISABLES the cap (unbounded), the opposite of what a caller passing 0 would expect.
+  const maxTurns = typeof opts.maxTurns === "number" && opts.maxTurns > 0 ? opts.maxTurns : DEFAULT_MAX_TURNS;
   return (pi: ExtensionAPI) => {
     pi.on("turn_start", () => {
       counter.turns += 1;
